@@ -1,0 +1,120 @@
+#include "ducknng_ipc_in.h"
+#include "ducknng_util.h"
+#include "nanoarrow/nanoarrow.h"
+#include "nanoarrow/nanoarrow_ipc.h"
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+
+DUCKDB_EXTENSION_EXTERN
+
+static char *ducknng_copy_string_view(struct ArrowStringView view) {
+    char *out;
+    if (!view.data || view.size_bytes < 0) return NULL;
+    out = (char *)duckdb_malloc((size_t)view.size_bytes + 1);
+    if (!out) return NULL;
+    memcpy(out, view.data, (size_t)view.size_bytes);
+    out[view.size_bytes] = '\0';
+    return out;
+}
+
+int ducknng_decode_exec_request_payload(const uint8_t *payload, size_t payload_len,
+    ducknng_exec_request *out, char **errmsg) {
+    struct ArrowBuffer input_buf;
+    struct ArrowIpcInputStream input_stream;
+    struct ArrowArrayStream stream;
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    struct ArrowArrayView view;
+    struct ArrowError error;
+    struct ArrowStringView sql_view;
+    int rc = -1;
+    memset(&input_buf, 0, sizeof(input_buf));
+    memset(&input_stream, 0, sizeof(input_stream));
+    memset(&stream, 0, sizeof(stream));
+    memset(&schema, 0, sizeof(schema));
+    memset(&array, 0, sizeof(array));
+    memset(&view, 0, sizeof(view));
+    memset(&error, 0, sizeof(error));
+    if (out) memset(out, 0, sizeof(*out));
+
+    if (!payload || payload_len == 0 || !out) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing exec payload");
+        return -1;
+    }
+
+    ArrowBufferInit(&input_buf);
+    if (ArrowBufferAppend(&input_buf, payload, (int64_t)payload_len) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to copy Arrow IPC payload");
+        goto cleanup;
+    }
+    if (ArrowIpcInputStreamInitBuffer(&input_stream, &input_buf) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize Arrow IPC input stream");
+        input_buf.data = NULL;
+        goto cleanup;
+    }
+    memset(&input_buf, 0, sizeof(input_buf));
+    if (ArrowIpcArrayStreamReaderInit(&stream, &input_stream, NULL) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize Arrow IPC reader");
+        memset(&input_stream, 0, sizeof(input_stream));
+        goto cleanup;
+    }
+    memset(&input_stream, 0, sizeof(input_stream));
+    if (ArrowArrayStreamGetSchema(&stream, &schema, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (schema.n_children != 2 || !schema.children ||
+        !schema.children[0] || !schema.children[1] ||
+        !schema.children[0]->name || strcmp(schema.children[0]->name, "sql") != 0 ||
+        !schema.children[1]->name || strcmp(schema.children[1]->name, "want_result") != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: exec payload schema must be {sql, want_result}");
+        goto cleanup;
+    }
+    if (ArrowArrayStreamGetNext(&stream, &array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (!array.release || array.length != 1) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: exec payload must contain exactly one row");
+        goto cleanup;
+    }
+    if (ArrowArrayViewInitFromSchema(&view, &schema, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (ArrowArrayViewSetArray(&view, &array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (ArrowArrayViewIsNull(view.children[0], 0)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: exec payload sql must not be NULL");
+        goto cleanup;
+    }
+    sql_view = ArrowArrayViewGetStringUnsafe(view.children[0], 0);
+    out->sql = ducknng_copy_string_view(sql_view);
+    if (!out->sql) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to copy sql from exec payload");
+        goto cleanup;
+    }
+    out->want_result = (!ArrowArrayViewIsNull(view.children[1], 0) &&
+        ArrowArrayViewGetIntUnsafe(view.children[1], 0) != 0) ? 1 : 0;
+    rc = 0;
+
+cleanup:
+    if (rc != 0 && out) ducknng_exec_request_destroy(out);
+    ArrowArrayViewReset(&view);
+    if (array.release) ArrowArrayRelease(&array);
+    if (schema.release) ArrowSchemaRelease(&schema);
+    if (stream.release) ArrowArrayStreamRelease(&stream);
+    if (input_stream.release) input_stream.release(&input_stream);
+    if (input_buf.data) ArrowBufferReset(&input_buf);
+    return rc;
+}
+
+void ducknng_exec_request_destroy(ducknng_exec_request *req) {
+    if (!req) return;
+    if (req->sql) duckdb_free(req->sql);
+    req->sql = NULL;
+    req->want_result = 0;
+}

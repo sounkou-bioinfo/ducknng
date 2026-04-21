@@ -1,0 +1,113 @@
+{
+  "functions": [
+    {
+      "name": "ducknng_server_start",
+      "kind": "scalar",
+      "category": "Service Control",
+      "signature": "ducknng_server_start(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode)",
+      "returns": "BOOLEAN",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 1,
+      "description": "Start a named ducknng REP listener for SQL serving on an NNG URL.",
+      "notes": [
+        "Phase 1 starts one real REP socket and the requested number of REP worker contexts.",
+        "Current TLS arguments are accepted in the signature but any non-NULL TLS configuration is rejected until TLS is implemented."
+      ],
+      "examples": [
+        "SELECT ducknng_server_start('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL);"
+      ]
+    },
+    {
+      "name": "ducknng_server_stop",
+      "kind": "scalar",
+      "category": "Service Control",
+      "signature": "ducknng_server_stop(name)",
+      "returns": "BOOLEAN",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 1,
+      "description": "Stop a named ducknng service and tear down its listener and worker thread.",
+      "notes": [
+        "Intended to block until listener shutdown is complete in phase 1."
+      ],
+      "examples": [
+        "SELECT ducknng_server_stop('sql0');"
+      ]
+    },
+    {
+      "name": "ducknng_servers",
+      "kind": "table",
+      "category": "Introspection",
+      "signature": "ducknng_servers()",
+      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 1,
+      "description": "List registered ducknng services in the current DuckDB database runtime.",
+      "notes": [
+        "Returns the current per-database runtime service registry snapshot."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_servers();"
+      ]
+    },
+    {
+      "name": "ducknng_sessions",
+      "kind": "table",
+      "category": "Introspection",
+      "signature": "ducknng_sessions(name)",
+      "returns": "TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": false,
+      "phase": 3,
+      "description": "List active query sessions for a named ducknng service.",
+      "notes": [
+        "Depends on query-session support."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_sessions('sql0');"
+      ]
+    },
+    {
+      "name": "ducknng_remote_exec",
+      "kind": "scalar",
+      "category": "Client / Test Helper",
+      "signature": "ducknng_remote_exec(url, sql, input_table := NULL)",
+      "returns": "UBIGINT",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": false,
+      "phase": 2,
+      "description": "Send an EXEC request over the real wire protocol and return rows changed.",
+      "notes": [
+        "Planned for phase 2."
+      ],
+      "examples": [
+        "SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)');"
+      ]
+    },
+    {
+      "name": "ducknng_remote",
+      "kind": "table",
+      "category": "Client / Test Helper",
+      "signature": "ducknng_remote(url, sql, input_table := NULL)",
+      "returns": "table",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": false,
+      "phase": 3,
+      "description": "Execute a remote query over REQ/REP and stream Arrow IPC batches back as a DuckDB table function.",
+      "notes": [
+        "Planned for streaming query phases."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_remote('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer');"
+      ]
+    }
+  ]
+}

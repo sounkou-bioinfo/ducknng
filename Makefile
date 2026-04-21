@@ -1,21 +1,16 @@
-.PHONY: clean clean_all
+.PHONY: clean clean_all function_catalog rdm rpc_smoke
+
+rpc_smoke:
+	Rscript test/rpc_smoke.R
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-# Main extension configuration
-EXTENSION_NAME=capi_quack
-
-# Set to 1 to enable Unstable API (binaries will only work on TARGET_DUCKDB_VERSION, forwards compatibility will be broken)
-# WARNING: When set to 1, the duckdb_extension.h from the TARGET_DUCKDB_VERSION must be used, using any other version of
-#          the header is unsafe.
+EXTENSION_NAME=ducknng
 USE_UNSTABLE_C_API=0
-
-# The DuckDB version to target
 TARGET_DUCKDB_VERSION=v1.2.0
 
 all: configure release
 
-# Include makefiles from DuckDB
 include extension-ci-tools/makefiles/c_api_extensions/base.Makefile
 include extension-ci-tools/makefiles/c_api_extensions/c_cpp.Makefile
 
@@ -30,3 +25,9 @@ test_release: test_extension_release
 
 clean: clean_build clean_cmake
 clean_all: clean clean_configure
+
+function_catalog:
+	python3 function_catalog/generate_function_catalog.py
+
+rdm: function_catalog
+	R -e "rmarkdown::render('README.Rmd')"

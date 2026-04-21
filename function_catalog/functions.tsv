@@ -1,0 +1,7 @@
+name	kind	category	signature	returns	since	implemented	phase	description
+ducknng_server_start	scalar	Service Control	ducknng_server_start(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode)	BOOLEAN	0.1.0	True	1	Start a named ducknng REP listener for SQL serving on an NNG URL.
+ducknng_server_stop	scalar	Service Control	ducknng_server_stop(name)	BOOLEAN	0.1.0	True	1	Stop a named ducknng service and tear down its listener and worker thread.
+ducknng_servers	table	Introspection	ducknng_servers()	TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)	0.1.0	True	1	List registered ducknng services in the current DuckDB database runtime.
+ducknng_sessions	table	Introspection	ducknng_sessions(name)	TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)	0.1.0	False	3	List active query sessions for a named ducknng service.
+ducknng_remote_exec	scalar	Client / Test Helper	ducknng_remote_exec(url, sql, input_table := NULL)	UBIGINT	0.1.0	False	2	Send an EXEC request over the real wire protocol and return rows changed.
+ducknng_remote	table	Client / Test Helper	ducknng_remote(url, sql, input_table := NULL)	table	0.1.0	False	3	Execute a remote query over REQ/REP and stream Arrow IPC batches back as a DuckDB table function.

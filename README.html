@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="generator" content="pandoc" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style type="text/css">
+@font-face {
+font-family: octicons-link;
+src: url(data:font/woff;charset=utf-8;base64,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) format('woff');
+}
+body {
+-webkit-text-size-adjust: 100%;
+text-size-adjust: 100%;
+color: #333;
+font-family: "Helvetica Neue", Helvetica, "Segoe UI", Arial, freesans, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+font-size: 16px;
+line-height: 1.6;
+word-wrap: break-word;
+}
+a {
+background-color: transparent;
+}
+a:active,
+a:hover {
+outline: 0;
+}
+strong {
+font-weight: bold;
+}
+h1 {
+font-size: 2em;
+margin: 0.67em 0;
+}
+img {
+border: 0;
+}
+hr {
+box-sizing: content-box;
+height: 0;
+}
+pre {
+overflow: auto;
+}
+code,
+kbd,
+pre {
+font-family: monospace, monospace;
+font-size: 1em;
+}
+input {
+color: inherit;
+font: inherit;
+margin: 0;
+}
+html input[disabled] {
+cursor: default;
+}
+input {
+line-height: normal;
+}
+input[type="checkbox"] {
+box-sizing: border-box;
+padding: 0;
+}
+table {
+border-collapse: collapse;
+border-spacing: 0;
+}
+td,
+th {
+padding: 0;
+}
+* {
+box-sizing: border-box;
+}
+input {
+font: 13px / 1.4 Helvetica, arial, nimbussansl, liberationsans, freesans, clean, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
+a {
+color: #4078c0;
+text-decoration: none;
+}
+a:hover,
+a:active {
+text-decoration: underline;
+}
+hr {
+height: 0;
+margin: 15px 0;
+overflow: hidden;
+background: transparent;
+border: 0;
+border-bottom: 1px solid #ddd;
+}
+hr:before {
+display: table;
+content: "";
+}
+hr:after {
+display: table;
+clear: both;
+content: "";
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+margin-top: 15px;
+margin-bottom: 15px;
+line-height: 1.1;
+}
+h1 {
+font-size: 30px;
+}
+h2 {
+font-size: 21px;
+}
+h3 {
+font-size: 16px;
+}
+h4 {
+font-size: 14px;
+}
+h5 {
+font-size: 12px;
+}
+h6 {
+font-size: 11px;
+}
+blockquote {
+margin: 0;
+}
+ul,
+ol {
+padding: 0;
+margin-top: 0;
+margin-bottom: 0;
+}
+ol ol,
+ul ol {
+list-style-type: lower-roman;
+}
+ul ul ol,
+ul ol ol,
+ol ul ol,
+ol ol ol {
+list-style-type: lower-alpha;
+}
+dd {
+margin-left: 0;
+}
+code {
+font-family: Consolas, "Liberation Mono", Menlo, Courier, monospace;
+font-size: 12px;
+}
+pre {
+margin-top: 0;
+margin-bottom: 0;
+font: 12px Consolas, "Liberation Mono", Menlo, Courier, monospace;
+}
+.select::-ms-expand {
+opacity: 0;
+}
+.octicon {
+font: normal normal normal 16px/1 octicons-link;
+display: inline-block;
+text-decoration: none;
+text-rendering: auto;
+-webkit-font-smoothing: antialiased;
+-moz-osx-font-smoothing: grayscale;
+-webkit-user-select: none;
+-moz-user-select: none;
+-ms-user-select: none;
+user-select: none;
+}
+.octicon-link:before {
+content: '\f05c';
+}
+.markdown-body:before {
+display: table;
+content: "";
+}
+.markdown-body:after {
+display: table;
+clear: both;
+content: "";
+}
+.markdown-body>*:first-child {
+margin-top: 0 !important;
+}
+.markdown-body>*:last-child {
+margin-bottom: 0 !important;
+}
+a:not([href]) {
+color: inherit;
+text-decoration: none;
+}
+.anchor {
+display: inline-block;
+padding-right: 2px;
+margin-left: -18px;
+}
+.anchor:focus {
+outline: none;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+margin-top: 1em;
+margin-bottom: 16px;
+font-weight: bold;
+line-height: 1.4;
+}
+h1 .octicon-link,
+h2 .octicon-link,
+h3 .octicon-link,
+h4 .octicon-link,
+h5 .octicon-link,
+h6 .octicon-link {
+color: #000;
+vertical-align: middle;
+visibility: hidden;
+}
+h1:hover .anchor,
+h2:hover .anchor,
+h3:hover .anchor,
+h4:hover .anchor,
+h5:hover .anchor,
+h6:hover .anchor {
+text-decoration: none;
+}
+h1:hover .anchor .octicon-link,
+h2:hover .anchor .octicon-link,
+h3:hover .anchor .octicon-link,
+h4:hover .anchor .octicon-link,
+h5:hover .anchor .octicon-link,
+h6:hover .anchor .octicon-link {
+visibility: visible;
+}
+h1 {
+padding-bottom: 0.3em;
+font-size: 2.25em;
+line-height: 1.2;
+border-bottom: 1px solid #eee;
+}
+h1 .anchor {
+line-height: 1;
+}
+h2 {
+padding-bottom: 0.3em;
+font-size: 1.75em;
+line-height: 1.225;
+border-bottom: 1px solid #eee;
+}
+h2 .anchor {
+line-height: 1;
+}
+h3 {
+font-size: 1.5em;
+line-height: 1.43;
+}
+h3 .anchor {
+line-height: 1.2;
+}
+h4 {
+font-size: 1.25em;
+}
+h4 .anchor {
+line-height: 1.2;
+}
+h5 {
+font-size: 1em;
+}
+h5 .anchor {
+line-height: 1.1;
+}
+h6 {
+font-size: 1em;
+color: #777;
+}
+h6 .anchor {
+line-height: 1.1;
+}
+p,
+blockquote,
+ul,
+ol,
+dl,
+table,
+pre {
+margin-top: 0;
+margin-bottom: 16px;
+}
+hr {
+height: 4px;
+padding: 0;
+margin: 16px 0;
+background-color: #e7e7e7;
+border: 0 none;
+}
+ul,
+ol {
+padding-left: 2em;
+}
+ul ul,
+ul ol,
+ol ol,
+ol ul {
+margin-top: 0;
+margin-bottom: 0;
+}
+li>p {
+margin-top: 16px;
+}
+dl {
+padding: 0;
+}
+dl dt {
+padding: 0;
+margin-top: 16px;
+font-size: 1em;
+font-style: italic;
+font-weight: bold;
+}
+dl dd {
+padding: 0 16px;
+margin-bottom: 16px;
+}
+blockquote {
+padding: 0 15px;
+color: #777;
+border-left: 4px solid #ddd;
+}
+blockquote>:first-child {
+margin-top: 0;
+}
+blockquote>:last-child {
+margin-bottom: 0;
+}
+table {
+display: block;
+width: 100%;
+overflow: auto;
+word-break: normal;
+word-break: keep-all;
+}
+table th {
+font-weight: bold;
+}
+table th,
+table td {
+padding: 6px 13px;
+border: 1px solid #ddd;
+}
+table tr {
+background-color: #fff;
+border-top: 1px solid #ccc;
+}
+table tr:nth-child(2n) {
+background-color: #f8f8f8;
+}
+img {
+max-width: 100%;
+box-sizing: content-box;
+background-color: #fff;
+}
+code {
+padding: 0;
+padding-top: 0.2em;
+padding-bottom: 0.2em;
+margin: 0;
+font-size: 85%;
+background-color: rgba(0,0,0,0.04);
+border-radius: 3px;
+}
+code:before,
+code:after {
+letter-spacing: -0.2em;
+content: "\00a0";
+}
+pre>code {
+padding: 0;
+margin: 0;
+font-size: 100%;
+word-break: normal;
+white-space: pre;
+background: transparent;
+border: 0;
+}
+.highlight {
+margin-bottom: 16px;
+}
+.highlight pre,
+pre {
+padding: 16px;
+overflow: auto;
+font-size: 85%;
+line-height: 1.45;
+background-color: #f7f7f7;
+border-radius: 3px;
+}
+.highlight pre {
+margin-bottom: 0;
+word-break: normal;
+}
+pre {
+word-wrap: normal;
+}
+pre code {
+display: inline;
+max-width: initial;
+padding: 0;
+margin: 0;
+overflow: initial;
+line-height: inherit;
+word-wrap: normal;
+background-color: transparent;
+border: 0;
+}
+pre code:before,
+pre code:after {
+content: normal;
+}
+kbd {
+display: inline-block;
+padding: 3px 5px;
+font-size: 11px;
+line-height: 10px;
+color: #555;
+vertical-align: middle;
+background-color: #fcfcfc;
+border: solid 1px #ccc;
+border-bottom-color: #bbb;
+border-radius: 3px;
+box-shadow: inset 0 -1px 0 #bbb;
+}
+.pl-c {
+color: #969896;
+}
+.pl-c1,
+.pl-s .pl-v {
+color: #0086b3;
+}
+.pl-e,
+.pl-en {
+color: #795da3;
+}
+.pl-s .pl-s1,
+.pl-smi {
+color: #333;
+}
+.pl-ent {
+color: #63a35c;
+}
+.pl-k {
+color: #a71d5d;
+}
+.pl-pds,
+.pl-s,
+.pl-s .pl-pse .pl-s1,
+.pl-sr,
+.pl-sr .pl-cce,
+.pl-sr .pl-sra,
+.pl-sr .pl-sre {
+color: #183691;
+}
+.pl-v {
+color: #ed6a43;
+}
+.pl-id {
+color: #b52a1d;
+}
+.pl-ii {
+background-color: #b52a1d;
+color: #f8f8f8;
+}
+.pl-sr .pl-cce {
+color: #63a35c;
+font-weight: bold;
+}
+.pl-ml {
+color: #693a17;
+}
+.pl-mh,
+.pl-mh .pl-en,
+.pl-ms {
+color: #1d3e81;
+font-weight: bold;
+}
+.pl-mq {
+color: #008080;
+}
+.pl-mi {
+color: #333;
+font-style: italic;
+}
+.pl-mb {
+color: #333;
+font-weight: bold;
+}
+.pl-md {
+background-color: #ffecec;
+color: #bd2c00;
+}
+.pl-mi1 {
+background-color: #eaffea;
+color: #55a532;
+}
+.pl-mdr {
+color: #795da3;
+font-weight: bold;
+}
+.pl-mo {
+color: #1d3e81;
+}
+kbd {
+display: inline-block;
+padding: 3px 5px;
+font: 11px Consolas, "Liberation Mono", Menlo, Courier, monospace;
+line-height: 10px;
+color: #555;
+vertical-align: middle;
+background-color: #fcfcfc;
+border: solid 1px #ccc;
+border-bottom-color: #bbb;
+border-radius: 3px;
+box-shadow: inset 0 -1px 0 #bbb;
+}
+.task-list-item {
+list-style-type: none;
+}
+.task-list-item+.task-list-item {
+margin-top: 3px;
+}
+.task-list-item input {
+margin: 0 0.35em 0.25em -1.6em;
+vertical-align: middle;
+}
+:checked+.radio-label {
+z-index: 1;
+position: relative;
+border-color: #4078c0;
+}
+.sourceLine {
+display: inline-block;
+}
+code .kw { color: #000000; }
+code .dt { color: #ed6a43; }
+code .dv { color: #009999; }
+code .bn { color: #009999; }
+code .fl { color: #009999; }
+code .ch { color: #009999; }
+code .st { color: #183691; }
+code .co { color: #969896; }
+code .ot { color: #0086b3; }
+code .al { color: #a61717; }
+code .fu { color: #63a35c; }
+code .er { color: #a61717; background-color: #e3d2d2; }
+code .wa { color: #000000; }
+code .cn { color: #008080; }
+code .sc { color: #008080; }
+code .vs { color: #183691; }
+code .ss { color: #183691; }
+code .im { color: #000000; }
+code .va {color: #008080; }
+code .cf { color: #000000; }
+code .op { color: #000000; }
+code .bu { color: #000000; }
+code .ex { color: #000000; }
+code .pp { color: #999999; }
+code .at { color: #008080; }
+code .do { color: #969896; }
+code .an { color: #008080; }
+code .cv { color: #008080; }
+code .in { color: #008080; }
+</style>
+<style>
+body {
+box-sizing: border-box;
+min-width: 200px;
+max-width: 980px;
+margin: 0 auto;
+padding: 45px;
+padding-top: 0px;
+}
+</style>
+
+
+</head>
+
+<body>
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+<h1 id="ducknng">ducknng</h1>
+<p><code>ducknng</code> is a pure C DuckDB extension for DuckDB + NNG
+REQ/REP interop.</p>
+<p>Today it provides:</p>
+<ul>
+<li>named server start/stop from SQL</li>
+<li>registry introspection with <code>ducknng_servers()</code></li>
+<li>one REP socket with one or more REP contexts</li>
+<li>a working <code>EXEC</code> request/reply path over the raw wire
+protocol</li>
+</ul>
+<h2 id="functions">Functions</h2>
+<h1 id="function-catalog">Function Catalog</h1>
+<p>This file is generated from
+<code>function_catalog/functions.yaml</code>.</p>
+<table>
+<thead>
+<tr class="header">
+<th>name</th>
+<th>kind</th>
+<th>returns</th>
+<th align="right">phase</th>
+<th>implemented</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>ducknng_server_start</code></td>
+<td>scalar</td>
+<td><code>BOOLEAN</code></td>
+<td align="right">1</td>
+<td>yes</td>
+<td>Start a named ducknng REP listener for SQL serving on an NNG
+URL.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_server_stop</code></td>
+<td>scalar</td>
+<td><code>BOOLEAN</code></td>
+<td align="right">1</td>
+<td>yes</td>
+<td>Stop a named ducknng service and tear down its listener and worker
+thread.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_servers</code></td>
+<td>table</td>
+<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)</code></td>
+<td align="right">1</td>
+<td>yes</td>
+<td>List registered ducknng services in the current DuckDB database
+runtime.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_sessions</code></td>
+<td>table</td>
+<td><code>TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)</code></td>
+<td align="right">3</td>
+<td>no</td>
+<td>List active query sessions for a named ducknng service.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_remote_exec</code></td>
+<td>scalar</td>
+<td><code>UBIGINT</code></td>
+<td align="right">2</td>
+<td>no</td>
+<td>Send an EXEC request over the real wire protocol and return rows
+changed.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_remote</code></td>
+<td>table</td>
+<td><code>table</code></td>
+<td align="right">3</td>
+<td>no</td>
+<td>Execute a remote query over REQ/REP and stream Arrow IPC batches
+back as a DuckDB table function.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="build">Build</h2>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">make</span> configure</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">make</span> release</span></code></pre></div>
+<p>See also <code>NEWS.md</code> for the current implementation status
+and planned next steps.</p>
+<h2 id="examples">Examples</h2>
+<h3 id="start-an-ipc-listener-and-inspect-the-registry">Start an IPC
+listener and inspect the registry</h3>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>LOAD <span class="st">&#39;/root/ducknng/build/release/ducknng.duckdb_extension&#39;</span>;</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_start(</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>  <span class="st">&#39;sql0&#39;</span>,</span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql0.ipc&#39;</span>,</span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>  <span class="dv">1</span>,</span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>  <span class="dv">134217728</span>,</span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a>  <span class="dv">300000</span>,</span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a>  <span class="kw">NULL</span>,</span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>  <span class="kw">NULL</span>,</span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a>  <span class="kw">NULL</span></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a>);</span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a></span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="kw">SELECT</span> name, listen, contexts, running, sessions</span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a><span class="kw">FROM</span> ducknng_servers();</span>
+<span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a></span>
+<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_stop(<span class="st">&#39;sql0&#39;</span>);</span></code></pre></div>
+<pre><code>┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ducknng_server_start(&#39;sql0&#39;, &#39;ipc:///tmp/ducknng_sql0.ipc&#39;, 1, 134217728, 300000, NULL, NULL, NULL) │
+│                                               boolean                                               │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ true                                                                                                │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────┬─────────────────────────────┬──────────┬─────────┬──────────┐
+│  name   │           listen            │ contexts │ running │ sessions │
+│ varchar │           varchar           │  int32   │ boolean │  uint64  │
+├─────────┼─────────────────────────────┼──────────┼─────────┼──────────┤
+│ sql0    │ ipc:///tmp/ducknng_sql0.ipc │        1 │ true    │        0 │
+└─────────┴─────────────────────────────┴──────────┴─────────┴──────────┘
+┌─────────────────────────────┐
+│ ducknng_server_stop(&#39;sql0&#39;) │
+│           boolean           │
+├─────────────────────────────┤
+│ true                        │
+└─────────────────────────────┘</code></pre>
+<h3 id="request-multiple-rep-contexts-on-one-rep-socket">Request
+multiple REP contexts on one REP socket</h3>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>LOAD <span class="st">&#39;/root/ducknng/build/release/ducknng.duckdb_extension&#39;</span>;</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_start(</span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>  <span class="st">&#39;sql_multi&#39;</span>,</span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_multi.ipc&#39;</span>,</span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>  <span class="dv">3</span>,</span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>  <span class="dv">134217728</span>,</span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>  <span class="dv">300000</span>,</span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>  <span class="kw">NULL</span>,</span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>  <span class="kw">NULL</span>,</span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a>  <span class="kw">NULL</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a>);</span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="kw">SELECT</span> name, contexts, running</span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="kw">FROM</span> ducknng_servers()</span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="kw">WHERE</span> name <span class="op">=</span> <span class="st">&#39;sql_multi&#39;</span>;</span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a></span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_stop(<span class="st">&#39;sql_multi&#39;</span>);</span></code></pre></div>
+<pre><code>┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ducknng_server_start(&#39;sql_multi&#39;, &#39;ipc:///tmp/ducknng_sql_multi.ipc&#39;, 3, 134217728, 300000, NULL, NULL, NULL) │
+│                                                    boolean                                                    │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ true                                                                                                          │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌───────────┬──────────┬─────────┐
+│   name    │ contexts │ running │
+│  varchar  │  int32   │ boolean │
+├───────────┼──────────┼─────────┤
+│ sql_multi │        3 │ true    │
+└───────────┴──────────┴─────────┘
+┌──────────────────────────────────┐
+│ ducknng_server_stop(&#39;sql_multi&#39;) │
+│             boolean              │
+├──────────────────────────────────┤
+│ true                             │
+└──────────────────────────────────┘</code></pre>
+<h3 id="reqrep-exec-via-nanonext-as-an-interop-example">REQ/REP
+<code>EXEC</code> via <code>nanonext</code> as an interop example</h3>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="fu">suppressWarnings</span>(<span class="fu">suppressPackageStartupMessages</span>({</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>  <span class="fu">library</span>(DBI)</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>  <span class="fu">library</span>(duckdb)</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>  <span class="fu">library</span>(nanonext)</span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>  <span class="fu">library</span>(nanoarrow)</span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>}))</span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a></span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a><span class="co"># Little-endian integer encoders for the versioned ducknng RPC envelope.</span></span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>u32le <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">writeBin</span>(<span class="fu">as.integer</span>(x), <span class="fu">raw</span>(), <span class="at">size =</span> <span class="dv">4</span><span class="dt">L</span>, <span class="at">endian =</span> <span class="st">&quot;little&quot;</span>)</span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>u64le <span class="ot">&lt;-</span> <span class="cf">function</span>(x) {</span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>  x <span class="ot">&lt;-</span> <span class="fu">as.double</span>(x)</span>
+<span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>  <span class="fu">c</span>(<span class="fu">u32le</span>(x <span class="sc">%%</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span>), <span class="fu">u32le</span>(<span class="fu">floor</span>(x <span class="sc">/</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span>)))</span>
+<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>}</span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>le_u32_from_raw <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">sum</span>(<span class="fu">as.double</span>(<span class="fu">as.integer</span>(x)) <span class="sc">*</span> <span class="dv">256</span><span class="sc">^</span>(<span class="dv">0</span><span class="sc">:</span><span class="dv">3</span>))</span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>le_u64_from_raw <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">le_u32_from_raw</span>(x[<span class="dv">1</span><span class="sc">:</span><span class="dv">4</span>]) <span class="sc">+</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span> <span class="sc">*</span> <span class="fu">le_u32_from_raw</span>(x[<span class="dv">5</span><span class="sc">:</span><span class="dv">8</span>])</span>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a>read_u32le <span class="ot">&lt;-</span> <span class="cf">function</span>(buf, offset) <span class="fu">le_u32_from_raw</span>(buf[offset <span class="sc">+</span> <span class="dv">0</span><span class="sc">:</span><span class="dv">3</span>])</span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>read_u64le <span class="ot">&lt;-</span> <span class="cf">function</span>(buf, offset) <span class="fu">le_u64_from_raw</span>(buf[offset <span class="sc">+</span> <span class="dv">0</span><span class="sc">:</span><span class="dv">7</span>])</span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a></span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a><span class="co"># Serialize a one-row exec request as Arrow IPC using nanoarrow.</span></span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a>encode_ducknng_exec_request <span class="ot">&lt;-</span> <span class="cf">function</span>(sql, <span class="at">want_result =</span> <span class="cn">FALSE</span>) {</span>
+<span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a>  con <span class="ot">&lt;-</span> <span class="fu">rawConnection</span>(<span class="fu">raw</span>(), <span class="at">open =</span> <span class="st">&quot;r+&quot;</span>)</span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a>  <span class="fu">on.exit</span>(<span class="fu">close</span>(con))</span>
+<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a>  nanoarrow<span class="sc">::</span><span class="fu">write_nanoarrow</span>(</span>
+<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a>    <span class="fu">data.frame</span>(<span class="at">sql =</span> sql, <span class="at">want_result =</span> want_result),</span>
+<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a>    con</span>
+<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a>  )</span>
+<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a>  payload <span class="ot">&lt;-</span> <span class="fu">rawConnectionValue</span>(con)</span>
+<span id="cb6-28"><a href="#cb6-28" tabindex="-1"></a>  name <span class="ot">&lt;-</span> <span class="fu">charToRaw</span>(<span class="st">&quot;exec&quot;</span>)</span>
+<span id="cb6-29"><a href="#cb6-29" tabindex="-1"></a>  <span class="fu">c</span>(</span>
+<span id="cb6-30"><a href="#cb6-30" tabindex="-1"></a>    <span class="fu">as.raw</span>(<span class="dv">1</span><span class="dt">L</span>),                  <span class="co"># envelope version</span></span>
+<span id="cb6-31"><a href="#cb6-31" tabindex="-1"></a>    <span class="fu">as.raw</span>(<span class="dv">1</span><span class="dt">L</span>),                  <span class="co"># message type: call</span></span>
+<span id="cb6-32"><a href="#cb6-32" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="dv">0</span>),                    <span class="co"># flags</span></span>
+<span id="cb6-33"><a href="#cb6-33" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="fu">length</span>(name)),         <span class="co"># method-name length</span></span>
+<span id="cb6-34"><a href="#cb6-34" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="dv">0</span>),                    <span class="co"># error-string length on requests</span></span>
+<span id="cb6-35"><a href="#cb6-35" tabindex="-1"></a>    <span class="fu">u64le</span>(<span class="fu">length</span>(payload)),      <span class="co"># payload length</span></span>
+<span id="cb6-36"><a href="#cb6-36" tabindex="-1"></a>    name,</span>
+<span id="cb6-37"><a href="#cb6-37" tabindex="-1"></a>    payload</span>
+<span id="cb6-38"><a href="#cb6-38" tabindex="-1"></a>  )</span>
+<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a>}</span>
+<span id="cb6-40"><a href="#cb6-40" tabindex="-1"></a></span>
+<span id="cb6-41"><a href="#cb6-41" tabindex="-1"></a><span class="co"># Decode a reply envelope and, when present, parse the Arrow IPC payload.</span></span>
+<span id="cb6-42"><a href="#cb6-42" tabindex="-1"></a>decode_ducknng_exec_reply <span class="ot">&lt;-</span> <span class="cf">function</span>(buf) {</span>
+<span id="cb6-43"><a href="#cb6-43" tabindex="-1"></a>  name_len <span class="ot">&lt;-</span> <span class="fu">read_u32le</span>(buf, <span class="dv">7</span>)</span>
+<span id="cb6-44"><a href="#cb6-44" tabindex="-1"></a>  error_len <span class="ot">&lt;-</span> <span class="fu">read_u32le</span>(buf, <span class="dv">11</span>)</span>
+<span id="cb6-45"><a href="#cb6-45" tabindex="-1"></a>  payload_len <span class="ot">&lt;-</span> <span class="fu">read_u64le</span>(buf, <span class="dv">15</span>)</span>
+<span id="cb6-46"><a href="#cb6-46" tabindex="-1"></a>  name_start <span class="ot">&lt;-</span> <span class="dv">23</span><span class="dt">L</span></span>
+<span id="cb6-47"><a href="#cb6-47" tabindex="-1"></a>  error_start <span class="ot">&lt;-</span> name_start <span class="sc">+</span> name_len</span>
+<span id="cb6-48"><a href="#cb6-48" tabindex="-1"></a>  payload_start <span class="ot">&lt;-</span> error_start <span class="sc">+</span> error_len</span>
+<span id="cb6-49"><a href="#cb6-49" tabindex="-1"></a>  payload_end <span class="ot">&lt;-</span> payload_start <span class="sc">+</span> payload_len <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span></span>
+<span id="cb6-50"><a href="#cb6-50" tabindex="-1"></a>  payload <span class="ot">&lt;-</span> <span class="cf">if</span> (payload_len <span class="sc">&gt;</span> <span class="dv">0</span>) buf[payload_start<span class="sc">:</span>payload_end] <span class="cf">else</span> <span class="fu">raw</span>()</span>
+<span id="cb6-51"><a href="#cb6-51" tabindex="-1"></a>  <span class="fu">list</span>(</span>
+<span id="cb6-52"><a href="#cb6-52" tabindex="-1"></a>    <span class="at">version =</span> <span class="fu">as.integer</span>(buf[<span class="dv">1</span>]),</span>
+<span id="cb6-53"><a href="#cb6-53" tabindex="-1"></a>    <span class="at">type =</span> <span class="fu">as.integer</span>(buf[<span class="dv">2</span>]),</span>
+<span id="cb6-54"><a href="#cb6-54" tabindex="-1"></a>    <span class="at">flags =</span> <span class="fu">read_u32le</span>(buf, <span class="dv">3</span>),</span>
+<span id="cb6-55"><a href="#cb6-55" tabindex="-1"></a>    <span class="at">method =</span> <span class="fu">rawToChar</span>(buf[name_start<span class="sc">:</span>(error_start <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)]),</span>
+<span id="cb6-56"><a href="#cb6-56" tabindex="-1"></a>    <span class="at">error =</span> <span class="cf">if</span> (error_len <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="fu">rawToChar</span>(buf[error_start<span class="sc">:</span>(payload_start <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)]) <span class="cf">else</span> <span class="st">&quot;&quot;</span>,</span>
+<span id="cb6-57"><a href="#cb6-57" tabindex="-1"></a>    <span class="at">payload =</span> payload,</span>
+<span id="cb6-58"><a href="#cb6-58" tabindex="-1"></a>    <span class="at">data =</span> <span class="cf">if</span> (payload_len <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="fu">as.data.frame</span>(nanoarrow<span class="sc">::</span><span class="fu">read_nanoarrow</span>(payload)) <span class="cf">else</span> <span class="cn">NULL</span></span>
+<span id="cb6-59"><a href="#cb6-59" tabindex="-1"></a>  )</span>
+<span id="cb6-60"><a href="#cb6-60" tabindex="-1"></a>}</span>
+<span id="cb6-61"><a href="#cb6-61" tabindex="-1"></a></span>
+<span id="cb6-62"><a href="#cb6-62" tabindex="-1"></a><span class="co"># Use a temporary IPC path and launch a DuckDB-backed ducknng server in a child process.</span></span>
+<span id="cb6-63"><a href="#cb6-63" tabindex="-1"></a>ext_path <span class="ot">&lt;-</span> <span class="fu">normalizePath</span>(<span class="st">&quot;build/release/ducknng.duckdb_extension&quot;</span>)</span>
+<span id="cb6-64"><a href="#cb6-64" tabindex="-1"></a>ipc_path <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">pattern =</span> <span class="st">&quot;ducknng_readme_exec_&quot;</span>, <span class="at">tmpdir =</span> <span class="st">&quot;/tmp&quot;</span>, <span class="at">fileext =</span> <span class="st">&quot;.ipc&quot;</span>)</span>
+<span id="cb6-65"><a href="#cb6-65" tabindex="-1"></a>ipc_url <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;ipc://&quot;</span>, ipc_path)</span>
+<span id="cb6-66"><a href="#cb6-66" tabindex="-1"></a></span>
+<span id="cb6-67"><a href="#cb6-67" tabindex="-1"></a>server_job <span class="ot">&lt;-</span> parallel<span class="sc">::</span><span class="fu">mcparallel</span>({</span>
+<span id="cb6-68"><a href="#cb6-68" tabindex="-1"></a>  drv <span class="ot">&lt;-</span> duckdb<span class="sc">::</span><span class="fu">duckdb</span>(<span class="at">config =</span> <span class="fu">list</span>(<span class="at">allow_unsigned_extensions =</span> <span class="st">&quot;true&quot;</span>))</span>
+<span id="cb6-69"><a href="#cb6-69" tabindex="-1"></a>  con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(drv, <span class="at">dbdir =</span> <span class="st">&quot;:memory:&quot;</span>)</span>
+<span id="cb6-70"><a href="#cb6-70" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbExecute</span>(con, <span class="fu">sprintf</span>(<span class="st">&quot;LOAD &#39;%s&#39;&quot;</span>, ext_path))</span>
+<span id="cb6-71"><a href="#cb6-71" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="fu">sprintf</span>(</span>
+<span id="cb6-72"><a href="#cb6-72" tabindex="-1"></a>    <span class="st">&quot;SELECT ducknng_server_start(&#39;sql_exec&#39;, &#39;%s&#39;, 1, 134217728, 300000, NULL, NULL, NULL)&quot;</span>,</span>
+<span id="cb6-73"><a href="#cb6-73" tabindex="-1"></a>    ipc_url</span>
+<span id="cb6-74"><a href="#cb6-74" tabindex="-1"></a>  ))</span>
+<span id="cb6-75"><a href="#cb6-75" tabindex="-1"></a>  <span class="fu">Sys.sleep</span>(<span class="dv">2</span>)</span>
+<span id="cb6-76"><a href="#cb6-76" tabindex="-1"></a>  rows <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT * FROM ducknng_exec_demo ORDER BY i&quot;</span>)</span>
+<span id="cb6-77"><a href="#cb6-77" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT ducknng_server_stop(&#39;sql_exec&#39;)&quot;</span>)</span>
+<span id="cb6-78"><a href="#cb6-78" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbDisconnect</span>(con, <span class="at">shutdown =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb6-79"><a href="#cb6-79" tabindex="-1"></a>  rows</span>
+<span id="cb6-80"><a href="#cb6-80" tabindex="-1"></a>})</span>
+<span id="cb6-81"><a href="#cb6-81" tabindex="-1"></a></span>
+<span id="cb6-82"><a href="#cb6-82" tabindex="-1"></a><span class="co"># Give the listener a moment to come up, then dial it with a normal req socket.</span></span>
+<span id="cb6-83"><a href="#cb6-83" tabindex="-1"></a><span class="fu">Sys.sleep</span>(<span class="dv">1</span>)</span>
+<span id="cb6-84"><a href="#cb6-84" tabindex="-1"></a>req <span class="ot">&lt;-</span> nanonext<span class="sc">::</span><span class="fu">socket</span>(<span class="st">&quot;req&quot;</span>, <span class="at">dial =</span> ipc_url, <span class="at">autostart =</span> <span class="cn">NA</span>)</span>
+<span id="cb6-85"><a href="#cb6-85" tabindex="-1"></a></span>
+<span id="cb6-86"><a href="#cb6-86" tabindex="-1"></a><span class="co"># Create a table remotely and inspect the reply metadata.</span></span>
+<span id="cb6-87"><a href="#cb6-87" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(req, <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;CREATE TABLE ducknng_exec_demo(i INTEGER)&quot;</span>), <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>)</span>
+<span id="cb6-88"><a href="#cb6-88" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
+<span id="cb6-89"><a href="#cb6-89" tabindex="-1"></a>create_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
+<span id="cb6-90"><a href="#cb6-90" tabindex="-1"></a>create_reply<span class="sc">$</span>data</span>
+<span id="cb6-91"><a href="#cb6-91" tabindex="-1"></a><span class="co">#&gt; [1] rows_changed   statement_type result_type   </span></span>
+<span id="cb6-92"><a href="#cb6-92" tabindex="-1"></a><span class="co">#&gt; &lt;0 rows&gt; (or 0-length row.names)</span></span>
+<span id="cb6-93"><a href="#cb6-93" tabindex="-1"></a></span>
+<span id="cb6-94"><a href="#cb6-94" tabindex="-1"></a><span class="co"># Insert rows remotely and inspect the second reply.</span></span>
+<span id="cb6-95"><a href="#cb6-95" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(req, <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;INSERT INTO ducknng_exec_demo VALUES (42), (99)&quot;</span>), <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>)</span>
+<span id="cb6-96"><a href="#cb6-96" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
+<span id="cb6-97"><a href="#cb6-97" tabindex="-1"></a>insert_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
+<span id="cb6-98"><a href="#cb6-98" tabindex="-1"></a>insert_reply<span class="sc">$</span>data</span>
+<span id="cb6-99"><a href="#cb6-99" tabindex="-1"></a><span class="co">#&gt; [1] rows_changed   statement_type result_type   </span></span>
+<span id="cb6-100"><a href="#cb6-100" tabindex="-1"></a><span class="co">#&gt; &lt;0 rows&gt; (or 0-length row.names)</span></span>
+<span id="cb6-101"><a href="#cb6-101" tabindex="-1"></a></span>
+<span id="cb6-102"><a href="#cb6-102" tabindex="-1"></a><span class="co"># Collect the server-side query result from the child process.</span></span>
+<span id="cb6-103"><a href="#cb6-103" tabindex="-1"></a>server_rows <span class="ot">&lt;-</span> parallel<span class="sc">::</span><span class="fu">mccollect</span>(server_job)[[<span class="dv">1</span>]]</span>
+<span id="cb6-104"><a href="#cb6-104" tabindex="-1"></a>server_rows</span>
+<span id="cb6-105"><a href="#cb6-105" tabindex="-1"></a><span class="co">#&gt;    i</span></span>
+<span id="cb6-106"><a href="#cb6-106" tabindex="-1"></a><span class="co">#&gt; 1 42</span></span>
+<span id="cb6-107"><a href="#cb6-107" tabindex="-1"></a><span class="co">#&gt; 2 99</span></span>
+<span id="cb6-108"><a href="#cb6-108" tabindex="-1"></a></span>
+<span id="cb6-109"><a href="#cb6-109" tabindex="-1"></a><span class="fu">close</span>(req)</span></code></pre></div>
+
+</body>
+</html>
