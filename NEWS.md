@@ -26,7 +26,9 @@
 - `manifest` replies are now JSON exported from the runtime method registry.
 - `exec` metadata replies are now Arrow IPC generated with vendored nanoarrow C.
 - Unary `exec(..., want_result = true)` now returns Arrow IPC row payloads for the current scalar subset: BOOLEAN, signed/unsigned integers, FLOAT/DOUBLE, VARCHAR, and BLOB.
-- Wider row-result type coverage and session-based query streaming are still pending.
+- Added client-side SQL helpers `ducknng_remote_manifest(url)` and `ducknng_remote_exec(url, sql)` so DuckDB can request manifest and metadata-only exec operations from another ducknng-compatible service.
+- Wider row-result type coverage, a remote table-function client path, and session-based query streaming are still pending.
+- The docs contract for the session query family now fixes the intended lifecycle: `query_open` returns JSON control metadata and a session id, `fetch` is the only row-bearing method, `close` is the normal cleanup path, and `cancel` is best-effort until the implementation can bind sessions to a concrete owner identity.
 
 ## Planned next steps
 
@@ -34,4 +36,4 @@
 - Add phase-2 `EXEC` request handling.
 - Add vendored `mbedTLS` and turn on TLS transport support.
 - Add nanonext-based README examples and interop tests.
-- Add Arrow IPC ingress/egress and streaming query sessions.
+- Add Arrow IPC ingress/egress and streaming query sessions using the documented `query_open` / `fetch` / `close` / `cancel` contract and owner-checked session lifecycle.

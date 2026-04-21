@@ -18,13 +18,95 @@ static char *ducknng_url_with_port(const nng_url *up, int port) {
     return out;
 }
 
+static int ducknng_tls_requested(const ducknng_tls_opts *opts) {
+    return opts && (opts->enabled ||
+        (opts->cert_key_file && opts->cert_key_file[0]) ||
+        (opts->ca_file && opts->ca_file[0]) || opts->auth_mode != 0);
+}
+
+static const char *ducknng_normalize_host(const char *host, size_t *len_out) {
+    size_t len;
+    if (!host) {
+        if (len_out) *len_out = 0;
+        return NULL;
+    }
+    len = strlen(host);
+    if (len >= 2 && host[0] == '[' && host[len - 1] == ']') {
+        if (len_out) *len_out = len - 2;
+        return host + 1;
+    }
+    if (len_out) *len_out = len;
+    return host;
+}
+
+static int ducknng_host_is_loopback(const char *host) {
+    const char *norm;
+    size_t len;
+    norm = ducknng_normalize_host(host, &len);
+    if (!norm || len == 0) return 0;
+    if (len == strlen("localhost") && strncmp(norm, "localhost", len) == 0) return 1;
+    if (len == strlen("127.0.0.1") && strncmp(norm, "127.0.0.1", len) == 0) return 1;
+    if (len == strlen("::1") && strncmp(norm, "::1", len) == 0) return 1;
+    return 0;
+}
+
 int ducknng_rep_socket_open(nng_socket *out) { return nng_rep0_open(out); }
 int ducknng_req_socket_open(nng_socket *out) { return nng_req0_open(out); }
+int ducknng_req_dial(nng_socket sock, const char *url, int timeout_ms) {
+    if (timeout_ms > 0) {
+        nng_setopt_ms(sock, NNG_OPT_SENDTIMEO, timeout_ms);
+        nng_setopt_ms(sock, NNG_OPT_RECVTIMEO, timeout_ms);
+    }
+    return nng_dial(sock, url, NULL, 0);
+}
+int ducknng_req_transact(nng_socket sock, nng_msg *req, nng_msg **resp) {
+    int rv;
+    rv = nng_sendmsg(sock, req, 0);
+    if (rv != 0) return rv;
+    return nng_recvmsg(sock, resp, 0);
+}
 int ducknng_listener_create(nng_listener *out, nng_socket sock, const char *url) { return nng_listener_create(out, sock, url); }
+int ducknng_listener_validate_startup_url(const char *url, const ducknng_tls_opts *opts, char **errmsg) {
+    nng_url *up = NULL;
+    int tls_requested = ducknng_tls_requested(opts);
+    int rc = 0;
+    if (!url || !url[0]) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: listen URL is required");
+        return -1;
+    }
+    if (nng_url_parse(&up, url) != 0 || !up || !up->u_scheme || !up->u_scheme[0]) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid listen URL");
+        rc = -1;
+        goto done;
+    }
+    if (strcmp(up->u_scheme, "tls+tcp") == 0) {
+        if (tls_requested) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS listener options are not implemented; refusing tls+tcp startup");
+        } else if (errmsg) {
+            *errmsg = ducknng_strdup("ducknng: tls+tcp listeners require TLS support, which is not implemented");
+        }
+        rc = -1;
+        goto done;
+    }
+    if (tls_requested) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS listener options are not implemented; refusing to start listener");
+        rc = -1;
+        goto done;
+    }
+    if (strcmp(up->u_scheme, "tcp") == 0 && !ducknng_host_is_loopback(up->u_hostname)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: refusing unauthenticated non-loopback tcp listener");
+        rc = -1;
+        goto done;
+    }
+
+done:
+    if (up) nng_url_free(up);
+    return rc;
+}
 int ducknng_listener_set_recvmaxsz(nng_listener lst, size_t bytes) { return nng_listener_setopt_size(lst, NNG_OPT_RECVMAXSZ, bytes); }
 int ducknng_listener_apply_tls(nng_listener lst, const ducknng_tls_opts *opts) {
     (void)lst;
-    if (opts && opts->enabled) return NNG_ENOTSUP;
+    if (ducknng_tls_requested(opts)) return NNG_ENOTSUP;
     return 0;
 }
 int ducknng_listener_start(nng_listener lst) { return nng_listener_start(lst, 0); }

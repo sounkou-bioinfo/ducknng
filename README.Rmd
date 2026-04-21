@@ -33,6 +33,8 @@ Today it provides:
 - one REP socket with one or more REP contexts
 - a working `EXEC` request/reply path over the raw wire protocol
 
+The documented next protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current docs contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should be treated as scaffolding for loopback or development use rather than production-safe multi-client exposure.
+
 ## Functions
 
 ```{r function-catalog, echo=FALSE, results='asis'}
@@ -46,7 +48,7 @@ make configure
 make release
 ```
 
-See also `NEWS.md` for the current implementation status and planned next steps.
+See also `NEWS.md` for the current implementation status and planned next steps, and `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the binding session/query-family contract.
 
 ## Examples
 
@@ -89,6 +91,26 @@ FROM ducknng_servers()
 WHERE name = 'sql_multi';
 
 SELECT ducknng_server_stop('sql_multi');
+```
+
+### DuckDB can also act as a client
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+SELECT ducknng_server_start(
+  'sql_client_demo',
+  'ipc:///tmp/ducknng_sql_client_demo.ipc',
+  1,
+  134217728,
+  300000,
+  NULL,
+  NULL,
+  NULL
+);
+
+SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
+SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE client_side_demo(i INTEGER)');
+SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+SELECT ducknng_server_stop('sql_client_demo');
 ```
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example

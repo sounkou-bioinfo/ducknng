@@ -112,6 +112,79 @@ cleanup:
     return rc;
 }
 
+int ducknng_decode_exec_metadata_payload(const uint8_t *payload, size_t payload_len,
+    uint64_t *rows_changed, uint32_t *statement_type, uint32_t *result_type, char **errmsg) {
+    struct ArrowBuffer input_buf;
+    struct ArrowIpcInputStream input_stream;
+    struct ArrowArrayStream stream;
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    struct ArrowArrayView view;
+    struct ArrowError error;
+    int rc = -1;
+    memset(&input_buf, 0, sizeof(input_buf));
+    memset(&input_stream, 0, sizeof(input_stream));
+    memset(&stream, 0, sizeof(stream));
+    memset(&schema, 0, sizeof(schema));
+    memset(&array, 0, sizeof(array));
+    memset(&view, 0, sizeof(view));
+    memset(&error, 0, sizeof(error));
+    if (!payload || payload_len == 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing exec metadata payload");
+        return -1;
+    }
+    ArrowBufferInit(&input_buf);
+    if (ArrowBufferAppend(&input_buf, payload, (int64_t)payload_len) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to copy exec metadata payload");
+        goto cleanup;
+    }
+    if (ArrowIpcInputStreamInitBuffer(&input_stream, &input_buf) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize exec metadata IPC reader");
+        input_buf.data = NULL;
+        goto cleanup;
+    }
+    memset(&input_buf, 0, sizeof(input_buf));
+    if (ArrowIpcArrayStreamReaderInit(&stream, &input_stream, NULL) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize exec metadata Arrow reader");
+        memset(&input_stream, 0, sizeof(input_stream));
+        goto cleanup;
+    }
+    memset(&input_stream, 0, sizeof(input_stream));
+    if (ArrowArrayStreamGetSchema(&stream, &schema, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (schema.n_children != 3 || !schema.children || !schema.children[0] || !schema.children[1] || !schema.children[2]) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid exec metadata schema");
+        goto cleanup;
+    }
+    if (ArrowArrayStreamGetNext(&stream, &array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (!array.release || array.length != 1) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: exec metadata payload must contain exactly one row");
+        goto cleanup;
+    }
+    if (ArrowArrayViewInitFromSchema(&view, &schema, &error) != NANOARROW_OK ||
+        ArrowArrayViewSetArray(&view, &array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (rows_changed) *rows_changed = ArrowArrayViewGetUIntUnsafe(view.children[0], 0);
+    if (statement_type) *statement_type = (uint32_t)ArrowArrayViewGetIntUnsafe(view.children[1], 0);
+    if (result_type) *result_type = (uint32_t)ArrowArrayViewGetIntUnsafe(view.children[2], 0);
+    rc = 0;
+cleanup:
+    ArrowArrayViewReset(&view);
+    if (array.release) ArrowArrayRelease(&array);
+    if (schema.release) ArrowSchemaRelease(&schema);
+    if (stream.release) ArrowArrayStreamRelease(&stream);
+    if (input_stream.release) input_stream.release(&input_stream);
+    if (input_buf.data) ArrowBufferReset(&input_buf);
+    return rc;
+}
+
 void ducknng_exec_request_destroy(ducknng_exec_request *req) {
     if (!req) return;
     if (req->sql) duckdb_free(req->sql);

@@ -3,6 +3,21 @@
 
 require ducknng
 
+statement error
+SELECT ducknng_server_start('bad_contexts', 'ipc:///tmp/ducknng_bad_contexts.ipc', 0, 134217728, 300000, NULL, NULL, NULL)
+----
+ducknng: contexts must be >= 1
+
+statement error
+SELECT ducknng_server_start('bad_tcp', 'tcp://0.0.0.0:0', 1, 134217728, 300000, NULL, NULL, NULL)
+----
+ducknng: refusing unauthenticated non-loopback tcp listener
+
+statement error
+SELECT ducknng_server_start('bad_tls', 'ipc:///tmp/ducknng_bad_tls.ipc', 1, 134217728, 300000, '/tmp/cert.pem', NULL, NULL)
+----
+ducknng: TLS listener options are not implemented; refusing to start listener
+
 query I
 SELECT CASE
   WHEN ducknng_server_start('sql0', 'ipc:///tmp/ducknng_phase1_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
@@ -15,6 +30,21 @@ SELECT name, listen, contexts, running, sessions
 FROM ducknng_servers()
 ----
 sql0	ipc:///tmp/ducknng_phase1_sql0.ipc	1	true	0
+
+query I
+SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_phase1_sql0.ipc')) > 0
+----
+1
+
+query I
+SELECT ducknng_remote_exec('ipc:///tmp/ducknng_phase1_sql0.ipc', 'CREATE TABLE remote_t(i INTEGER)')
+----
+0
+
+query I
+SELECT ducknng_remote_exec('ipc:///tmp/ducknng_phase1_sql0.ipc', 'INSERT INTO remote_t VALUES (7), (8)')
+----
+2
 
 query I
 SELECT CASE WHEN ducknng_server_stop('sql0') THEN 1 ELSE 0 END

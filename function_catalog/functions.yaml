@@ -77,18 +77,37 @@
       "name": "ducknng_remote_exec",
       "kind": "scalar",
       "category": "Client / Test Helper",
-      "signature": "ducknng_remote_exec(url, sql, input_table := NULL)",
+      "signature": "ducknng_remote_exec(url, sql)",
       "returns": "UBIGINT",
       "aliases": [],
       "since": "0.1.0",
-      "implemented": false,
+      "implemented": true,
       "phase": 2,
-      "description": "Send an EXEC request over the real wire protocol and return rows changed.",
+      "description": "Send an EXEC request over the real wire protocol and return rows changed from the remote reply metadata.",
       "notes": [
-        "Planned for phase 2."
+        "This helper always sends want_result = false and expects a metadata reply.",
+        "Use this for non-row-producing statements or row-changing statements when only rows_changed is needed."
       ],
       "examples": [
         "SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)');"
+      ]
+    },
+    {
+      "name": "ducknng_remote_manifest",
+      "kind": "scalar",
+      "category": "Client / Test Helper",
+      "signature": "ducknng_remote_manifest(url)",
+      "returns": "VARCHAR",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 2,
+      "description": "Request the remote ducknng manifest JSON from another ducknng-compatible service.",
+      "notes": [
+        "Returns the raw manifest JSON payload as VARCHAR."
+      ],
+      "examples": [
+        "SELECT ducknng_remote_manifest('ipc:///tmp/ducknng_sql0.ipc');"
       ]
     },
     {

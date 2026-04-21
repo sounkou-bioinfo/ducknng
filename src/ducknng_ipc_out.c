@@ -6,6 +6,17 @@
 
 DUCKDB_EXTENSION_EXTERN
 
+static int ducknng_build_exec_request_schema(struct ArrowSchema *schema, struct ArrowError *error) {
+    ArrowSchemaInit(schema);
+    if (ArrowSchemaSetTypeStruct(schema, 2) != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetName(schema->children[0], "sql") != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_STRING) != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetName(schema->children[1], "want_result") != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetType(schema->children[1], NANOARROW_TYPE_BOOL) != NANOARROW_OK) return -1;
+    (void)error;
+    return 0;
+}
+
 static int ducknng_build_metadata_schema(struct ArrowSchema *schema, struct ArrowError *error) {
     ArrowSchemaInit(schema);
     if (ArrowSchemaSetTypeStruct(schema, 3) != NANOARROW_OK) return -1;
@@ -152,23 +163,46 @@ static int ducknng_append_chunk_to_arrow(duckdb_data_chunk chunk, struct ArrowAr
     idx_t nrows;
     idx_t col;
     idx_t row;
+    duckdb_vector *vectors = NULL;
+    duckdb_type *types = NULL;
     ncols = duckdb_data_chunk_get_column_count(chunk);
     nrows = duckdb_data_chunk_get_size(chunk);
+    if (ncols == 0) return 0;
+    vectors = (duckdb_vector *)duckdb_malloc(sizeof(*vectors) * (size_t)ncols);
+    types = (duckdb_type *)duckdb_malloc(sizeof(*types) * (size_t)ncols);
+    if (!vectors || !types) {
+        if (vectors) duckdb_free(vectors);
+        if (types) duckdb_free(types);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory preparing result chunk encoding");
+        return -1;
+    }
     for (col = 0; col < ncols; col++) {
-        duckdb_vector vector = duckdb_data_chunk_get_vector(chunk, col);
-        duckdb_logical_type logical_type = duckdb_vector_get_column_type(vector);
-        duckdb_type type_id = logical_type ? duckdb_get_type_id(logical_type) : DUCKDB_TYPE_INVALID;
-        for (row = 0; row < nrows; row++) {
-            if (ducknng_append_vector_value(type_id, vector, root->children[col], row, errmsg) != 0) {
-                if (logical_type) duckdb_destroy_logical_type(&logical_type);
+        duckdb_logical_type logical_type;
+        vectors[col] = duckdb_data_chunk_get_vector(chunk, col);
+        logical_type = duckdb_vector_get_column_type(vectors[col]);
+        types[col] = logical_type ? duckdb_get_type_id(logical_type) : DUCKDB_TYPE_INVALID;
+        if (logical_type) duckdb_destroy_logical_type(&logical_type);
+    }
+    for (row = 0; row < nrows; row++) {
+        for (col = 0; col < ncols; col++) {
+            if (ducknng_append_vector_value(types[col], vectors[col], root->children[col], row, errmsg) != 0) {
                 if ((!errmsg || !*errmsg) && errmsg) {
                     *errmsg = ducknng_strdup("ducknng: failed to append DuckDB result value to Arrow array");
                 }
+                duckdb_free(vectors);
+                duckdb_free(types);
                 return -1;
             }
         }
-        if (logical_type) duckdb_destroy_logical_type(&logical_type);
+        if (ArrowArrayFinishElement(root) != NANOARROW_OK) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to finalize Arrow row element");
+            duckdb_free(vectors);
+            duckdb_free(types);
+            return -1;
+        }
     }
+    duckdb_free(vectors);
+    duckdb_free(types);
     return 0;
 }
 
@@ -228,6 +262,87 @@ cleanup:
     if (stream.release) ArrowArrayStreamRelease(&stream);
     if (array->release) ArrowArrayRelease(array);
     if (schema->release) ArrowSchemaRelease(schema);
+    return rc;
+}
+
+int ducknng_exec_request_to_ipc(const char *sql, int want_result,
+    uint8_t **out_bytes, size_t *out_len, char **errmsg) {
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    struct ArrowArrayStream stream;
+    struct ArrowIpcOutputStream output_stream;
+    struct ArrowIpcWriter writer;
+    struct ArrowBuffer output_buf;
+    struct ArrowError error;
+    struct ArrowStringView sql_view;
+    uint8_t *copy = NULL;
+    int rc = -1;
+    memset(&schema, 0, sizeof(schema));
+    memset(&array, 0, sizeof(array));
+    memset(&stream, 0, sizeof(stream));
+    memset(&output_stream, 0, sizeof(output_stream));
+    memset(&writer, 0, sizeof(writer));
+    memset(&output_buf, 0, sizeof(output_buf));
+    memset(&error, 0, sizeof(error));
+    if (!sql || !out_bytes || !out_len) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid exec request arguments");
+        return -1;
+    }
+    if (ducknng_build_exec_request_schema(&schema, &error) != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to build exec request Arrow schema");
+        goto cleanup;
+    }
+    if (ArrowArrayInitFromSchema(&array, &schema, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (ArrowArrayStartAppending(&array) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to start exec request Arrow append");
+        goto cleanup;
+    }
+    sql_view.data = sql;
+    sql_view.size_bytes = (int64_t)strlen(sql);
+    if (ArrowArrayAppendString(array.children[0], sql_view) != NANOARROW_OK ||
+        ArrowArrayAppendInt(array.children[1], want_result ? 1 : 0) != NANOARROW_OK ||
+        ArrowArrayFinishElement(&array) != NANOARROW_OK ||
+        ArrowArrayFinishBuildingDefault(&array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message :
+            "ducknng: failed to build exec request Arrow payload");
+        goto cleanup;
+    }
+    if (ArrowBasicArrayStreamInit(&stream, &schema, 1) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize exec request Arrow stream");
+        goto cleanup;
+    }
+    memset(&schema, 0, sizeof(schema));
+    ArrowBasicArrayStreamSetArray(&stream, 0, &array);
+    memset(&array, 0, sizeof(array));
+    ArrowBufferInit(&output_buf);
+    if (ArrowIpcOutputStreamInitBuffer(&output_stream, &output_buf) != NANOARROW_OK ||
+        ArrowIpcWriterInit(&writer, &output_stream) != NANOARROW_OK ||
+        ArrowIpcWriterWriteArrayStream(&writer, &stream, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message :
+            "ducknng: failed to encode exec request Arrow IPC payload");
+        goto cleanup;
+    }
+    copy = (uint8_t *)duckdb_malloc((size_t)output_buf.size_bytes);
+    if (!copy) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying exec request payload");
+        goto cleanup;
+    }
+    memcpy(copy, output_buf.data, (size_t)output_buf.size_bytes);
+    *out_bytes = copy;
+    *out_len = (size_t)output_buf.size_bytes;
+    copy = NULL;
+    rc = 0;
+cleanup:
+    if (copy) duckdb_free(copy);
+    if (writer.private_data) ArrowIpcWriterReset(&writer);
+    if (output_stream.release) output_stream.release(&output_stream);
+    if (output_buf.data) ArrowBufferReset(&output_buf);
+    if (stream.release) ArrowArrayStreamRelease(&stream);
+    if (array.release) ArrowArrayRelease(&array);
+    if (schema.release) ArrowSchemaRelease(&schema);
     return rc;
 }
 
@@ -318,6 +433,7 @@ int ducknng_exec_metadata_to_ipc(uint64_t rows_changed,
     if (ArrowArrayAppendUInt(array.children[0], rows_changed) != NANOARROW_OK ||
         ArrowArrayAppendInt(array.children[1], (int64_t)statement_type) != NANOARROW_OK ||
         ArrowArrayAppendInt(array.children[2], (int64_t)result_type) != NANOARROW_OK ||
+        ArrowArrayFinishElement(&array) != NANOARROW_OK ||
         ArrowArrayFinishBuildingDefault(&array, &error) != NANOARROW_OK) {
         if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message :
             "ducknng: failed to build metadata Arrow array");

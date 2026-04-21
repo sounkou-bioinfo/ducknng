@@ -12,20 +12,31 @@ Today it provides:
 - one REP socket with one or more REP contexts
 - a working `EXEC` request/reply path over the raw wire protocol
 
+The documented next protocol slice is the session query family:
+`query_open`, `fetch`, `close`, and `cancel`. In the current docs
+contract, `query_open` opens one server-owned query session and returns
+JSON control metadata, `fetch` is the only method that may return
+streamed row batches, `close` is the normal explicit cleanup path, and
+`cancel` is best-effort rather than a guarantee of immediate
+interruption. Until a real owner-identity model is implemented, that
+family should be treated as scaffolding for loopback or development use
+rather than production-safe multi-client exposure.
+
 ## Functions
 
 # Function Catalog
 
 This file is generated from `function_catalog/functions.yaml`.
 
-| name                   | kind   | returns                                                                                                        | phase | implemented | description                                                                                       |
-|------------------------|--------|----------------------------------------------------------------------------------------------------------------|------:|-------------|---------------------------------------------------------------------------------------------------|
-| `ducknng_server_start` | scalar | `BOOLEAN`                                                                                                      |     1 | yes         | Start a named ducknng REP listener for SQL serving on an NNG URL.                                 |
-| `ducknng_server_stop`  | scalar | `BOOLEAN`                                                                                                      |     1 | yes         | Stop a named ducknng service and tear down its listener and worker thread.                        |
-| `ducknng_servers`      | table  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)` |     1 | yes         | List registered ducknng services in the current DuckDB database runtime.                          |
-| `ducknng_sessions`     | table  | `TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)`                              |     3 | no          | List active query sessions for a named ducknng service.                                           |
-| `ducknng_remote_exec`  | scalar | `UBIGINT`                                                                                                      |     2 | no          | Send an EXEC request over the real wire protocol and return rows changed.                         |
-| `ducknng_remote`       | table  | `table`                                                                                                        |     3 | no          | Execute a remote query over REQ/REP and stream Arrow IPC batches back as a DuckDB table function. |
+| name                      | kind   | returns                                                                                                        | phase | implemented | description                                                                                              |
+|---------------------------|--------|----------------------------------------------------------------------------------------------------------------|------:|-------------|----------------------------------------------------------------------------------------------------------|
+| `ducknng_server_start`    | scalar | `BOOLEAN`                                                                                                      |     1 | yes         | Start a named ducknng REP listener for SQL serving on an NNG URL.                                        |
+| `ducknng_server_stop`     | scalar | `BOOLEAN`                                                                                                      |     1 | yes         | Stop a named ducknng service and tear down its listener and worker thread.                               |
+| `ducknng_servers`         | table  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)` |     1 | yes         | List registered ducknng services in the current DuckDB database runtime.                                 |
+| `ducknng_sessions`        | table  | `TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)`                              |     3 | no          | List active query sessions for a named ducknng service.                                                  |
+| `ducknng_remote_exec`     | scalar | `UBIGINT`                                                                                                      |     2 | yes         | Send an EXEC request over the real wire protocol and return rows changed from the remote reply metadata. |
+| `ducknng_remote_manifest` | scalar | `VARCHAR`                                                                                                      |     2 | yes         | Request the remote ducknng manifest JSON from another ducknng-compatible service.                        |
+| `ducknng_remote`          | table  | `table`                                                                                                        |     3 | no          | Execute a remote query over REQ/REP and stream Arrow IPC batches back as a DuckDB table function.        |
 
 ## Build
 
@@ -35,7 +46,9 @@ make release
 ```
 
 See also `NEWS.md` for the current implementation status and planned
-next steps.
+next steps, and `docs/protocol.md`, `docs/manifest.md`,
+`docs/security.md`, `docs/registry.md`, and `docs/types.md` for the
+binding session/query-family contract.
 
 ## Examples
 
@@ -119,6 +132,58 @@ SELECT ducknng_server_stop('sql_multi');
     ├──────────────────────────────────┤
     │ true                             │
     └──────────────────────────────────┘
+
+### DuckDB can also act as a client
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+SELECT ducknng_server_start(
+  'sql_client_demo',
+  'ipc:///tmp/ducknng_sql_client_demo.ipc',
+  1,
+  134217728,
+  300000,
+  NULL,
+  NULL,
+  NULL
+);
+
+SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
+SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE client_side_demo(i INTEGER)');
+SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+SELECT ducknng_server_stop('sql_client_demo');
+```
+
+    ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_server_start('sql_client_demo', 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1, 134217728, 300000, NULL, NULL, NULL) │
+    │                                                          boolean                                                          │
+    ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                                      │
+    └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ (main."position"(ducknng_remote_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc'), '"name":"exec"') > 0) │
+    │                                                  boolean                                                  │
+    ├───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                      │
+    └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE client_side_demo(i INTEGER)') │
+    │                                                  uint64                                                   │
+    ├───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                                         0 │
+    └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)') │
+    │                                                     uint64                                                      │
+    ├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                                               2 │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────┐
+    │ ducknng_server_stop('sql_client_demo') │
+    │                boolean                 │
+    ├────────────────────────────────────────┤
+    │ true                                   │
+    └────────────────────────────────────────┘
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example
 
@@ -213,16 +278,16 @@ nanonext::send(req, encode_ducknng_exec_request("CREATE TABLE ducknng_exec_demo(
 #> [1] 0
 create_reply <- decode_ducknng_exec_reply(nanonext::recv(req, mode = "raw", block = 1000L))
 create_reply$data
-#> [1] rows_changed   statement_type result_type   
-#> <0 rows> (or 0-length row.names)
+#>   rows_changed statement_type result_type
+#> 1            0              7           2
 
 # Insert rows remotely and inspect the second reply.
 nanonext::send(req, encode_ducknng_exec_request("INSERT INTO ducknng_exec_demo VALUES (42), (99)"), mode = "raw", block = 1000L)
 #> [1] 0
 insert_reply <- decode_ducknng_exec_reply(nanonext::recv(req, mode = "raw", block = 1000L))
 insert_reply$data
-#> [1] rows_changed   statement_type result_type   
-#> <0 rows> (or 0-length row.names)
+#>   rows_changed statement_type result_type
+#> 1            2              2           1
 
 # Request result rows directly with want_result = TRUE.
 nanonext::send(
@@ -234,8 +299,9 @@ nanonext::send(
 #> [1] 0
 select_reply <- decode_ducknng_exec_reply(nanonext::recv(req, mode = "raw", block = 1000L))
 select_reply$data
-#> [1] i     gt_50
-#> <0 rows> (or 0-length row.names)
+#>    i gt_50
+#> 1 42 FALSE
+#> 2 99  TRUE
 
 # Collect the server-side query result from the child process.
 server_rows <- parallel::mccollect(server_job)[[1]]
