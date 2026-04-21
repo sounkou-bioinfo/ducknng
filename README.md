@@ -224,6 +224,19 @@ insert_reply$data
 #> [1] rows_changed   statement_type result_type   
 #> <0 rows> (or 0-length row.names)
 
+# Request result rows directly with want_result = TRUE.
+nanonext::send(
+  req,
+  encode_ducknng_exec_request("SELECT i, i > 50 AS gt_50 FROM ducknng_exec_demo ORDER BY i", want_result = TRUE),
+  mode = "raw",
+  block = 1000L
+)
+#> [1] 0
+select_reply <- decode_ducknng_exec_reply(nanonext::recv(req, mode = "raw", block = 1000L))
+select_reply$data
+#> [1] i     gt_50
+#> <0 rows> (or 0-length row.names)
+
 # Collect the server-side query result from the child process.
 server_rows <- parallel::mccollect(server_job)[[1]]
 server_rows

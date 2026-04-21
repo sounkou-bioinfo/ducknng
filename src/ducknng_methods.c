@@ -54,7 +54,6 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
     const ducknng_request_context *req,
     ducknng_method_reply *reply) {
     ducknng_exec_request exec_req;
-    duckdb_prepared_statement stmt = NULL;
     duckdb_result result;
     duckdb_statement_type stmt_type;
     duckdb_result_type result_type;
@@ -80,21 +79,9 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
     }
 
     ducknng_mutex_lock(&svc->mu);
-    if (duckdb_prepare(svc->rt->init_con, exec_req.sql, &stmt) == DuckDBError) {
-        const char *prep_err = stmt ? duckdb_prepare_error(stmt) : NULL;
-        ducknng_mutex_unlock(&svc->mu);
-        if (stmt) duckdb_destroy_prepare(&stmt);
-        ducknng_exec_request_destroy(&exec_req);
-        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
-            prep_err && prep_err[0] ? prep_err : "ducknng: failed to prepare exec request");
-        return -1;
-    }
-
-    stmt_type = duckdb_prepared_statement_type(stmt);
-    if (duckdb_execute_prepared(stmt, &result) == DuckDBError) {
+    if (duckdb_query(svc->rt->init_con, exec_req.sql, &result) == DuckDBError) {
         const char *exec_err = duckdb_result_error(&result);
         duckdb_destroy_result(&result);
-        duckdb_destroy_prepare(&stmt);
         ducknng_mutex_unlock(&svc->mu);
         ducknng_exec_request_destroy(&exec_req);
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
@@ -102,10 +89,10 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
         return -1;
     }
 
+    stmt_type = duckdb_result_statement_type(result);
     result_type = duckdb_result_return_type(result);
     if (!exec_req.want_result && result_type == DUCKDB_RESULT_TYPE_QUERY_RESULT) {
         duckdb_destroy_result(&result);
-        duckdb_destroy_prepare(&stmt);
         ducknng_mutex_unlock(&svc->mu);
         ducknng_exec_request_destroy(&exec_req);
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
@@ -114,7 +101,7 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
     }
 
     if (result_type == DUCKDB_RESULT_TYPE_QUERY_RESULT) {
-        if (ducknng_result_to_ipc_stream(stmt, result, &payload, &payload_len, &errmsg) != 0) {
+        if (ducknng_result_to_ipc_stream(NULL, result, &payload, &payload_len, &errmsg) != 0) {
             ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_ARROW_ERROR,
                 errmsg ? errmsg : "ducknng: failed to encode query result as Arrow IPC");
         } else {
@@ -140,7 +127,6 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
     }
 
     duckdb_destroy_result(&result);
-    duckdb_destroy_prepare(&stmt);
     ducknng_mutex_unlock(&svc->mu);
     if (payload) duckdb_free(payload);
     if (errmsg) duckdb_free(errmsg);

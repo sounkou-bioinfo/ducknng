@@ -82,6 +82,13 @@ insert_reply <- decode_frame(nanonext::recv(req, mode = "raw", block = 1000L))
 insert_df <- as.data.frame(read_nanoarrow(insert_reply$payload))
 stopifnot(insert_df$rows_changed[[1]] == 2)
 
+stopifnot(nanonext::send(req, encode_exec_request("SELECT x, x > 1 AS gt_one FROM smoke_table ORDER BY x", TRUE), mode = "raw", block = 1000L) == 0)
+select_reply <- decode_frame(nanonext::recv(req, mode = "raw", block = 1000L))
+stopifnot(select_reply$type == 2L)
+select_df <- as.data.frame(read_nanoarrow(select_reply$payload))
+stopifnot(identical(select_df$x, c(1L, 2L)))
+stopifnot(identical(select_df$gt_one, c(FALSE, TRUE)))
+
 close(req)
 rows <- parallel::mccollect(server_job)[[1]]
 stopifnot(identical(rows$x, c(1L, 2L)))

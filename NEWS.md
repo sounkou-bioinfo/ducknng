@@ -25,7 +25,8 @@
 - `exec` request payloads are now Arrow IPC tables containing `sql` and `want_result` fields.
 - `manifest` replies are now JSON exported from the runtime method registry.
 - `exec` metadata replies are now Arrow IPC generated with vendored nanoarrow C.
-- Query row-result Arrow encoding on the stable extension API path remains incomplete; `want_result = false` is the working path today.
+- Unary `exec(..., want_result = true)` now returns Arrow IPC row payloads for the current scalar subset: BOOLEAN, signed/unsigned integers, FLOAT/DOUBLE, VARCHAR, and BLOB.
+- Wider row-result type coverage and session-based query streaming are still pending.
 
 ## Planned next steps
 
