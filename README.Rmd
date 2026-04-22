@@ -96,6 +96,7 @@ SELECT ducknng_server_stop('sql_multi');
 ### DuckDB can also act as a client
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Start a local ducknng service that the following client examples will talk to.
 SELECT ducknng_server_start(
   'sql_client_demo',
   'ipc:///tmp/ducknng_sql_client_demo.ipc',
@@ -107,17 +108,26 @@ SELECT ducknng_server_start(
   NULL
 );
 
+-- Inspect the remote manifest over REQ/REP.
 SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
+
+-- Run non-row statements through the metadata-oriented helper.
 SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE client_side_demo(i INTEGER)');
 SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+
+-- Fetch row results through the table-function client path.
 SELECT * FROM ducknng_remote('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i');
 
+-- Open a req-style client handle, dial the service, and inspect the handle registry.
 SELECT ducknng_socket('req');
 SELECT ducknng_dial(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
 SELECT * FROM ducknng_sockets();
-SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
-SELECT ducknng_close(1);
 
+-- Send a raw manifest frame through the socket-handle API and inspect the reply prefix.
+SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
+
+-- Close the client socket handle and stop the demo server.
+SELECT ducknng_close(1);
 SELECT ducknng_server_stop('sql_client_demo');
 ```
 

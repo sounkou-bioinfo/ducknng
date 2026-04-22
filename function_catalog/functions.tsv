@@ -1,14 +1,14 @@
-name	kind	category	signature	returns	since	implemented	phase	description
-ducknng_server_start	scalar	Service Control	ducknng_server_start(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode)	BOOLEAN	0.1.0	True	1	Start a named ducknng REP listener for SQL serving on an NNG URL.
-ducknng_server_stop	scalar	Service Control	ducknng_server_stop(name)	BOOLEAN	0.1.0	True	1	Stop a named ducknng service and tear down its listener and worker thread.
-ducknng_servers	table	Introspection	ducknng_servers()	TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)	0.1.0	True	1	List registered ducknng services in the current DuckDB database runtime.
-ducknng_sessions	table	Introspection	ducknng_sessions(name)	TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)	0.1.0	False	3	List active query sessions for a named ducknng service.
-ducknng_remote_exec	scalar	Client / Test Helper	ducknng_remote_exec(url, sql)	UBIGINT	0.1.0	True	2	Send an EXEC request over the real wire protocol and return rows changed from the remote reply metadata.
-ducknng_remote_manifest	scalar	Client / Test Helper	ducknng_remote_manifest(url)	VARCHAR	0.1.0	True	2	Request the remote ducknng manifest JSON from another ducknng-compatible service.
-ducknng_socket	scalar	Client Socket	ducknng_socket(protocol)	UBIGINT	0.1.0	True	2	Open a client socket handle for a supported NNG protocol family.
-ducknng_dial	scalar	Client Socket	ducknng_dial(socket_id, url, timeout_ms)	BOOLEAN	0.1.0	True	2	Associate a client socket handle with a remote URL using req-style timeout semantics.
-ducknng_close	scalar	Client Socket	ducknng_close(socket_id)	BOOLEAN	0.1.0	True	2	Close a client socket handle and release its runtime state.
-ducknng_sockets	table	Introspection	ducknng_sockets()	TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)	0.1.0	True	2	List client socket handles registered in the current DuckDB runtime.
-ducknng_request	scalar	Client Socket	ducknng_request(url, payload, timeout_ms)	BLOB	0.1.0	True	2	Perform a one-shot req-style raw request and return the raw reply bytes.
-ducknng_request_socket	scalar	Client Socket	ducknng_request_socket(socket_id, payload, timeout_ms)	BLOB	0.1.0	True	2	Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes.
-ducknng_remote	table	Client / Test Helper	ducknng_remote(url, sql)	table	0.1.0	True	3	Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function.
+name	kind	category	signature	returns	since	implemented	description
+ducknng_server_start	scalar	Service Control	ducknng_server_start(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode)	BOOLEAN	0.1.0	True	Start a named ducknng REP listener for SQL serving on an NNG URL.
+ducknng_server_stop	scalar	Service Control	ducknng_server_stop(name)	BOOLEAN	0.1.0	True	Stop a named ducknng service and tear down its listener and worker thread.
+ducknng_servers	table	Introspection	ducknng_servers()	TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)	0.1.0	True	List registered ducknng services in the current DuckDB database runtime.
+ducknng_sessions	table	Introspection	ducknng_sessions(name)	TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)	0.1.0	False	List active query sessions for a named ducknng service.
+ducknng_remote_exec	scalar	Client / Test Helper	ducknng_remote_exec(url, sql)	UBIGINT	0.1.0	True	Send an EXEC request over the real wire protocol and return rows changed from the remote reply metadata.
+ducknng_remote_manifest	scalar	Client / Test Helper	ducknng_remote_manifest(url)	VARCHAR	0.1.0	True	Request the remote ducknng manifest JSON from another ducknng-compatible service.
+ducknng_socket	scalar	Client Socket	ducknng_socket(protocol)	UBIGINT	0.1.0	True	Open a client socket handle for a supported NNG protocol family.
+ducknng_dial	scalar	Client Socket	ducknng_dial(socket_id, url, timeout_ms)	BOOLEAN	0.1.0	True	Associate a client socket handle with a remote URL using req-style timeout semantics.
+ducknng_close	scalar	Client Socket	ducknng_close(socket_id)	BOOLEAN	0.1.0	True	Close a client socket handle and release its runtime state.
+ducknng_sockets	table	Introspection	ducknng_sockets()	TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)	0.1.0	True	List client socket handles registered in the current DuckDB runtime.
+ducknng_request	scalar	Client Socket	ducknng_request(url, payload, timeout_ms)	BLOB	0.1.0	True	Perform a one-shot req-style raw request and return the raw reply bytes.
+ducknng_request_socket	scalar	Client Socket	ducknng_request_socket(socket_id, payload, timeout_ms)	BLOB	0.1.0	True	Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes.
+ducknng_remote	table	Client / Test Helper	ducknng_remote(url, sql)	table	0.1.0	True	Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function.

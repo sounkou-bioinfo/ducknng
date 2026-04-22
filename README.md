@@ -28,21 +28,21 @@ rather than production-safe multi-client exposure.
 
 This file is generated from `function_catalog/functions.yaml`.
 
-| name                      | kind   | returns                                                                                                                                      | phase | implemented | description                                                                                                            |
-|---------------------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------|------:|-------------|------------------------------------------------------------------------------------------------------------------------|
-| `ducknng_server_start`    | scalar | `BOOLEAN`                                                                                                                                    |     1 | yes         | Start a named ducknng REP listener for SQL serving on an NNG URL.                                                      |
-| `ducknng_server_stop`     | scalar | `BOOLEAN`                                                                                                                                    |     1 | yes         | Stop a named ducknng service and tear down its listener and worker thread.                                             |
-| `ducknng_servers`         | table  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)`                               |     1 | yes         | List registered ducknng services in the current DuckDB database runtime.                                               |
-| `ducknng_sessions`        | table  | `TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)`                                                            |     3 | no          | List active query sessions for a named ducknng service.                                                                |
-| `ducknng_remote_exec`     | scalar | `UBIGINT`                                                                                                                                    |     2 | yes         | Send an EXEC request over the real wire protocol and return rows changed from the remote reply metadata.               |
-| `ducknng_remote_manifest` | scalar | `VARCHAR`                                                                                                                                    |     2 | yes         | Request the remote ducknng manifest JSON from another ducknng-compatible service.                                      |
-| `ducknng_socket`          | scalar | `UBIGINT`                                                                                                                                    |     2 | yes         | Open a client socket handle for a supported NNG protocol family.                                                       |
-| `ducknng_dial`            | scalar | `BOOLEAN`                                                                                                                                    |     2 | yes         | Associate a client socket handle with a remote URL using req-style timeout semantics.                                  |
-| `ducknng_close`           | scalar | `BOOLEAN`                                                                                                                                    |     2 | yes         | Close a client socket handle and release its runtime state.                                                            |
-| `ducknng_sockets`         | table  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` |     2 | yes         | List client socket handles registered in the current DuckDB runtime.                                                   |
-| `ducknng_request`         | scalar | `BLOB`                                                                                                                                       |     2 | yes         | Perform a one-shot req-style raw request and return the raw reply bytes.                                               |
-| `ducknng_request_socket`  | scalar | `BLOB`                                                                                                                                       |     2 | yes         | Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes.         |
-| `ducknng_remote`          | table  | `table`                                                                                                                                      |     3 | yes         | Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function. |
+| name                      | kind   | returns                                                                                                                                      | implemented | description                                                                                                            |
+|---------------------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------|-------------|------------------------------------------------------------------------------------------------------------------------|
+| `ducknng_server_start`    | scalar | `BOOLEAN`                                                                                                                                    | yes         | Start a named ducknng REP listener for SQL serving on an NNG URL.                                                      |
+| `ducknng_server_stop`     | scalar | `BOOLEAN`                                                                                                                                    | yes         | Stop a named ducknng service and tear down its listener and worker thread.                                             |
+| `ducknng_servers`         | table  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)`                               | yes         | List registered ducknng services in the current DuckDB database runtime.                                               |
+| `ducknng_sessions`        | table  | `TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)`                                                            | no          | List active query sessions for a named ducknng service.                                                                |
+| `ducknng_remote_exec`     | scalar | `UBIGINT`                                                                                                                                    | yes         | Send an EXEC request over the real wire protocol and return rows changed from the remote reply metadata.               |
+| `ducknng_remote_manifest` | scalar | `VARCHAR`                                                                                                                                    | yes         | Request the remote ducknng manifest JSON from another ducknng-compatible service.                                      |
+| `ducknng_socket`          | scalar | `UBIGINT`                                                                                                                                    | yes         | Open a client socket handle for a supported NNG protocol family.                                                       |
+| `ducknng_dial`            | scalar | `BOOLEAN`                                                                                                                                    | yes         | Associate a client socket handle with a remote URL using req-style timeout semantics.                                  |
+| `ducknng_close`           | scalar | `BOOLEAN`                                                                                                                                    | yes         | Close a client socket handle and release its runtime state.                                                            |
+| `ducknng_sockets`         | table  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | yes         | List client socket handles registered in the current DuckDB runtime.                                                   |
+| `ducknng_request`         | scalar | `BLOB`                                                                                                                                       | yes         | Perform a one-shot req-style raw request and return the raw reply bytes.                                               |
+| `ducknng_request_socket`  | scalar | `BLOB`                                                                                                                                       | yes         | Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes.         |
+| `ducknng_remote`          | table  | `table`                                                                                                                                      | yes         | Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function. |
 
 ## Build
 
@@ -143,6 +143,7 @@ SELECT ducknng_server_stop('sql_multi');
 
 ``` sql
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Start a local ducknng service that the following client examples will talk to.
 SELECT ducknng_server_start(
   'sql_client_demo',
   'ipc:///tmp/ducknng_sql_client_demo.ipc',
@@ -154,17 +155,26 @@ SELECT ducknng_server_start(
   NULL
 );
 
+-- Inspect the remote manifest over REQ/REP.
 SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
+
+-- Run non-row statements through the metadata-oriented helper.
 SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE client_side_demo(i INTEGER)');
 SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+
+-- Fetch row results through the table-function client path.
 SELECT * FROM ducknng_remote('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i');
 
+-- Open a req-style client handle, dial the service, and inspect the handle registry.
 SELECT ducknng_socket('req');
 SELECT ducknng_dial(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
 SELECT * FROM ducknng_sockets();
-SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
-SELECT ducknng_close(1);
 
+-- Send a raw manifest frame through the socket-handle API and inspect the reply prefix.
+SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
+
+-- Close the client socket handle and stop the demo server.
+SELECT ducknng_close(1);
 SELECT ducknng_server_stop('sql_client_demo');
 ```
 

@@ -9,10 +9,8 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 1,
       "description": "Start a named ducknng REP listener for SQL serving on an NNG URL.",
       "notes": [
-        "Phase 1 starts one real REP socket and the requested number of REP worker contexts.",
         "Current TLS arguments are accepted in the signature but any non-NULL TLS configuration is rejected until TLS is implemented."
       ],
       "examples": [
@@ -28,11 +26,8 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 1,
       "description": "Stop a named ducknng service and tear down its listener and worker thread.",
-      "notes": [
-        "Intended to block until listener shutdown is complete in phase 1."
-      ],
+      "notes": [],
       "examples": [
         "SELECT ducknng_server_stop('sql0');"
       ]
@@ -46,7 +41,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 1,
       "description": "List registered ducknng services in the current DuckDB database runtime.",
       "notes": [
         "Returns the current per-database runtime service registry snapshot."
@@ -64,7 +58,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": false,
-      "phase": 3,
       "description": "List active query sessions for a named ducknng service.",
       "notes": [
         "Depends on query-session support."
@@ -82,7 +75,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "Send an EXEC request over the real wire protocol and return rows changed from the remote reply metadata.",
       "notes": [
         "This helper always sends want_result = false and expects a metadata reply.",
@@ -101,7 +93,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "Request the remote ducknng manifest JSON from another ducknng-compatible service.",
       "notes": [
         "Returns the raw manifest JSON payload as VARCHAR."
@@ -119,7 +110,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "Open a client socket handle for a supported NNG protocol family.",
       "notes": [
         "Currently only req is implemented on the SQL client side."
@@ -137,7 +127,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "Associate a client socket handle with a remote URL using req-style timeout semantics.",
       "notes": [
         "Currently only req client sockets are implemented."
@@ -155,7 +144,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "Close a client socket handle and release its runtime state.",
       "notes": [],
       "examples": [
@@ -171,7 +159,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "List client socket handles registered in the current DuckDB runtime.",
       "notes": [
         "Useful for SQL-native req-style client workflows."
@@ -189,7 +176,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "Perform a one-shot req-style raw request and return the raw reply bytes.",
       "notes": [
         "This is the lowest-level SQL helper for the current req/rep client path."
@@ -207,7 +193,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 2,
       "description": "Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes.",
       "notes": [
         "This follows the SQL handle model and keeps the current req transport under one function call per roundtrip."
@@ -225,7 +210,6 @@
       "aliases": [],
       "since": "0.1.0",
       "implemented": true,
-      "phase": 3,
       "description": "Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function.",
       "notes": [
         "This is the current unary row-reply client path, not the future session streaming path.",

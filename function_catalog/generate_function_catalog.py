@@ -40,7 +40,6 @@ def load_manifest(path: Path) -> list[dict[str, object]]:
         "returns",
         "since",
         "implemented",
-        "phase",
         "description",
     }
     seen: set[str] = set()
@@ -65,15 +64,14 @@ def render_markdown(functions: list[dict[str, object]]) -> str:
     lines.append("")
     lines.append("This file is generated from `function_catalog/functions.yaml`.")
     lines.append("")
-    lines.append("| name | kind | returns | phase | implemented | description |")
-    lines.append("|---|---|---|---:|---|---|")
+    lines.append("| name | kind | returns | implemented | description |")
+    lines.append("|---|---|---|---|---|")
     for entry in functions:
         lines.append(
-            "| `{name}` | {kind} | `{returns}` | {phase} | {implemented} | {description} |".format(
+            "| `{name}` | {kind} | `{returns}` | {implemented} | {description} |".format(
                 name=escape_md(str(entry["name"])),
                 kind=escape_md(str(entry["kind"])),
                 returns=escape_md(str(entry["returns"])),
-                phase=escape_md(str(entry["phase"])),
                 implemented="yes" if entry["implemented"] else "no",
                 description=escape_md(str(entry["description"])),
             )
@@ -86,7 +84,7 @@ def write_tsv(path: Path, functions: list[dict[str, object]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(
-            ["name", "kind", "category", "signature", "returns", "since", "implemented", "phase", "description"]
+            ["name", "kind", "category", "signature", "returns", "since", "implemented", "description"]
         )
         for entry in functions:
             writer.writerow(
@@ -98,7 +96,6 @@ def write_tsv(path: Path, functions: list[dict[str, object]]) -> None:
                     entry["returns"],
                     entry["since"],
                     entry["implemented"],
-                    entry["phase"],
                     entry["description"],
                 ]
             )
