@@ -5,94 +5,94 @@ require ducknng
 
 query I
 SELECT CASE
-  WHEN ducknng_server_start('rpc_smoke', 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
+  WHEN ducknng_start_server('rpc_smoke', 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
   THEN 1 ELSE 0 END
 ----
 1
 
 query II
 SELECT ok, position('"name":"exec"' IN manifest) > 0
-FROM ducknng_remote_manifest_result('ipc:///tmp/ducknng_rpc_client_smoke.ipc')
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc')
 ----
 1	1
 
 query I
-SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc')) > 0
+SELECT position('"name":"exec"' IN ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc')) > 0
 ----
 1
 
 query I
-SELECT ducknng_remote_exec('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'CREATE TABLE remote_t(i INTEGER)')
+SELECT ducknng_run_rpc_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'CREATE TABLE remote_t(i INTEGER)')
 ----
 0
 
 query IIII
 SELECT ok, rows_changed, statement_type, result_type
-FROM ducknng_remote_exec_result('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'CREATE TABLE IF NOT EXISTS remote_t(i INTEGER)')
+FROM ducknng_run_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'CREATE TABLE IF NOT EXISTS remote_t(i INTEGER)')
 ----
 1	0	7	2
 
 query I
-SELECT ducknng_remote_exec('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'INSERT INTO remote_t VALUES (7), (8)')
+SELECT ducknng_run_rpc_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'INSERT INTO remote_t VALUES (7), (8)')
 ----
 2
 
 query II
-SELECT * FROM ducknng_remote('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i, i > 7 AS gt_7 FROM remote_t ORDER BY i')
+SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i, i > 7 AS gt_7 FROM remote_t ORDER BY i')
 ----
 7	false
 8	true
 
 query I
-SELECT ducknng_socket('req')
+SELECT ducknng_open_socket('req')
 ----
 1
 
 query I
-SELECT CASE WHEN ducknng_dial(1, 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1000) THEN 1 ELSE 0 END
+SELECT CASE WHEN ducknng_dial_socket(1, 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1000) THEN 1 ELSE 0 END
 ----
 1
 
 query ITTII
 SELECT socket_id, protocol, url, open, connected
-FROM ducknng_sockets()
+FROM ducknng_list_sockets()
 ----
 1	req	ipc:///tmp/ducknng_rpc_client_smoke.ipc	true	true
 
 query I
-SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) = '0102040000000800000000000000'
+SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) = '0102040000000800000000000000'
 ----
 1
 
 query II
 SELECT ok, substr(hex(payload), 1, 28) = '0102040000000800000000000000'
-FROM ducknng_request_socket_result(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000)
+FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000)
 ----
 1	1
 
 query I
-SELECT substr(hex(ducknng_request('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) = '0102040000000800000000000000'
+SELECT substr(hex(ducknng_request_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) = '0102040000000800000000000000'
 ----
 1
 
 query II
 SELECT ok, substr(hex(payload), 1, 28) = '0102040000000800000000000000'
-FROM ducknng_request_result('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)
+FROM ducknng_request('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)
 ----
 1	1
 
 query II
 SELECT ok, error = 'ducknng: request URL must not be NULL or empty'
-FROM ducknng_request_result('', from_hex('01000000000000000000000000000000000000000000'), 1000)
+FROM ducknng_request('', from_hex('01000000000000000000000000000000000000000000'), 1000)
 ----
 0	1
 
 query I
-SELECT CASE WHEN ducknng_close(1) THEN 1 ELSE 0 END
+SELECT CASE WHEN ducknng_close_socket(1) THEN 1 ELSE 0 END
 ----
 1
 
 query I
-SELECT CASE WHEN ducknng_server_stop('rpc_smoke') THEN 1 ELSE 0 END
+SELECT CASE WHEN ducknng_stop_server('rpc_smoke') THEN 1 ELSE 0 END
 ----
 1

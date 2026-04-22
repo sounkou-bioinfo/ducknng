@@ -1714,12 +1714,12 @@ static void ducknng_sockets_scan(duckdb_function_info info, duckdb_data_chunk ou
     duckdb_data_chunk_set_size(output, chunk_size);
 }
 
-static int register_servers_table(duckdb_connection con, ducknng_sql_context *ctx) {
+static int register_named_servers_table(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     if (!ctx || !ctx->rt) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
-    duckdb_table_function_set_name(tf, "ducknng_servers");
+    duckdb_table_function_set_name(tf, name);
     duckdb_table_function_set_extra_info(tf, ctx, NULL);
     duckdb_table_function_set_bind(tf, ducknng_servers_bind);
     duckdb_table_function_set_init(tf, ducknng_servers_init);
@@ -1732,12 +1732,12 @@ static int register_servers_table(duckdb_connection con, ducknng_sql_context *ct
     return 1;
 }
 
-static int register_sockets_table(duckdb_connection con, ducknng_sql_context *ctx) {
+static int register_named_sockets_table(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     if (!ctx || !ctx->rt) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
-    duckdb_table_function_set_name(tf, "ducknng_sockets");
+    duckdb_table_function_set_name(tf, name);
     duckdb_table_function_set_extra_info(tf, ctx, NULL);
     duckdb_table_function_set_bind(tf, ducknng_sockets_bind);
     duckdb_table_function_set_init(tf, ducknng_sockets_init);
@@ -1750,13 +1750,13 @@ static int register_sockets_table(duckdb_connection con, ducknng_sql_context *ct
     return 1;
 }
 
-static int register_remote_table(duckdb_connection con, ducknng_sql_context *ctx) {
+static int register_remote_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     duckdb_logical_type type;
     if (!ctx || !ctx->rt) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
-    duckdb_table_function_set_name(tf, "ducknng_remote");
+    duckdb_table_function_set_name(tf, name);
     type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_table_function_add_parameter(tf, type);
     duckdb_table_function_add_parameter(tf, type);
@@ -1773,13 +1773,13 @@ static int register_remote_table(duckdb_connection con, ducknng_sql_context *ctx
     return 1;
 }
 
-static int register_manifest_result_table(duckdb_connection con, ducknng_sql_context *ctx) {
+static int register_manifest_result_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     duckdb_logical_type type;
     if (!ctx || !ctx->rt) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
-    duckdb_table_function_set_name(tf, "ducknng_remote_manifest_result");
+    duckdb_table_function_set_name(tf, name);
     type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_table_function_add_parameter(tf, type);
     duckdb_destroy_logical_type(&type);
@@ -1795,13 +1795,13 @@ static int register_manifest_result_table(duckdb_connection con, ducknng_sql_con
     return 1;
 }
 
-static int register_exec_result_table(duckdb_connection con, ducknng_sql_context *ctx) {
+static int register_exec_result_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     duckdb_logical_type type;
     if (!ctx || !ctx->rt) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
-    duckdb_table_function_set_name(tf, "ducknng_remote_exec_result");
+    duckdb_table_function_set_name(tf, name);
     type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_table_function_add_parameter(tf, type);
     duckdb_table_function_add_parameter(tf, type);
@@ -1818,7 +1818,7 @@ static int register_exec_result_table(duckdb_connection con, ducknng_sql_context
     return 1;
 }
 
-static int register_request_result_table(duckdb_connection con, ducknng_sql_context *ctx) {
+static int register_request_result_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     duckdb_logical_type type_varchar;
     duckdb_logical_type type_blob;
@@ -1826,7 +1826,7 @@ static int register_request_result_table(duckdb_connection con, ducknng_sql_cont
     if (!ctx || !ctx->rt) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
-    duckdb_table_function_set_name(tf, "ducknng_request_result");
+    duckdb_table_function_set_name(tf, name);
     type_varchar = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     type_blob = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
     type_int = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
@@ -1848,7 +1848,7 @@ static int register_request_result_table(duckdb_connection con, ducknng_sql_cont
     return 1;
 }
 
-static int register_request_socket_result_table(duckdb_connection con, ducknng_sql_context *ctx) {
+static int register_request_socket_result_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     duckdb_logical_type type_u64;
     duckdb_logical_type type_blob;
@@ -1856,7 +1856,7 @@ static int register_request_socket_result_table(duckdb_connection con, ducknng_s
     if (!ctx || !ctx->rt) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
-    duckdb_table_function_set_name(tf, "ducknng_request_socket_result");
+    duckdb_table_function_set_name(tf, name);
     type_u64 = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
     type_blob = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
     type_int = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
@@ -1883,29 +1883,50 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type start_types[8] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT,
         DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
     duckdb_type stop_types[1] = {DUCKDB_TYPE_VARCHAR};
-    duckdb_type remote_exec_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR};
-    duckdb_type remote_manifest_types[1] = {DUCKDB_TYPE_VARCHAR};
+    duckdb_type rpc_exec_raw_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR};
+    duckdb_type rpc_manifest_raw_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type socket_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type dial_types[3] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
     duckdb_type close_types[1] = {DUCKDB_TYPE_UBIGINT};
     duckdb_type request_socket_types[3] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER};
     duckdb_type request_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER};
     ctx.rt = rt;
+    if (!register_scalar(connection, "ducknng_start_server", 8, ducknng_server_start_scalar, &ctx, start_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_server_start", 8, ducknng_server_start_scalar, &ctx, start_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(connection, "ducknng_stop_server", 1, ducknng_server_stop_scalar, &ctx, stop_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_server_stop", 1, ducknng_server_stop_scalar, &ctx, stop_types, DUCKDB_TYPE_BOOLEAN)) return 0;
-    if (!register_scalar(connection, "ducknng_remote_exec", 2, ducknng_remote_exec_scalar, &ctx, remote_exec_types, DUCKDB_TYPE_UBIGINT)) return 0;
-    if (!register_scalar(connection, "ducknng_remote_manifest", 1, ducknng_remote_manifest_scalar, &ctx, remote_manifest_types, DUCKDB_TYPE_VARCHAR)) return 0;
+    if (!register_scalar(connection, "ducknng_run_rpc_raw", 2, ducknng_remote_exec_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_exec_rpc_raw", 2, ducknng_remote_exec_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 1, ducknng_remote_manifest_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_VARCHAR)) return 0;
+    if (!register_scalar(connection, "ducknng_rpc_exec_raw", 2, ducknng_remote_exec_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_rpc_manifest_raw", 1, ducknng_remote_manifest_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_VARCHAR)) return 0;
+    if (!register_scalar(connection, "ducknng_remote_exec", 2, ducknng_remote_exec_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_remote_manifest", 1, ducknng_remote_manifest_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_VARCHAR)) return 0;
+    if (!register_scalar(connection, "ducknng_open_socket", 1, ducknng_socket_scalar, &ctx, socket_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_socket", 1, ducknng_socket_scalar, &ctx, socket_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_dial_socket", 3, ducknng_dial_scalar, &ctx, dial_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_dial", 3, ducknng_dial_scalar, &ctx, dial_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(connection, "ducknng_close_socket", 1, ducknng_close_scalar, &ctx, close_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_close", 1, ducknng_close_scalar, &ctx, close_types, DUCKDB_TYPE_BOOLEAN)) return 0;
-    if (!register_scalar(connection, "ducknng_request_socket", 3, ducknng_request_socket_scalar, &ctx, request_socket_types, DUCKDB_TYPE_BLOB)) return 0;
-    if (!register_scalar(connection, "ducknng_request", 3, ducknng_request_scalar, &ctx, request_types, DUCKDB_TYPE_BLOB)) return 0;
-    if (!register_servers_table(connection, &ctx)) return 0;
-    if (!register_sockets_table(connection, &ctx)) return 0;
-    if (!register_remote_table(connection, &ctx)) return 0;
-    if (!register_manifest_result_table(connection, &ctx)) return 0;
-    if (!register_exec_result_table(connection, &ctx)) return 0;
-    if (!register_request_result_table(connection, &ctx)) return 0;
-    if (!register_request_socket_result_table(connection, &ctx)) return 0;
+    if (!register_scalar(connection, "ducknng_request_socket_raw", 3, ducknng_request_socket_scalar, &ctx, request_socket_types, DUCKDB_TYPE_BLOB)) return 0;
+    if (!register_scalar(connection, "ducknng_request_raw", 3, ducknng_request_scalar, &ctx, request_types, DUCKDB_TYPE_BLOB)) return 0;
+    if (!register_named_servers_table(connection, &ctx, "ducknng_servers")) return 0;
+    if (!register_named_servers_table(connection, &ctx, "ducknng_list_servers")) return 0;
+    if (!register_named_sockets_table(connection, &ctx, "ducknng_sockets")) return 0;
+    if (!register_named_sockets_table(connection, &ctx, "ducknng_list_sockets")) return 0;
+    if (!register_remote_table_named(connection, &ctx, "ducknng_query_rpc")) return 0;
+    if (!register_remote_table_named(connection, &ctx, "ducknng_rpc_query")) return 0;
+    if (!register_remote_table_named(connection, &ctx, "ducknng_remote")) return 0;
+    if (!register_manifest_result_table_named(connection, &ctx, "ducknng_get_rpc_manifest")) return 0;
+    if (!register_manifest_result_table_named(connection, &ctx, "ducknng_rpc_manifest")) return 0;
+    if (!register_manifest_result_table_named(connection, &ctx, "ducknng_remote_manifest_result")) return 0;
+    if (!register_exec_result_table_named(connection, &ctx, "ducknng_run_rpc")) return 0;
+    if (!register_exec_result_table_named(connection, &ctx, "ducknng_exec_rpc")) return 0;
+    if (!register_exec_result_table_named(connection, &ctx, "ducknng_rpc_exec")) return 0;
+    if (!register_exec_result_table_named(connection, &ctx, "ducknng_remote_exec_result")) return 0;
+    if (!register_request_result_table_named(connection, &ctx, "ducknng_request")) return 0;
+    if (!register_request_result_table_named(connection, &ctx, "ducknng_request_result")) return 0;
+    if (!register_request_socket_result_table_named(connection, &ctx, "ducknng_request_socket")) return 0;
+    if (!register_request_socket_result_table_named(connection, &ctx, "ducknng_request_socket_result")) return 0;
     return 1;
 }

@@ -616,11 +616,12 @@ and related projects, where a thin envelope is kept separate from Arrow
 IPC request and reply payloads.</p>
 <p>Today it provides:</p>
 <ul>
+<li>a low-level transport surface modeled over nanonext-style
+primitives</li>
 <li>named server start/stop from SQL</li>
-<li>registry introspection with <code>ducknng_servers()</code></li>
+<li>registry introspection with <code>ducknng_list_servers()</code></li>
 <li>one REP socket with one or more REP contexts</li>
-<li>a working <code>EXEC</code> request/reply path over the raw wire
-protocol</li>
+<li>a working RPC request/reply path over the raw wire protocol</li>
 </ul>
 <p>The documented next protocol slice is the session query family:
 <code>query_open</code>, <code>fetch</code>, <code>close</code>, and
@@ -649,141 +650,123 @@ exposure.</p>
 </thead>
 <tbody>
 <tr class="odd">
-<td><code>ducknng_server_start</code></td>
+<td><code>ducknng_start_server</code></td>
 <td>scalar</td>
 <td><code>BOOLEAN</code></td>
 <td>yes</td>
-<td>Start a named ducknng REP listener for SQL serving on an NNG
-URL.</td>
+<td>Start a named ducknng REP listener.</td>
 </tr>
 <tr class="even">
-<td><code>ducknng_server_stop</code></td>
+<td><code>ducknng_stop_server</code></td>
 <td>scalar</td>
 <td><code>BOOLEAN</code></td>
 <td>yes</td>
-<td>Stop a named ducknng service and tear down its listener and worker
-thread.</td>
+<td>Stop a named ducknng service.</td>
 </tr>
 <tr class="odd">
-<td><code>ducknng_servers</code></td>
+<td><code>ducknng_list_servers</code></td>
 <td>table</td>
 <td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)</code></td>
 <td>yes</td>
-<td>List registered ducknng services in the current DuckDB database
-runtime.</td>
+<td>List registered ducknng services.</td>
 </tr>
 <tr class="even">
-<td><code>ducknng_sessions</code></td>
-<td>table</td>
-<td><code>TABLE(session_id UBIGINT, batch_no UBIGINT, eos BOOLEAN, last_touch_ms UBIGINT)</code></td>
-<td>no</td>
-<td>List active query sessions for a named ducknng service.</td>
-</tr>
-<tr class="odd">
-<td><code>ducknng_remote_exec</code></td>
+<td><code>ducknng_open_socket</code></td>
 <td>scalar</td>
 <td><code>UBIGINT</code></td>
 <td>yes</td>
-<td>Send an EXEC request over the real wire protocol and return rows
-changed from the remote reply metadata.</td>
-</tr>
-<tr class="even">
-<td><code>ducknng_remote_exec_result</code></td>
-<td>table</td>
-<td><code>TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)</code></td>
-<td>yes</td>
-<td>Execute a metadata-only remote exec request and return a single
-result row with success status, error text, and decoded metadata
-fields.</td>
+<td>Open a client socket handle for a supported protocol.</td>
 </tr>
 <tr class="odd">
-<td><code>ducknng_remote_manifest</code></td>
-<td>scalar</td>
-<td><code>VARCHAR</code></td>
-<td>yes</td>
-<td>Request the remote ducknng manifest JSON from another
-ducknng-compatible service.</td>
-</tr>
-<tr class="even">
-<td><code>ducknng_remote_manifest_result</code></td>
-<td>table</td>
-<td><code>TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)</code></td>
-<td>yes</td>
-<td>Request the remote manifest without raising a SQL error on transport
-or protocol failure; returns a single result row with ok, error, and
-manifest fields.</td>
-</tr>
-<tr class="odd">
-<td><code>ducknng_socket</code></td>
-<td>scalar</td>
-<td><code>UBIGINT</code></td>
-<td>yes</td>
-<td>Open a client socket handle for a supported NNG protocol
-family.</td>
-</tr>
-<tr class="even">
-<td><code>ducknng_dial</code></td>
+<td><code>ducknng_dial_socket</code></td>
 <td>scalar</td>
 <td><code>BOOLEAN</code></td>
 <td>yes</td>
-<td>Associate a client socket handle with a remote URL using req-style
-timeout semantics.</td>
+<td>Dial a URL using an opened socket handle.</td>
 </tr>
-<tr class="odd">
-<td><code>ducknng_close</code></td>
+<tr class="even">
+<td><code>ducknng_close_socket</code></td>
 <td>scalar</td>
 <td><code>BOOLEAN</code></td>
 <td>yes</td>
-<td>Close a client socket handle and release its runtime state.</td>
+<td>Close a client socket handle.</td>
 </tr>
-<tr class="even">
-<td><code>ducknng_sockets</code></td>
+<tr class="odd">
+<td><code>ducknng_list_sockets</code></td>
 <td>table</td>
 <td><code>TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)</code></td>
 <td>yes</td>
-<td>List client socket handles registered in the current DuckDB
-runtime.</td>
-</tr>
-<tr class="odd">
-<td><code>ducknng_request</code></td>
-<td>scalar</td>
-<td><code>BLOB</code></td>
-<td>yes</td>
-<td>Perform a one-shot req-style raw request and return the raw reply
-bytes.</td>
+<td>List client socket handles in the runtime.</td>
 </tr>
 <tr class="even">
-<td><code>ducknng_request_result</code></td>
+<td><code>ducknng_request</code></td>
 <td>table</td>
 <td><code>TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)</code></td>
 <td>yes</td>
-<td>Perform a one-shot raw request and return a single structured result
-row instead of throwing on transport failure.</td>
+<td>Perform a one-shot raw request and return a structured result
+row.</td>
 </tr>
 <tr class="odd">
 <td><code>ducknng_request_socket</code></td>
-<td>scalar</td>
-<td><code>BLOB</code></td>
-<td>yes</td>
-<td>Perform a req-style raw request using a previously dialed client
-socket handle and return the raw reply bytes.</td>
-</tr>
-<tr class="even">
-<td><code>ducknng_request_socket_result</code></td>
 <td>table</td>
 <td><code>TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)</code></td>
 <td>yes</td>
 <td>Perform a raw request through a previously dialed socket handle and
-return a single structured result row instead of throwing on
-failure.</td>
+return a structured result row.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_get_rpc_manifest</code></td>
+<td>table</td>
+<td><code>TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)</code></td>
+<td>yes</td>
+<td>Request the RPC manifest and return a structured result row.</td>
 </tr>
 <tr class="odd">
-<td><code>ducknng_remote</code></td>
+<td><code>ducknng_get_rpc_manifest_raw</code></td>
+<td>scalar</td>
+<td><code>VARCHAR</code></td>
+<td>yes</td>
+<td>Request the RPC manifest and return only the manifest payload as
+VARCHAR.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_run_rpc</code></td>
+<td>table</td>
+<td><code>TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)</code></td>
+<td>yes</td>
+<td>Execute a metadata-oriented RPC call and return a structured result
+row.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_run_rpc_raw</code></td>
+<td>scalar</td>
+<td><code>UBIGINT</code></td>
+<td>yes</td>
+<td>Execute a metadata-oriented RPC call and return only
+rows_changed.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_query_rpc</code></td>
 <td>table</td>
 <td><code>table</code></td>
 <td>yes</td>
-<td>Execute a remote row-returning query over REQ/REP and expose the
-unary Arrow IPC row reply as a DuckDB table function.</td>
+<td>Execute a row-returning RPC query and expose the unary Arrow IPC row
+reply as a DuckDB table.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_request_raw</code></td>
+<td>scalar</td>
+<td><code>BLOB</code></td>
+<td>yes</td>
+<td>Perform a one-shot raw request and return the raw reply bytes.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_request_socket_raw</code></td>
+<td>scalar</td>
+<td><code>BLOB</code></td>
+<td>yes</td>
+<td>Perform a raw request through a dialed socket handle and return the
+raw reply bytes.</td>
 </tr>
 </tbody>
 </table>
@@ -799,7 +782,7 @@ binding session/query-family contract.</p>
 <h3 id="start-an-ipc-listener-and-inspect-the-registry">Start an IPC
 listener and inspect the registry</h3>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>LOAD <span class="st">&#39;/root/ducknng/build/release/ducknng.duckdb_extension&#39;</span>;</span>
-<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_start(</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_server(</span>
 <span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>  <span class="st">&#39;sql0&#39;</span>,</span>
 <span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql0.ipc&#39;</span>,</span>
 <span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>  <span class="dv">1</span>,</span>
@@ -811,11 +794,11 @@ listener and inspect the registry</h3>
 <span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a>);</span>
 <span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a></span>
 <span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="kw">SELECT</span> name, listen, contexts, running, sessions</span>
-<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a><span class="kw">FROM</span> ducknng_servers();</span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a><span class="kw">FROM</span> ducknng_list_servers();</span>
 <span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a></span>
-<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_stop(<span class="st">&#39;sql0&#39;</span>);</span></code></pre></div>
+<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql0&#39;</span>);</span></code></pre></div>
 <pre><code>┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ ducknng_server_start(&#39;sql0&#39;, &#39;ipc:///tmp/ducknng_sql0.ipc&#39;, 1, 134217728, 300000, NULL, NULL, NULL) │
+│ ducknng_start_server(&#39;sql0&#39;, &#39;ipc:///tmp/ducknng_sql0.ipc&#39;, 1, 134217728, 300000, NULL, NULL, NULL) │
 │                                               boolean                                               │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ true                                                                                                │
@@ -827,7 +810,7 @@ listener and inspect the registry</h3>
 │ sql0    │ ipc:///tmp/ducknng_sql0.ipc │        1 │ true    │        0 │
 └─────────┴─────────────────────────────┴──────────┴─────────┴──────────┘
 ┌─────────────────────────────┐
-│ ducknng_server_stop(&#39;sql0&#39;) │
+│ ducknng_stop_server(&#39;sql0&#39;) │
 │           boolean           │
 ├─────────────────────────────┤
 │ true                        │
@@ -835,7 +818,7 @@ listener and inspect the registry</h3>
 <h3 id="request-multiple-rep-contexts-on-one-rep-socket">Request
 multiple REP contexts on one REP socket</h3>
 <div class="sourceCode" id="cb4"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>LOAD <span class="st">&#39;/root/ducknng/build/release/ducknng.duckdb_extension&#39;</span>;</span>
-<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_start(</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_server(</span>
 <span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>  <span class="st">&#39;sql_multi&#39;</span>,</span>
 <span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_multi.ipc&#39;</span>,</span>
 <span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>  <span class="dv">3</span>,</span>
@@ -847,12 +830,12 @@ multiple REP contexts on one REP socket</h3>
 <span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a>);</span>
 <span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a></span>
 <span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="kw">SELECT</span> name, contexts, running</span>
-<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="kw">FROM</span> ducknng_servers()</span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="kw">FROM</span> ducknng_list_servers()</span>
 <span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="kw">WHERE</span> name <span class="op">=</span> <span class="st">&#39;sql_multi&#39;</span>;</span>
 <span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a></span>
-<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_stop(<span class="st">&#39;sql_multi&#39;</span>);</span></code></pre></div>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_multi&#39;</span>);</span></code></pre></div>
 <pre><code>┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ ducknng_server_start(&#39;sql_multi&#39;, &#39;ipc:///tmp/ducknng_sql_multi.ipc&#39;, 3, 134217728, 300000, NULL, NULL, NULL) │
+│ ducknng_start_server(&#39;sql_multi&#39;, &#39;ipc:///tmp/ducknng_sql_multi.ipc&#39;, 3, 134217728, 300000, NULL, NULL, NULL) │
 │                                                    boolean                                                    │
 ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ true                                                                                                          │
@@ -864,7 +847,7 @@ multiple REP contexts on one REP socket</h3>
 │ sql_multi │        3 │ true    │
 └───────────┴──────────┴─────────┘
 ┌──────────────────────────────────┐
-│ ducknng_server_stop(&#39;sql_multi&#39;) │
+│ ducknng_stop_server(&#39;sql_multi&#39;) │
 │             boolean              │
 ├──────────────────────────────────┤
 │ true                             │
@@ -873,7 +856,7 @@ multiple REP contexts on one REP socket</h3>
 client</h3>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>LOAD <span class="st">&#39;/root/ducknng/build/release/ducknng.duckdb_extension&#39;</span>;</span>
 <span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="co">-- Start a local ducknng service that the following client examples will talk to.</span></span>
-<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_start(</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_server(</span>
 <span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>  <span class="st">&#39;sql_client_demo&#39;</span>,</span>
 <span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,</span>
 <span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>  <span class="dv">1</span>,</span>
@@ -884,72 +867,56 @@ client</h3>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>  <span class="kw">NULL</span></span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>);</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a></span>
-<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a><span class="co">-- Inspect the remote manifest over REQ/REP.</span></span>
-<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a><span class="kw">SELECT</span> position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> ducknng_remote_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>)) <span class="op">&gt;</span> <span class="dv">0</span>;</span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a><span class="co">-- RPC helper: fetch the manifest as a structured status row.</span></span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_get_rpc_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>);</span>
 <span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a></span>
-<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a><span class="co">-- The non-throwing companion returns a single status row with ok/error/payload fields.</span></span>
-<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_remote_manifest_result(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>);</span>
-<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a></span>
-<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a><span class="co">-- Run non-row statements through the metadata-oriented helper.</span></span>
-<span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_remote_exec(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE client_side_demo(i INTEGER)&#39;</span>);</span>
-<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_remote_exec(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;INSERT INTO client_side_demo VALUES (10), (11)&#39;</span>);</span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a><span class="co">-- RPC helper: run non-row statements and keep errors in-band.</span></span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_run_rpc(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>);</span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_run_rpc(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;INSERT INTO client_side_demo VALUES (10), (11)&#39;</span>);</span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a></span>
+<span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a><span class="co">-- RPC helper: fetch row results through the unary query path.</span></span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_query_rpc(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;SELECT i, i &gt; 10 AS gt_10 FROM client_side_demo ORDER BY i&#39;</span>);</span>
 <span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a></span>
-<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a><span class="co">-- The result-table companion keeps transport/protocol failures in-band instead of failing the query.</span></span>
-<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_remote_exec_result(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>);</span>
-<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a></span>
-<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a><span class="co">-- Fetch row results through the table-function client path.</span></span>
-<span id="cb6-28"><a href="#cb6-28" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_remote(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;SELECT i, i &gt; 10 AS gt_10 FROM client_side_demo ORDER BY i&#39;</span>);</span>
-<span id="cb6-29"><a href="#cb6-29" tabindex="-1"></a></span>
-<span id="cb6-30"><a href="#cb6-30" tabindex="-1"></a><span class="co">-- Open a req-style client handle, dial the service, and inspect the handle registry.</span></span>
-<span id="cb6-31"><a href="#cb6-31" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_socket(<span class="st">&#39;req&#39;</span>);</span>
-<span id="cb6-32"><a href="#cb6-32" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_dial(<span class="dv">1</span>, <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">1000</span>);</span>
-<span id="cb6-33"><a href="#cb6-33" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_sockets();</span>
-<span id="cb6-34"><a href="#cb6-34" tabindex="-1"></a></span>
-<span id="cb6-35"><a href="#cb6-35" tabindex="-1"></a><span class="co">-- Send a raw manifest frame through the socket-handle API and inspect the reply prefix.</span></span>
-<span id="cb6-36"><a href="#cb6-36" tabindex="-1"></a><span class="kw">SELECT</span> <span class="fu">substr</span>(hex(ducknng_request_socket(<span class="dv">1</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>)), <span class="dv">1</span>, <span class="dv">28</span>);</span>
+<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a><span class="co">-- Primitive transport layer: open a socket handle, dial it, and inspect the registry.</span></span>
+<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_open_socket(<span class="st">&#39;req&#39;</span>);</span>
+<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_dial_socket(<span class="dv">1</span>, <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">1000</span>);</span>
+<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_list_sockets();</span>
+<span id="cb6-28"><a href="#cb6-28" tabindex="-1"></a></span>
+<span id="cb6-29"><a href="#cb6-29" tabindex="-1"></a><span class="co">-- Primitive transport layer: send a raw manifest frame and inspect the reply prefix.</span></span>
+<span id="cb6-30"><a href="#cb6-30" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_request_socket(<span class="dv">1</span>:<span class="ch">:UBIGINT</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>);</span>
+<span id="cb6-31"><a href="#cb6-31" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_request(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>);</span>
+<span id="cb6-32"><a href="#cb6-32" tabindex="-1"></a></span>
+<span id="cb6-33"><a href="#cb6-33" tabindex="-1"></a><span class="co">-- Raw compatibility helpers remain available when only the payload bytes are wanted.</span></span>
+<span id="cb6-34"><a href="#cb6-34" tabindex="-1"></a><span class="kw">SELECT</span> <span class="fu">substr</span>(hex(ducknng_request_socket_raw(<span class="dv">1</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>)), <span class="dv">1</span>, <span class="dv">28</span>);</span>
+<span id="cb6-35"><a href="#cb6-35" tabindex="-1"></a><span class="kw">SELECT</span> position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> ducknng_get_rpc_manifest_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>)) <span class="op">&gt;</span> <span class="dv">0</span>;</span>
+<span id="cb6-36"><a href="#cb6-36" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_run_rpc_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>);</span>
 <span id="cb6-37"><a href="#cb6-37" tabindex="-1"></a></span>
-<span id="cb6-38"><a href="#cb6-38" tabindex="-1"></a><span class="co">-- The result-table variants keep raw request failures in-band as rows.</span></span>
-<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_request_socket_result(<span class="dv">1</span>:<span class="ch">:UBIGINT</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>);</span>
-<span id="cb6-40"><a href="#cb6-40" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_request_result(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>);</span>
-<span id="cb6-41"><a href="#cb6-41" tabindex="-1"></a></span>
-<span id="cb6-42"><a href="#cb6-42" tabindex="-1"></a><span class="co">-- Close the client socket handle and stop the demo server.</span></span>
-<span id="cb6-43"><a href="#cb6-43" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_close(<span class="dv">1</span>);</span>
-<span id="cb6-44"><a href="#cb6-44" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_stop(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
+<span id="cb6-38"><a href="#cb6-38" tabindex="-1"></a><span class="co">-- Close the client socket handle and stop the demo server.</span></span>
+<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_close_socket(<span class="dv">1</span>);</span>
+<span id="cb6-40"><a href="#cb6-40" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
 <pre><code>┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ ducknng_server_start(&#39;sql_client_demo&#39;, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1, 134217728, 300000, NULL, NULL, NULL) │
+│ ducknng_start_server(&#39;sql_client_demo&#39;, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1, 134217728, 300000, NULL, NULL, NULL) │
 │                                                          boolean                                                          │
 ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ true                                                                                                                      │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ (main.&quot;position&quot;(ducknng_remote_manifest(&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;), &#39;&quot;name&quot;:&quot;exec&quot;&#39;) &gt; 0) │
-│                                                  boolean                                                  │
-├───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ true                                                                                                      │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─────────┬─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  manifest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  │
 │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  varchar                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   │
 ├─────────┼─────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ true    │ NULL    │ {&quot;server&quot;:{&quot;name&quot;:&quot;ducknng&quot;,&quot;version&quot;:&quot;0.1.0&quot;,&quot;protocol_version&quot;:1},&quot;methods&quot;:[{&quot;name&quot;:&quot;manifest&quot;,&quot;family&quot;:&quot;control&quot;,&quot;summary&quot;:&quot;Return the registry-derived manifest JSON&quot;,&quot;transport_pattern&quot;:&quot;reqrep&quot;,&quot;request_payload_format&quot;:&quot;none&quot;,&quot;response_payload_format&quot;:&quot;json&quot;,&quot;response_mode&quot;:&quot;metadata_only&quot;,&quot;session_behavior&quot;:&quot;stateless&quot;,&quot;requires_auth&quot;:false,&quot;requires_session&quot;:false,&quot;opens_session&quot;:false,&quot;closes_session&quot;:false,&quot;mutates_state&quot;:false,&quot;idempotent&quot;:true,&quot;deprecated&quot;:false,&quot;disabled&quot;:false,&quot;accepted_request_flags&quot;:0,&quot;emitted_reply_flags&quot;:4,&quot;max_request_bytes&quot;:0,&quot;max_reply_bytes&quot;:1048576,&quot;version_introduced&quot;:1,&quot;request_schema&quot;:null,&quot;response_schema&quot;:{&quot;type&quot;:&quot;json&quot;}},{&quot;name&quot;:&quot;exec&quot;,&quot;family&quot;:&quot;sql&quot;,&quot;summary&quot;:&quot;Execute SQL and return metadata or rows&quot;,&quot;transport_pattern&quot;:&quot;reqrep&quot;,&quot;request_payload_format&quot;:&quot;arrow_ipc_stream&quot;,&quot;response_payload_format&quot;:&quot;arrow_ipc_stream&quot;,&quot;response_mode&quot;:&quot;metadata_or_rows&quot;,&quot;session_behavior&quot;:&quot;stateless&quot;,&quot;requires_auth&quot;:false,&quot;requires_session&quot;:false,&quot;opens_session&quot;:false,&quot;closes_session&quot;:false,&quot;mutates_state&quot;:true,&quot;idempotent&quot;:false,&quot;deprecated&quot;:false,&quot;disabled&quot;:false,&quot;accepted_request_flags&quot;:0,&quot;emitted_reply_flags&quot;:11,&quot;max_request_bytes&quot;:16777216,&quot;max_reply_bytes&quot;:16777216,&quot;version_introduced&quot;:1,&quot;request_schema&quot;:{&quot;fields&quot;:[{&quot;name&quot;:&quot;sql&quot;,&quot;type&quot;:&quot;utf8&quot;,&quot;nullable&quot;:false},{&quot;name&quot;:&quot;want_result&quot;,&quot;type&quot;:&quot;bool&quot;,&quot;nullable&quot;:false}]},&quot;response_schema&quot;:{&quot;mode&quot;:&quot;metadata_or_rows&quot;}}]} │
 └─────────┴─────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ ducknng_remote_exec(&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, &#39;CREATE TABLE client_side_demo(i INTEGER)&#39;) │
-│                                                  uint64                                                   │
-├───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                                         0 │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ ducknng_remote_exec(&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, &#39;INSERT INTO client_side_demo VALUES (10), (11)&#39;) │
-│                                                     uint64                                                      │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                                               2 │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─────────┬─────────┬──────────────┬────────────────┬─────────────┐
 │   ok    │  error  │ rows_changed │ statement_type │ result_type │
 │ boolean │ varchar │    uint64    │     int32      │    int32    │
 ├─────────┼─────────┼──────────────┼────────────────┼─────────────┤
 │ true    │ NULL    │            0 │              7 │           2 │
+└─────────┴─────────┴──────────────┴────────────────┴─────────────┘
+┌─────────┬─────────┬──────────────┬────────────────┬─────────────┐
+│   ok    │  error  │ rows_changed │ statement_type │ result_type │
+│ boolean │ varchar │    uint64    │     int32      │    int32    │
+├─────────┼─────────┼──────────────┼────────────────┼─────────────┤
+│ true    │ NULL    │            2 │              2 │           1 │
 └─────────┴─────────┴──────────────┴────────────────┴─────────────┘
 ┌───────┬─────────┐
 │   i   │  gt_10  │
@@ -958,30 +925,24 @@ client</h3>
 │    10 │ false   │
 │    11 │ true    │
 └───────┴─────────┘
-┌───────────────────────┐
-│ ducknng_socket(&#39;req&#39;) │
-│        uint64         │
-├───────────────────────┤
-│                     1 │
-└───────────────────────┘
-┌─────────────────────────────────────────────────────────────────┐
-│ ducknng_dial(1, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1000) │
-│                             boolean                             │
-├─────────────────────────────────────────────────────────────────┤
-│ true                                                            │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────┐
+│ ducknng_open_socket(&#39;req&#39;) │
+│           uint64           │
+├────────────────────────────┤
+│                          1 │
+└────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ ducknng_dial_socket(1, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1000) │
+│                                boolean                                 │
+├────────────────────────────────────────────────────────────────────────┤
+│ true                                                                   │
+└────────────────────────────────────────────────────────────────────────┘
 ┌───────────┬──────────┬────────────────────────────────────────┬─────────┬───────────┬─────────────────┬─────────────────┐
 │ socket_id │ protocol │                  url                   │  open   │ connected │ send_timeout_ms │ recv_timeout_ms │
 │  uint64   │ varchar  │                varchar                 │ boolean │  boolean  │      int32      │      int32      │
 ├───────────┼──────────┼────────────────────────────────────────┼─────────┼───────────┼─────────────────┼─────────────────┤
 │         1 │ req      │ ipc:///tmp/ducknng_sql_client_demo.ipc │ true    │ true      │            1000 │            1000 │
 └───────────┴──────────┴────────────────────────────────────────┴─────────┴───────────┴─────────────────┴─────────────────┘
-┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ substr(hex(ducknng_request_socket(1, from_hex(&#39;01000000000000000000000000000000000000000000&#39;), 1000)), 1, 28) │
-│                                                    varchar                                                    │
-├───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 0102040000000800000000000000                                                                                  │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─────────┬─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              payload                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               │
 │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                blob                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                │
@@ -994,14 +955,32 @@ client</h3>
 ├─────────┼─────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ true    │ NULL    │ \x01\x02\x04\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x8A\x05\x00\x00\x00\x00\x00\x00manifest{\x22server\x22:{\x22name\x22:\x22ducknng\x22,\x22version\x22:\x220.1.0\x22,\x22protocol_version\x22:1},\x22methods\x22:[{\x22name\x22:\x22manifest\x22,\x22family\x22:\x22control\x22,\x22summary\x22:\x22Return the registry-derived manifest JSON\x22,\x22transport_pattern\x22:\x22reqrep\x22,\x22request_payload_format\x22:\x22none\x22,\x22response_payload_format\x22:\x22json\x22,\x22response_mode\x22:\x22metadata_only\x22,\x22session_behavior\x22:\x22stateless\x22,\x22requires_auth\x22:false,\x22requires_session\x22:false,\x22opens_session\x22:false,\x22closes_session\x22:false,\x22mutates_state\x22:false,\x22idempotent\x22:true,\x22deprecated\x22:false,\x22disabled\x22:false,\x22accepted_request_flags\x22:0,\x22emitted_reply_flags\x22:4,\x22max_request_bytes\x22:0,\x22max_reply_bytes\x22:1048576,\x22version_introduced\x22:1,\x22request_schema\x22:null,\x22response_schema\x22:{\x22type\x22:\x22json\x22}},{\x22name\x22:\x22exec\x22,\x22family\x22:\x22sql\x22,\x22summary\x22:\x22Execute SQL and return metadata or rows\x22,\x22transport_pattern\x22:\x22reqrep\x22,\x22request_payload_format\x22:\x22arrow_ipc_stream\x22,\x22response_payload_format\x22:\x22arrow_ipc_stream\x22,\x22response_mode\x22:\x22metadata_or_rows\x22,\x22session_behavior\x22:\x22stateless\x22,\x22requires_auth\x22:false,\x22requires_session\x22:false,\x22opens_session\x22:false,\x22closes_session\x22:false,\x22mutates_state\x22:true,\x22idempotent\x22:false,\x22deprecated\x22:false,\x22disabled\x22:false,\x22accepted_request_flags\x22:0,\x22emitted_reply_flags\x22:11,\x22max_request_bytes\x22:16777216,\x22max_reply_bytes\x22:16777216,\x22version_introduced\x22:1,\x22request_schema\x22:{\x22fields\x22:[{\x22name\x22:\x22sql\x22,\x22type\x22:\x22utf8\x22,\x22nullable\x22:false},{\x22name\x22:\x22want_result\x22,\x22type\x22:\x22bool\x22,\x22nullable\x22:false}]},\x22response_schema\x22:{\x22mode\x22:\x22metadata_or_rows\x22}}]} │
 └─────────┴─────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌──────────────────┐
-│ ducknng_close(1) │
-│     boolean      │
-├──────────────────┤
-│ true             │
-└──────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ substr(hex(ducknng_request_socket_raw(1, from_hex(&#39;01000000000000000000000000000000000000000000&#39;), 1000)), 1, 28) │
+│                                                      varchar                                                      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 0102040000000800000000000000                                                                                      │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ (main.&quot;position&quot;(ducknng_get_rpc_manifest_raw(&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;), &#39;&quot;name&quot;:&quot;exec&quot;&#39;) &gt; 0) │
+│                                                    boolean                                                     │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ true                                                                                                           │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ducknng_run_rpc_raw(&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, &#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;) │
+│                                                         uint64                                                          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                                                       0 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────┐
+│ ducknng_close_socket(1) │
+│         boolean         │
+├─────────────────────────┤
+│ true                    │
+└─────────────────────────┘
 ┌────────────────────────────────────────┐
-│ ducknng_server_stop(&#39;sql_client_demo&#39;) │
+│ ducknng_stop_server(&#39;sql_client_demo&#39;) │
 │                boolean                 │
 ├────────────────────────────────────────┤
 │ true                                   │

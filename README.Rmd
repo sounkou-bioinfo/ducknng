@@ -30,10 +30,11 @@ Its SQL-facing client and server interface is explicitly modeled over [`r-lib/na
 
 Today it provides:
 
+- a low-level transport surface modeled over nanonext-style primitives
 - named server start/stop from SQL
-- registry introspection with `ducknng_servers()`
+- registry introspection with `ducknng_list_servers()`
 - one REP socket with one or more REP contexts
-- a working `EXEC` request/reply path over the raw wire protocol
+- a working RPC request/reply path over the raw wire protocol
 
 The documented next protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current docs contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should be treated as scaffolding for loopback or development use rather than production-safe multi-client exposure.
 
@@ -57,7 +58,7 @@ See also `NEWS.md` for the current implementation status and planned next steps,
 ### Start an IPC listener and inspect the registry
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
-SELECT ducknng_server_start(
+SELECT ducknng_start_server(
   'sql0',
   'ipc:///tmp/ducknng_sql0.ipc',
   1,
@@ -69,15 +70,15 @@ SELECT ducknng_server_start(
 );
 
 SELECT name, listen, contexts, running, sessions
-FROM ducknng_servers();
+FROM ducknng_list_servers();
 
-SELECT ducknng_server_stop('sql0');
+SELECT ducknng_stop_server('sql0');
 ```
 
 ### Request multiple REP contexts on one REP socket
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
-SELECT ducknng_server_start(
+SELECT ducknng_start_server(
   'sql_multi',
   'ipc:///tmp/ducknng_sql_multi.ipc',
   3,
@@ -89,17 +90,17 @@ SELECT ducknng_server_start(
 );
 
 SELECT name, contexts, running
-FROM ducknng_servers()
+FROM ducknng_list_servers()
 WHERE name = 'sql_multi';
 
-SELECT ducknng_server_stop('sql_multi');
+SELECT ducknng_stop_server('sql_multi');
 ```
 
 ### DuckDB can also act as a client
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
 -- Start a local ducknng service that the following client examples will talk to.
-SELECT ducknng_server_start(
+SELECT ducknng_start_server(
   'sql_client_demo',
   'ipc:///tmp/ducknng_sql_client_demo.ipc',
   1,
@@ -110,37 +111,33 @@ SELECT ducknng_server_start(
   NULL
 );
 
--- Inspect the remote manifest over REQ/REP.
-SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
+-- RPC helper: fetch the manifest as a structured status row.
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc');
 
--- The non-throwing companion returns a single status row with ok/error/payload fields.
-SELECT * FROM ducknng_remote_manifest_result('ipc:///tmp/ducknng_sql_client_demo.ipc');
+-- RPC helper: run non-row statements and keep errors in-band.
+SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');
+SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
 
--- Run non-row statements through the metadata-oriented helper.
-SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE client_side_demo(i INTEGER)');
-SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+-- RPC helper: fetch row results through the unary query path.
+SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i');
 
--- The result-table companion keeps transport/protocol failures in-band instead of failing the query.
-SELECT * FROM ducknng_remote_exec_result('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');
+-- Primitive transport layer: open a socket handle, dial it, and inspect the registry.
+SELECT ducknng_open_socket('req');
+SELECT ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
+SELECT * FROM ducknng_list_sockets();
 
--- Fetch row results through the table-function client path.
-SELECT * FROM ducknng_remote('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i');
+-- Primitive transport layer: send a raw manifest frame and inspect the reply prefix.
+SELECT * FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
+SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);
 
--- Open a req-style client handle, dial the service, and inspect the handle registry.
-SELECT ducknng_socket('req');
-SELECT ducknng_dial(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
-SELECT * FROM ducknng_sockets();
-
--- Send a raw manifest frame through the socket-handle API and inspect the reply prefix.
-SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
-
--- The result-table variants keep raw request failures in-band as rows.
-SELECT * FROM ducknng_request_socket_result(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
-SELECT * FROM ducknng_request_result('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);
+-- Raw compatibility helpers remain available when only the payload bytes are wanted.
+SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
+SELECT position('"name":"exec"' IN ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
+SELECT ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');
 
 -- Close the client socket handle and stop the demo server.
-SELECT ducknng_close(1);
-SELECT ducknng_server_stop('sql_client_demo');
+SELECT ducknng_close_socket(1);
+SELECT ducknng_stop_server('sql_client_demo');
 ```
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example
