@@ -1,7 +1,14 @@
-.PHONY: clean clean_all function_catalog rdm rpc_smoke
+.PHONY: clean clean_all function_catalog rdm rpc_smoke rpc_smoke_r
 
-rpc_smoke:
-	Rscript test/rpc_smoke.R
+rpc_smoke: check_configure
+	$(TEST_RUNNER_RELEASE)
+
+rpc_smoke_r:
+	@if command -v Rscript >/dev/null 2>&1; then \
+		Rscript test/rpc_smoke.R; \
+	else \
+		echo "Rscript not found; skipping optional rpc_smoke_r"; \
+	fi
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
