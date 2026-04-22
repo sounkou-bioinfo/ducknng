@@ -222,6 +222,8 @@ done:
 int ducknng_socket_close(nng_socket sock) { return nng_close(sock); }
 int ducknng_ctx_open(nng_ctx *out, nng_socket sock) { return nng_ctx_open(out, sock); }
 int ducknng_ctx_close(nng_ctx ctx) { return nng_ctx_close(ctx); }
+void ducknng_ctx_recv_aio(nng_ctx ctx, nng_aio *aio) { nng_ctx_recv(ctx, aio); }
+void ducknng_ctx_send_aio(nng_ctx ctx, nng_aio *aio) { nng_ctx_send(ctx, aio); }
 int ducknng_aio_alloc(nng_aio **out, void (*cb)(void *), void *arg, int timeout_ms) {
     int rv = nng_aio_alloc(out, cb, arg);
     if (rv == 0 && timeout_ms > 0) {
@@ -230,4 +232,9 @@ int ducknng_aio_alloc(nng_aio **out, void (*cb)(void *), void *arg, int timeout_
     return rv;
 }
 void ducknng_aio_free(nng_aio *aio) { nng_aio_free(aio); }
+int ducknng_aio_result(nng_aio *aio) { return nng_aio_result(aio); }
+void ducknng_aio_cancel(nng_aio *aio) { nng_aio_cancel(aio); }
+void ducknng_aio_wait(nng_aio *aio) { nng_aio_wait(aio); }
+void ducknng_aio_set_msg(nng_aio *aio, nng_msg *msg) { nng_aio_set_msg(aio, msg); }
+nng_msg *ducknng_aio_get_msg(nng_aio *aio) { return nng_aio_get_msg(aio); }
 const char *ducknng_nng_strerror(int err) { return nng_strerror(err); }

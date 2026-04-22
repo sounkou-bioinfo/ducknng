@@ -47,11 +47,9 @@ This checklist tracks the implementation status of the recommendations in `docs/
   - `function_catalog/functions.yaml`
   - generated `function_catalog/functions.md` / `functions.tsv`
   - SQLLogicTests and `test/rpc_smoke.R`
-- [x] Return the extension to a stable-only DuckDB C API posture.
-  - `USE_UNSTABLE_C_API` is back to `0`.
-  - Stable extension metadata now targets `v1.2.0`.
-  - The repo now compiles against DuckDB `v1.5.0` headers while remaining on the stable C API surface.
+- [x] Keep the current implementation off unstable and deprecated DuckDB Arrow entrypoints.
   - Unstable and deprecated DuckDB Arrow entrypoints were removed from implementation code.
+  - The row-bearing RPC export path remains on explicit nanoarrow schema and batch mapping.
 
 ## Partial / clarified but not fully solved
 
@@ -65,22 +63,26 @@ This checklist tracks the implementation status of the recommendations in `docs/
 ## Blocked by larger architectural replacement work
 
 - [~] Replace the hand-rolled Arrow encode/decode path with DuckDB-native Arrow C API plumbing.
-  - Current state: the project explicitly chose the stable C API route again, so the row-bearing RPC export path is back on manual nanoarrow schema and batch mapping.
+  - Current state: the row-bearing RPC export path stays on manual nanoarrow schema and batch mapping.
   - Remaining work:
-    - decide whether a future non-deprecated stable DuckDB Arrow seam exists that would justify another re-plumb
+    - decide whether a future non-deprecated DuckDB Arrow seam exists that would justify another re-plumb
     - until then, keep the manual mappings careful, documented, and fully tested instead of mixing in unstable or deprecated DuckDB entrypoints
-- [ ] Implement the session query family.
-  - `query_open`
-  - `fetch`
-  - `close`
-  - `cancel`
-  - Blocker: the session ownership and lifecycle model is still not concretized enough for safe multi-client semantics, and it should be built on the Arrow re-plumb rather than the current manual path.
+- [~] Expose the session query family through SQL helpers.
+  - Current state:
+    - server-side `query_open` / `fetch` / `close` / `cancel` methods are registered
+    - SQL-visible wrappers now exist as `ducknng_open_query()`, `ducknng_fetch_query()`, `ducknng_close_query()`, and `ducknng_cancel_query()`
+  - Remaining work:
+    - bind session ownership to a real client identity model
+    - add a SQL-side Arrow batch decoder or higher-level row-decoding helper for session fetch payloads
+    - decide whether `ducknng_query_rpc()` should later be rebuilt as a convenience wrapper over the session family
 - [ ] Add SQL-visible async/aio request handles.
-  - `ducknng_request_aio`
+  - `ducknng_request_raw_aio`
+  - `ducknng_request_socket_raw_aio`
   - `ducknng_aio_ready`
   - `ducknng_aio_collect`
   - `ducknng_aio_cancel`
   - `ducknng_aio_drop`
+  - AIO here means a future-like handle for one pending NNG request operation, not a new wire mode.
   - Blocker: needs a runtime-owned aio registry, completion signaling, and lifecycle rules that do not yet exist.
 - [ ] Add the codec framework for user-defined Arrow extension serde.
   - `ducknng_register_codec`
@@ -102,8 +104,8 @@ This checklist tracks the implementation status of the recommendations in `docs/
 
 ## Current blockers to report upstream
 
-1. **Stable-only policy now blocks the DuckDB-native Arrow helper route.** This pass deliberately removed both unstable and deprecated DuckDB Arrow entrypoints from implementation code and returned the row-bearing RPC path to manual nanoarrow mappings. That keeps the extension on the stable C API, but it also means the future Arrow re-plumb must wait for a non-deprecated stable seam or be abandoned in favor of maintaining careful manual mappings.
-2. **Session-family work is only partially unblocked.** This pass added real service-owned query session scaffolding and registry-visible `query_open` / `fetch` / `close` / `cancel` methods, but a bare `session_id` protocol without concrete owner rules is still not acceptable as the final multi-client design.
+1. **Current DuckDB-facing Arrow work stays on manual nanoarrow mappings.** The implementation no longer compiles unstable or deprecated DuckDB Arrow entrypoints, so any future Arrow re-plumb must wait for a non-deprecated seam or be abandoned in favor of maintaining the explicit mappings.
+2. **Session-family work is only partially complete.** This pass already has real service-owned query session scaffolding, registry-visible `query_open` / `fetch` / `close` / `cancel` methods, and SQL-visible wrappers, but a bare `session_id` protocol without concrete owner rules is still not acceptable as the final multi-client design.
 3. **Async/aio work is blocked on runtime lifecycle design.** SQL-visible futures need a registry, cleanup policy, and completion signaling layer first.
-4. **Codec work should not be built on undocumented mapping behavior.** If the project remains on the stable-only manual nanoarrow route, codec decisions should sit on top of explicit tested mappings rather than implicit assumptions about a future Arrow helper path.
+4. **Codec work should not be built on undocumented mapping behavior.** If the project continues using the current manual nanoarrow route, codec decisions should sit on top of explicit tested mappings rather than implicit assumptions about a future Arrow helper path.
 5. **Full multi-protocol NNG exposure is a product-level API redesign.** It is larger than a cleanup patch and should be scoped deliberately. During this pass, a first client-side broadening attempt showed a lower-level blocker too: the current vendored/build-linked NNG artifact for this extension does not export additional protocol entry points such as `nng_sub0_open` into the final extension load path, so simply widening the SQL surface is not enough.

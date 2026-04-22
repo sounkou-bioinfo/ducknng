@@ -70,6 +70,63 @@ SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELE
 7	false
 8	true
 
+query IITT
+SELECT ok, session_id, state, next_method
+FROM ducknng_open_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i FROM remote_t ORDER BY i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+1	1	open	fetch
+
+query I
+SELECT sessions
+FROM ducknng_list_servers()
+WHERE name = 'rpc_smoke'
+----
+1
+
+query IIIII
+SELECT ok, session_id, state IS NULL, octet_length(payload) > 0, end_of_stream
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+1	1	1	1	0
+
+query IITII
+SELECT ok, session_id, state, payload IS NULL, end_of_stream
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+1	1	exhausted	1	1
+
+query IIT
+SELECT ok, session_id, state
+FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, 0::UBIGINT)
+----
+1	1	closed
+
+query I
+SELECT sessions
+FROM ducknng_list_servers()
+WHERE name = 'rpc_smoke'
+----
+0
+
+query IITT
+SELECT ok, session_id, state, next_method
+FROM ducknng_open_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i FROM remote_t ORDER BY i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+1	2	open	fetch
+
+query IIT
+SELECT ok, session_id, state
+FROM ducknng_cancel_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 2::UBIGINT, 0::UBIGINT)
+----
+1	2	cancelled
+
+query I
+SELECT sessions
+FROM ducknng_list_servers()
+WHERE name = 'rpc_smoke'
+----
+0
+
 query I
 SELECT ducknng_open_socket('req')
 ----
@@ -113,6 +170,83 @@ SELECT ok, version, type, flags, type_name, name, position('"name":"exec"' IN pa
 FROM ducknng_decode_frame(ducknng_request_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT))
 ----
 1	1	2	4	result	manifest	1
+
+statement ok
+CREATE TEMP TABLE aio_launch AS
+SELECT
+  ducknng_request_raw_aio('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT) AS aio1,
+  ducknng_request_raw_aio('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT) AS aio2
+
+query II
+SELECT aio1 > 0, aio2 > aio1
+FROM aio_launch
+----
+1	1
+
+query III
+SELECT aio_id IN (SELECT aio1 FROM aio_launch) OR aio_id IN (SELECT aio2 FROM aio_launch), ok, octet_length(frame) > 0
+FROM ducknng_aio_collect((SELECT list_value(aio1, aio2) FROM aio_launch), 1000)
+ORDER BY aio_id
+----
+1	1	1
+1	1	1
+
+query II
+SELECT ducknng_aio_ready(aio1), ducknng_aio_ready(aio2)
+FROM aio_launch
+----
+1	1
+
+query I
+SELECT COUNT(*)
+FROM ducknng_aio_collect((SELECT list_value(aio1, aio2) FROM aio_launch), 0)
+----
+0
+
+query I
+SELECT ducknng_aio_drop(aio1) AND ducknng_aio_drop(aio2)
+FROM aio_launch
+----
+1
+
+query II
+SELECT ducknng_aio_ready(aio1), ducknng_aio_drop(aio1)
+FROM aio_launch
+----
+0	0
+
+statement ok
+DROP TABLE aio_launch
+
+statement ok
+CREATE TEMP TABLE aio_socket_launch AS
+SELECT ducknng_request_socket_raw_aio(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000) AS aio1
+
+query I
+SELECT aio1 > 0
+FROM aio_socket_launch
+----
+1
+
+query III
+SELECT aio_id = (SELECT aio1 FROM aio_socket_launch), ok, octet_length(frame) > 0
+FROM ducknng_aio_collect((SELECT list_value(aio1) FROM aio_socket_launch), 1000)
+----
+1	1	1
+
+query I
+SELECT ducknng_aio_drop(aio1)
+FROM aio_socket_launch
+----
+1
+
+statement ok
+DROP TABLE aio_socket_launch
+
+query III
+SELECT ducknng_aio_ready(999::UBIGINT), ducknng_aio_cancel(999::UBIGINT), ducknng_aio_drop(999::UBIGINT)
+----
+0	0	0
 
 query II
 SELECT ok, error = 'ducknng: request URL must not be NULL or empty'

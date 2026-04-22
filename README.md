@@ -16,16 +16,6 @@ and related projects, where a thin envelope is kept separate from Arrow
 IPC request and reply payloads instead of being buried inside one-off
 method-specific binaries.
 
-`ducknng` is now back on the stable DuckDB C extension API. The
-extension metadata targets the stable C API line (`v1.2.0`), while the
-repo currently compiles against DuckDB `v1.5.0` headers in the same
-style used by stable C API extensions such as DuckHTS. That means the
-project should be read as a stable C API extension that avoids both
-unstable and deprecated DuckDB extension entrypoints in its
-implementation. The cost of that choice is that Arrow export stays on
-the carefully maintained nanoarrow mapping path instead of delegating
-schema and batch conversion to newer unstable DuckDB Arrow helper APIs.
-
 At the moment, `ducknng` already exposes a low-level transport layer
 with socket-open, dial, close, and raw request primitives, alongside
 SQL-visible server lifecycle control and runtime introspection through
@@ -44,15 +34,25 @@ RPC request/reply path with manifest discovery, metadata-oriented
 execution, and unary row-returning execution over the current raw wire
 and Arrow IPC model.
 
-The next documented protocol slice is the session query family:
-`query_open`, `fetch`, `close`, and `cancel`. In the current contract,
-`query_open` opens one server-owned query session and returns JSON
-control metadata, `fetch` is the only method that may return streamed
-row batches, `close` is the normal explicit cleanup path, and `cancel`
-is best-effort rather than a guarantee of immediate interruption. Until
-a real owner-identity model is implemented, that family should still be
-treated as development scaffolding rather than as a production-safe
-multi-client surface.
+A SQL-visible aio surface now exists for raw request/reply futures. In
+`nanonext` terms, an aio here means one pending NNG operation backed by
+`nng_aio`, not a new wire mode or a background job queue. The first
+exposed slice is deliberately raw-first: `ducknng_request_raw_aio()` and
+`ducknng_request_socket_raw_aio()` launch framed requests and return aio
+handle ids immediately, `ducknng_aio_ready()` reports whether a handle
+has reached a terminal state, `ducknng_aio_collect()` waits for and
+returns full reply frames, and `ducknng_aio_drop()` releases terminal
+handles explicitly.
+
+The session query family is now exposed on the SQL client side through
+`ducknng_open_query()`, `ducknng_fetch_query()`,
+`ducknng_close_query()`, and `ducknng_cancel_query()`. That surface
+stays control-first: opening, closing, and cancelling a session return
+JSON-derived control rows, while `ducknng_fetch_query()` returns either
+the next Arrow IPC batch as a BLOB payload or an end-of-stream control
+row. Until a real owner-identity model is implemented, that family
+should still be treated as development scaffolding rather than as a
+production-safe multi-client surface.
 
 The transport-security utility layer now has a runtime model for TLS
 configuration handles. Those handles can be assembled from file-backed
@@ -118,6 +118,17 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_tls_config_from_pem`    | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from in-memory PEM material.                              |
 | `ducknng_tls_config_from_files`  | scalar | `cert_key_file, ca_file, password, auth_mode`    | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from file-backed certificate material.                    |
 
+## Async I/O
+
+| name                             | kind   | arguments                               | returns                                                        | description                                                                                               |
+|----------------------------------|--------|-----------------------------------------|----------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `ducknng_request_raw_aio`        | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT`                                                      | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id.                   |
+| `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                      | Launch one raw req/rep roundtrip asynchronously on an existing socket handle and return an aio handle id. |
+| `ducknng_aio_ready`              | scalar | `aio_id`                                | `BOOLEAN`                                                      | Return whether an aio handle has reached a terminal state.                                                |
+| `ducknng_aio_collect`            | table  | `aio_ids, wait_ms`                      | `TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)` | Wait for any requested aio handles to finish and return one row per newly collected terminal result.      |
+| `ducknng_aio_cancel`             | scalar | `aio_id`                                | `BOOLEAN`                                                      | Request cancellation of a pending aio handle.                                                             |
+| `ducknng_aio_drop`               | scalar | `aio_id`                                | `BOOLEAN`                                                      | Release a terminal aio handle from the runtime registry.                                                  |
+
 ## RPC Helper
 
 | name                           | kind   | arguments                 | returns                                                                                               | description                                                                                   |
@@ -127,6 +138,15 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_run_rpc`              | table  | `url, sql, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)` | Execute a metadata-oriented RPC call and return a structured result row.                      |
 | `ducknng_run_rpc_raw`          | scalar | `url, sql, tls_config_id` | `BLOB`                                                                                                | Execute the exec RPC and return the raw reply frame as BLOB.                                  |
 | `ducknng_query_rpc`            | table  | `url, sql, tls_config_id` | `table`                                                                                               | Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table. |
+
+## RPC Session
+
+| name                   | kind  | arguments                                                 | returns                                                                                                                                               | description                                                                                            |
+|------------------------|-------|-----------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| `ducknng_open_query`   | table | `url, sql, batch_rows, batch_bytes, tls_config_id`        | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Open a server-side query session and return the JSON control metadata as a structured row.             |
+| `ducknng_fetch_query`  | table | `url, session_id, batch_rows, batch_bytes, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)` | Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.    |
+| `ducknng_close_query`  | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Close a server-side query session and return the JSON control metadata as a structured row.            |
+| `ducknng_cancel_query` | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Cancel and close a server-side query session and return the JSON control metadata as a structured row. |
 
 ## Build
 
@@ -415,6 +435,180 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├────────────────────────────────────────┤
     │ true                                   │
     └────────────────────────────────────────┘
+
+### Launch raw requests asynchronously and collect the reply frames later
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+SELECT ducknng_start_server(
+  'sql_aio_demo',
+  'ipc:///tmp/ducknng_sql_aio_demo.ipc',
+  1,
+  134217728,
+  300000,
+  0
+);
+
+CREATE TEMP TABLE aio_demo AS
+SELECT
+  ducknng_request_raw_aio(
+    'ipc:///tmp/ducknng_sql_aio_demo.ipc',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    0::UBIGINT
+  ) AS aio1,
+  ducknng_request_raw_aio(
+    'ipc:///tmp/ducknng_sql_aio_demo.ipc',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    0::UBIGINT
+  ) AS aio2;
+
+SELECT aio1 > 0 AS aio1_started, aio2 > aio1 AS aio2_started_after_aio1
+FROM aio_demo;
+
+SELECT aio_id, ok, octet_length(frame) > 0 AS has_frame
+FROM ducknng_aio_collect((SELECT list_value(aio1, aio2) FROM aio_demo), 1000)
+ORDER BY aio_id;
+
+SELECT ducknng_aio_ready(aio1) AS aio1_ready, ducknng_aio_ready(aio2) AS aio2_ready
+FROM aio_demo;
+
+SELECT ducknng_aio_drop(aio1) AND ducknng_aio_drop(aio2) AS dropped
+FROM aio_demo;
+
+DROP TABLE aio_demo;
+SELECT ducknng_stop_server('sql_aio_demo');
+```
+
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_server('sql_aio_demo', 'ipc:///tmp/ducknng_sql_aio_demo.ipc', 1, 134217728, 300000, 0) │
+    │                                               boolean                                                │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                 │
+    └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────┬─────────────────────────┐
+    │ aio1_started │ aio2_started_after_aio1 │
+    │   boolean    │         boolean         │
+    ├──────────────┼─────────────────────────┤
+    │ true         │ true                    │
+    └──────────────┴─────────────────────────┘
+    ┌────────┬─────────┬───────────┐
+    │ aio_id │   ok    │ has_frame │
+    │ uint64 │ boolean │  boolean  │
+    ├────────┼─────────┼───────────┤
+    │      1 │ true    │ true      │
+    │      2 │ true    │ true      │
+    └────────┴─────────┴───────────┘
+    ┌────────────┬────────────┐
+    │ aio1_ready │ aio2_ready │
+    │  boolean   │  boolean   │
+    ├────────────┼────────────┤
+    │ true       │ true       │
+    └────────────┴────────────┘
+    ┌─────────┐
+    │ dropped │
+    │ boolean │
+    ├─────────┤
+    │ true    │
+    └─────────┘
+    ┌─────────────────────────────────────┐
+    │ ducknng_stop_server('sql_aio_demo') │
+    │               boolean               │
+    ├─────────────────────────────────────┤
+    │ true                                │
+    └─────────────────────────────────────┘
+
+### Open, fetch, and close a query session explicitly
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+SELECT ducknng_start_server(
+  'sql_session_demo',
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1,
+  134217728,
+  300000,
+  0
+);
+
+-- Open one server-owned query session and inspect the control reply.
+SELECT *
+FROM ducknng_open_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id',
+  0::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT
+);
+
+-- The first fetch returns one Arrow IPC batch in payload.
+SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
+FROM ducknng_fetch_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT
+);
+
+-- The second fetch returns JSON control metadata saying the session is exhausted.
+SELECT ok, session_id, state, payload IS NULL AS no_payload, end_of_stream
+FROM ducknng_fetch_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT
+);
+
+-- Close the exhausted session explicitly.
+SELECT *
+FROM ducknng_close_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1::UBIGINT,
+  0::UBIGINT
+);
+
+SELECT ducknng_stop_server('sql_session_demo');
+```
+
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_server('sql_session_demo', 'ipc:///tmp/ducknng_sql_session_demo.ipc', 1, 134217728, 300000, 0) │
+    │                                                   boolean                                                    │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                         │
+    └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬─────────┬────────────┬─────────┬─────────────┬───────────────────────────────────────────────────────┐
+    │   ok    │  error  │ session_id │  state  │ next_method │                     control_json                      │
+    │ boolean │ varchar │   uint64   │ varchar │   varchar   │                        varchar                        │
+    ├─────────┼─────────┼────────────┼─────────┼─────────────┼───────────────────────────────────────────────────────┤
+    │ true    │ NULL    │          1 │ open    │ fetch       │ {"session_id":1,"state":"open","next_method":"fetch"} │
+    └─────────┴─────────┴────────────┴─────────┴─────────────┴───────────────────────────────────────────────────────┘
+    ┌─────────┬────────────┬───────────────┬─────────────┬───────────────┐
+    │   ok    │ session_id │ state_is_null │ has_payload │ end_of_stream │
+    │ boolean │   uint64   │    boolean    │   boolean   │    boolean    │
+    ├─────────┼────────────┼───────────────┼─────────────┼───────────────┤
+    │ true    │          1 │ true          │ true        │ false         │
+    └─────────┴────────────┴───────────────┴─────────────┴───────────────┘
+    ┌─────────┬────────────┬───────────┬────────────┬───────────────┐
+    │   ok    │ session_id │   state   │ no_payload │ end_of_stream │
+    │ boolean │   uint64   │  varchar  │  boolean   │    boolean    │
+    ├─────────┼────────────┼───────────┼────────────┼───────────────┤
+    │ true    │          1 │ exhausted │ true       │ true          │
+    └─────────┴────────────┴───────────┴────────────┴───────────────┘
+    ┌─────────┬─────────┬────────────┬─────────┬─────────────┬───────────────────────────────────┐
+    │   ok    │  error  │ session_id │  state  │ next_method │           control_json            │
+    │ boolean │ varchar │   uint64   │ varchar │   varchar   │              varchar              │
+    ├─────────┼─────────┼────────────┼─────────┼─────────────┼───────────────────────────────────┤
+    │ true    │ NULL    │          1 │ closed  │ NULL        │ {"session_id":1,"state":"closed"} │
+    └─────────┴─────────┴────────────┴─────────┴─────────────┴───────────────────────────────────┘
+    ┌─────────────────────────────────────────┐
+    │ ducknng_stop_server('sql_session_demo') │
+    │                 boolean                 │
+    ├─────────────────────────────────────────┤
+    │ true                                    │
+    └─────────────────────────────────────────┘
 
 ### `tls+tcp://` with a self-signed development TLS config
 
@@ -722,7 +916,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_106ddb4ff6457b.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_12e8127ece5296.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

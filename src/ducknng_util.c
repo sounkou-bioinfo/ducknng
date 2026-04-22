@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #ifndef _WIN32
+#include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
 #endif
@@ -102,9 +103,31 @@ void ducknng_cond_wait(ducknng_cond *cv, ducknng_mutex *mu) {
     (void)cv; (void)mu;
 #endif
 }
+int ducknng_cond_timedwait_ms(ducknng_cond *cv, ducknng_mutex *mu, uint64_t timeout_ms) {
+#ifndef _WIN32
+    struct timespec ts;
+    uint64_t ns_total;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return -1;
+    ns_total = (uint64_t)ts.tv_nsec + (timeout_ms % 1000ULL) * 1000000ULL;
+    ts.tv_sec += (time_t)(timeout_ms / 1000ULL) + (time_t)(ns_total / 1000000000ULL);
+    ts.tv_nsec = (long)(ns_total % 1000000000ULL);
+    if (pthread_cond_timedwait(cv, mu, &ts) == ETIMEDOUT) return 1;
+    return 0;
+#else
+    (void)cv; (void)mu; (void)timeout_ms;
+    return -1;
+#endif
+}
 void ducknng_cond_signal(ducknng_cond *cv) {
 #ifndef _WIN32
     pthread_cond_signal(cv);
+#else
+    (void)cv;
+#endif
+}
+void ducknng_cond_broadcast(ducknng_cond *cv) {
+#ifndef _WIN32
+    pthread_cond_broadcast(cv);
 #else
     (void)cv;
 #endif

@@ -115,22 +115,27 @@ The honest answer today is "nothing visible." The server side does use NNG conte
 - `ducknng_session.c` is empty, so the session-query family — which is the natural home for long-running asynchronous workloads (large result sets, incremental fetch, cancellation) — is unbuilt.
 - There is no equivalent of nanonext's `send_aio` / `recv_aio` / `request` (aio form) / `collect_aio` / `unresolved` / `pipe_notify` / `cv`.
 
-If async is a project goal, the minimum SQL surface to mirror nanonext inside DuckDB is:
+If async is a project goal, the first thing to define is the word itself. In `nanonext`, an aio is a future-like handle for one pending NNG operation backed by `nng_aio`, with separate helpers to poll, wait, collect, or cancel it. `ducknng` should keep that meaning. An aio is not a new wire message type, not a background job scheduler, and not server-push streaming by another name.
 
-1. `ducknng_request_aio(url, payload, timeout_ms, tls_config_id) → UBIGINT aio_id` — scalar. Returns immediately, backed internally by `nng_aio_alloc` + a completion callback that stashes the reply in a runtime-owned aio table.
-2. `ducknng_aio_ready(aio_id) → BOOLEAN` — scalar. Non-blocking readiness check. Used in correlated subqueries or predicates.
-3. `ducknng_aio_collect(aio_ids, wait_ms) → TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, payload BLOB)` — table function. Blocks up to `wait_ms` for the first-ready aio in the set and returns structured rows. Repeated calls drain the set; pass `wait_ms = 0` for a pure poll.
-4. `ducknng_aio_cancel(aio_id) → BOOLEAN` — scalar. Calls `nng_aio_cancel` on the pending request.
-5. `ducknng_aio_drop(aio_id) → BOOLEAN` — scalar. Releases a resolved aio slot. Needed because SQL has no destructors.
+The minimum honest SQL surface is therefore raw-first:
+
+1. `ducknng_request_raw_aio(url, frame, timeout_ms, tls_config_id) → UBIGINT aio_id` — scalar. Returns immediately after launching one framed request over a one-shot client path.
+2. `ducknng_request_socket_raw_aio(socket_id, frame, timeout_ms) → UBIGINT aio_id` — scalar. Same contract, but uses an already-open req socket handle.
+3. `ducknng_aio_ready(aio_id) → BOOLEAN` — scalar. Non-blocking readiness check.
+4. `ducknng_aio_collect(aio_ids, wait_ms) → TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)` — table function. Waits up to `wait_ms` for any requested aio to resolve, then returns one row per ready terminal result from that set. Returned frames are full reply frames, not decoded payloads.
+5. `ducknng_aio_cancel(aio_id) → BOOLEAN` — scalar. Requests cancellation of a pending aio.
+6. `ducknng_aio_drop(aio_id) → BOOLEAN` — scalar. Releases a collected or otherwise terminal aio slot. Needed because SQL has no destructors.
+
+This shape keeps aio orthogonal to RPC semantics. The transport layer manages one pending request/reply future; higher-level helpers such as `ducknng_decode_frame(...)`, manifest inspection, unary RPC wrappers, and the session family interpret the frame later. That is much closer to `nanonext` than inventing split `send_aio` / `recv_aio` SQL calls before the socket surface is broad enough to make them honest.
 
 Implementation notes for the aio table inside the runtime:
 
-- Slot layout: `{aio_id, aio_handle, state, reply_msg, error, owner_context}`.
-- State transitions: `pending → ready → consumed`. Only `consumed` can be freed.
+- Slot layout: `{aio_id, aio_handle, state, reply_frame, error, owner_context}`.
+- State transitions: `pending → ready|error|cancelled → consumed`. Only terminal states may be collected, and only consumed or otherwise terminal slots may be dropped.
 - Completion callback signals a runtime-wide condition variable (already available via `ducknng_cond_*` in `thread.h`). `ducknng_aio_collect` blocks on that cv, checks the requested id set each wake, and returns when any are ready or the deadline passes.
 - The aio table is locked by the same runtime mutex that guards services and client sockets. Readers of `list_sockets`-style tables already operate under that mutex, so adding aio slots to the runtime is not a new locking story.
 
-The session family (below) composes naturally on top of this. `query_open` returns a session id and, optionally, an aio id so the first batch can be prefetched while the client keeps working.
+The session family composes on top of this rather than competing with it. The first session-aware async step should still be framed requests under aio control; dedicated `fetch`-specific aio wrappers can wait until the runtime-owned aio registry and session ownership rules are stable.
 
 ## Session-query family: the biggest missing piece
 
@@ -219,7 +224,7 @@ Ordered by payoff:
 2. **Collapse `ducknng_start_server` and `ducknng_request_raw` overloads.** One signature each, with `tls_config_id = 0` for plaintext. Aligns with the URL-scheme autodetection rule in `AGENTS.md`.
 3. **Split `ducknng_sql_api.c`** along servers/sockets/tls/rpc/frame lines and extract the generic `register_table_function` and `bind_data_destroy` helpers. Target: no file over 600 LOC.
 4. **Implement the session family or remove it from `docs/protocol.md`.** The current state is the worst of both. The implementation sketch above is the smaller of the two moves.
-5. **Decide the async story, in or out.** If in, add `ducknng_request_aio`, `ducknng_aio_collect`, `ducknng_aio_ready`, `ducknng_aio_cancel`, `ducknng_aio_drop`, backed by a runtime-owned aio table. If out, remove the word from design discussion and be explicit that NNG is used synchronously at the SQL layer and concurrently only across independent clients.
+5. **Decide the async story, in or out.** If in, add raw-first aio handles — `ducknng_request_raw_aio`, `ducknng_request_socket_raw_aio`, `ducknng_aio_collect`, `ducknng_aio_ready`, `ducknng_aio_cancel`, `ducknng_aio_drop` — backed by a runtime-owned aio table. If out, remove the word from design discussion and be explicit that NNG is used synchronously at the SQL layer and concurrently only across independent clients.
 6. **Prune `ducknng_open_socket` to honest behavior.** Either accept all protocols nanonext does or narrow the accepted set and rename until you do.
 7. **Unify allocator discipline.** One of `duckdb_malloc`/`duckdb_free` or the system allocator, centrally. Wrap any NNG-owned strings behind the compat layer so the choice is not re-made per caller.
 8. **Fix service teardown ownership.** Decide whether `ducknng_stop_server` removes the entry from the runtime table or leaves it. Reflect the choice in `ducknng_list_servers`.
@@ -626,7 +631,7 @@ Priority: this ranks with the Arrow re-plumbing and type-mapping reform — all 
 2. Collapse TLS overloads on `ducknng_start_server` and `ducknng_request_raw`.
 3. Split `ducknng_sql_api.c` along servers/sockets/tls/rpc/frame lines.
 4. Implement or remove the session family.
-5. Decide the async story in or out; if in, add aio handles and `ducknng_aio_collect`.
+5. Decide the async story in or out; if in, add raw-first aio handles and `ducknng_aio_collect`.
 6. Make `ducknng_open_socket` honest about the protocol set it accepts.
 7. Unify allocator discipline.
 8. Fix service teardown ownership.
@@ -653,7 +658,7 @@ There is nothing hosted, no external control plane, no proprietary network. Disc
    - *Replicate-and-reduce*: same SQL on every worker, union the per-worker results, run a final local aggregation. Appropriate when every worker can answer the query against its own local data.
    - *Shard-and-reduce*: each worker receives a filtered sub-query bound to the shard it owns (e.g. a time range, a hash bucket, a tenant id). Appropriate when data is range- or hash-partitioned.
    - *Shuffle-and-reduce*: two-stage. Each worker emits partial state keyed by the shuffle key; partial state is pushed to the responsible worker for that key; each worker completes the aggregation for keys it owns; head unions. Required for GROUP BY on keys whose placement is not aligned with the input partition.
-3. Head issues N sub-queries as async RPCs. This is where `ducknng_request_aio` + `ducknng_aio_collect` pay for themselves: the head fires N calls, then collects them as they complete. No serial loop.
+3. Head issues N sub-queries as async RPCs. This is where `ducknng_request_raw_aio` + `ducknng_aio_collect` pay for themselves: the head fires N framed calls, then collects them as they complete. No serial loop.
 4. Each worker receives a typed method call (e.g. `ducknng.execute_shard`), binds the arguments against its prepared statement, produces an Arrow IPC stream from DuckDB's native `duckdb_execute_prepared_arrow`, and returns it.
 5. Head decodes each worker reply via `duckdb_arrow_scan`, registering the stream as a transient DuckDB table named `_ducknng_worker_<worker_id>`. At this point the final aggregation is an ordinary local DuckDB query — `SELECT ... FROM (SELECT * FROM _ducknng_worker_0 UNION ALL ... UNION ALL SELECT * FROM _ducknng_worker_N) GROUP BY ...` — and DuckDB's own optimiser runs the reduce stage.
 6. Head returns the aggregated Arrow stream to the client over its own REQ/REP reply.
@@ -666,7 +671,7 @@ There is nothing hosted, no external control plane, no proprietary network. Disc
 | `duckdb_arrow_scan` on head | Register each worker's reply as a DuckDB table so the reduce stage is plain SQL. This is the single most important primitive; without it the head is a custom result-merger. |
 | Typed method registration + non-default `exec` | Workers advertise only `execute_shard(shard_id, bind_vars, sql_template_ref)` and similar safe methods. The head cannot ask a worker to run arbitrary SQL unless the worker has opted in. Cluster security reduces to "did any worker register `exec`?" |
 | Session family (`query_open` / `fetch` / `close`) | Large reduce stages stream: head opens one session per worker, interleaves `fetch` calls, and emits aggregated batches to the client without materialising any worker's full result. |
-| `ducknng_request_aio` + `ducknng_aio_collect` | Scatter-gather. Without aio the head either blocks sequentially on each worker or spawns a thread per worker. With aio it fires N and collects the first-ready, which is exactly the scheduling the reduce stage wants. |
+| `ducknng_request_raw_aio` + `ducknng_aio_collect` | Scatter-gather. Without aio the head either blocks sequentially on each worker or spawns a thread per worker. With aio it fires N framed requests and collects whichever replies have become ready. |
 | `ducknng_pipe_events` | Head notices worker disconnects immediately instead of discovering them on the next `fetch` timeout. A disconnected worker's in-flight shard is re-dispatched; its session is cancelled; the reduce plan adapts. |
 | Full NNG protocol set | PUB/SUB for worker-availability announcements and schema change fan-out. PUSH/PULL for work queues (head pushes shard descriptions, idle workers pull — natural load balancing without a scheduler). SURVEY/RESPONDENT for "ask every worker, give me everything within 500 ms" control queries. REQ/REP for the actual per-shard RPC because the mesh needs a reliable per-shard reply channel. |
 | Codec framework via Arrow extension types | Dictionary-encoded ENUMs, UUID, JSON, HUGEINT survive the head-worker round trip without being downgraded to strings. User-defined codecs let a worker compress a large column once and let the head decode lazily at reduce time. |
@@ -733,13 +738,13 @@ CREATE OR REPLACE MACRO ducknng.plan_replicate(template_id, args) AS (
     ),
     aio AS (
         SELECT worker_id,
-               ducknng_request_aio(url, ducknng_build_call('ducknng.execute_shard',
+               ducknng_request_raw_aio(url, ducknng_build_call('ducknng.execute_shard',
                     struct_pack(shard_id := worker_id, template_id := template_id, args := args)),
-                    30000) AS aio_id
+                    30000, 0::UBIGINT) AS aio_id
         FROM workers
     ),
     results AS (
-        SELECT aio.worker_id, c.ok, c.error, c.payload
+        SELECT aio.worker_id, c.ok, c.error, c.frame
         FROM aio,
              LATERAL ducknng_aio_collect(ARRAY_AGG(aio.aio_id OVER ()), 30000) c
         WHERE c.aio_id = aio.aio_id
@@ -748,12 +753,12 @@ CREATE OR REPLACE MACRO ducknng.plan_replicate(template_id, args) AS (
 );
 ```
 
-Then the reduce stage registers each payload and runs plain SQL:
+Then the reduce stage decodes each reply frame, extracts the Arrow IPC payload, and runs plain SQL:
 
 ```sql
 -- Conceptually; real impl uses a table function that does this without manual loops.
-SELECT ducknng_arrow_scan_blob('_worker_0', (SELECT payload FROM results WHERE worker_id = 'w-00'));
-SELECT ducknng_arrow_scan_blob('_worker_1', (SELECT payload FROM results WHERE worker_id = 'w-01'));
+SELECT ducknng_arrow_scan_blob('_worker_0', (SELECT payload FROM ducknng_decode_frame((SELECT frame FROM results WHERE worker_id = 'w-00'))));
+SELECT ducknng_arrow_scan_blob('_worker_1', (SELECT payload FROM ducknng_decode_frame((SELECT frame FROM results WHERE worker_id = 'w-01'))));
 
 SELECT region, SUM(total)
 FROM (SELECT * FROM _worker_0 UNION ALL SELECT * FROM _worker_1)
@@ -768,11 +773,11 @@ Same shape, different dispatch. `ducknng.plan_shard` reads the shard catalog (wh
 
 ```sql
 SELECT worker_id,
-       ducknng_request_aio(url,
+       ducknng_request_raw_aio(url,
            ducknng_build_call('ducknng.execute_shard',
                struct_pack(shard_id := shard_id, template_id := 'orders.by_day',
                            args := map_from_entries([('day', day::VARCHAR)]))),
-           30000)
+           30000, 0::UBIGINT)
 FROM shard_catalog
 JOIN worker_catalog USING (worker_id)
 WHERE day BETWEEN '2026-01-01' AND '2026-01-31';

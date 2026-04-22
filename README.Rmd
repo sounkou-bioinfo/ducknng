@@ -28,11 +28,11 @@ knitr::knit_engines$set(sql = function(options) {
 
 Its SQL-facing client and server interface is explicitly modeled over [`r-lib/nanonext`](https://github.com/r-lib/nanonext), taking req/rep sockets, dial/listen semantics, context-oriented NNG usage, and a practical messaging surface as the reference point for what should feel natural from DuckDB SQL. Its RPC framing and tabular payload direction are likewise informed by Arrow IPC based RPC work such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro) and related projects, where a thin envelope is kept separate from Arrow IPC request and reply payloads instead of being buried inside one-off method-specific binaries.
 
-`ducknng` is now back on the stable DuckDB C extension API. The extension metadata targets the stable C API line (`v1.2.0`), while the repo currently compiles against DuckDB `v1.5.0` headers in the same style used by stable C API extensions such as DuckHTS. That means the project should be read as a stable C API extension that avoids both unstable and deprecated DuckDB extension entrypoints in its implementation. The cost of that choice is that Arrow export stays on the carefully maintained nanoarrow mapping path instead of delegating schema and batch conversion to newer unstable DuckDB Arrow helper APIs.
-
 At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. That transport surface is operation-oriented rather than transport-specific: transport is autodetected from the URL scheme in the same general style as `nanonext`, so the same API can work with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning a separate helper family for each scheme, while TLS material is passed through reusable `tls_config_id` handles instead of inline transport-specific arguments. The current SQL client socket-handle layer is still honest but narrow: `ducknng_open_socket()` only implements `req` today. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
 
-The next documented protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should still be treated as development scaffolding rather than as a production-safe multi-client surface.
+A SQL-visible aio surface now exists for raw request/reply futures. In `nanonext` terms, an aio here means one pending NNG operation backed by `nng_aio`, not a new wire mode or a background job queue. The first exposed slice is deliberately raw-first: `ducknng_request_raw_aio()` and `ducknng_request_socket_raw_aio()` launch framed requests and return aio handle ids immediately, `ducknng_aio_ready()` reports whether a handle has reached a terminal state, `ducknng_aio_collect()` waits for and returns full reply frames, and `ducknng_aio_drop()` releases terminal handles explicitly.
+
+The session query family is now exposed on the SQL client side through `ducknng_open_query()`, `ducknng_fetch_query()`, `ducknng_close_query()`, and `ducknng_cancel_query()`. That surface stays control-first: opening, closing, and cancelling a session return JSON-derived control rows, while `ducknng_fetch_query()` returns either the next Arrow IPC batch as a BLOB payload or an end-of-stream control row. Until a real owner-identity model is implemented, that family should still be treated as development scaffolding rather than as a production-safe multi-client surface.
 
 The transport-security utility layer now has a runtime model for TLS configuration handles. Those handles can be assembled from file-backed certificate material, from in-memory PEM strings, or from self-signed development certificates generated on demand. The actual `tls+tcp://` transport wiring remains isolated behind `ducknng_nng_compat.c`, but it is now enabled for real loopback listener and one-shot client-request paths so the public API no longer needs a separate transport-specific helper family. This follows the same broad direction as `nanonext`, which exposes TLS helper facilities backed by mbedTLS rather than forcing every client to hand-roll certificate setup outside the transport layer.
 
@@ -149,6 +149,103 @@ FROM ducknng_decode_frame(
 -- Close the client socket handle and stop the demo server.
 SELECT ducknng_close_socket(1);
 SELECT ducknng_stop_server('sql_client_demo');
+```
+
+### Launch raw requests asynchronously and collect the reply frames later
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+SELECT ducknng_start_server(
+  'sql_aio_demo',
+  'ipc:///tmp/ducknng_sql_aio_demo.ipc',
+  1,
+  134217728,
+  300000,
+  0
+);
+
+CREATE TEMP TABLE aio_demo AS
+SELECT
+  ducknng_request_raw_aio(
+    'ipc:///tmp/ducknng_sql_aio_demo.ipc',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    0::UBIGINT
+  ) AS aio1,
+  ducknng_request_raw_aio(
+    'ipc:///tmp/ducknng_sql_aio_demo.ipc',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    0::UBIGINT
+  ) AS aio2;
+
+SELECT aio1 > 0 AS aio1_started, aio2 > aio1 AS aio2_started_after_aio1
+FROM aio_demo;
+
+SELECT aio_id, ok, octet_length(frame) > 0 AS has_frame
+FROM ducknng_aio_collect((SELECT list_value(aio1, aio2) FROM aio_demo), 1000)
+ORDER BY aio_id;
+
+SELECT ducknng_aio_ready(aio1) AS aio1_ready, ducknng_aio_ready(aio2) AS aio2_ready
+FROM aio_demo;
+
+SELECT ducknng_aio_drop(aio1) AND ducknng_aio_drop(aio2) AS dropped
+FROM aio_demo;
+
+DROP TABLE aio_demo;
+SELECT ducknng_stop_server('sql_aio_demo');
+```
+
+### Open, fetch, and close a query session explicitly
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+SELECT ducknng_start_server(
+  'sql_session_demo',
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1,
+  134217728,
+  300000,
+  0
+);
+
+-- Open one server-owned query session and inspect the control reply.
+SELECT *
+FROM ducknng_open_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id',
+  0::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT
+);
+
+-- The first fetch returns one Arrow IPC batch in payload.
+SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
+FROM ducknng_fetch_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT
+);
+
+-- The second fetch returns JSON control metadata saying the session is exhausted.
+SELECT ok, session_id, state, payload IS NULL AS no_payload, end_of_stream
+FROM ducknng_fetch_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT,
+  0::UBIGINT
+);
+
+-- Close the exhausted session explicitly.
+SELECT *
+FROM ducknng_close_query(
+  'ipc:///tmp/ducknng_sql_session_demo.ipc',
+  1::UBIGINT,
+  0::UBIGINT
+);
+
+SELECT ducknng_stop_server('sql_session_demo');
 ```
 
 ### `tls+tcp://` with a self-signed development TLS config

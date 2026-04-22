@@ -48,6 +48,17 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_tls_config_from_pem` | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT` | Register a TLS config handle from in-memory PEM material. |
 | `ducknng_tls_config_from_files` | scalar | `cert_key_file, ca_file, password, auth_mode` | `UBIGINT` | Register a TLS config handle from file-backed certificate material. |
 
+## Async I/O
+
+| name | kind | arguments | returns | description |
+|---|---|---|---|---|
+| `ducknng_request_raw_aio` | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT` | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id. |
+| `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms` | `UBIGINT` | Launch one raw req/rep roundtrip asynchronously on an existing socket handle and return an aio handle id. |
+| `ducknng_aio_ready` | scalar | `aio_id` | `BOOLEAN` | Return whether an aio handle has reached a terminal state. |
+| `ducknng_aio_collect` | table | `aio_ids, wait_ms` | `TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)` | Wait for any requested aio handles to finish and return one row per newly collected terminal result. |
+| `ducknng_aio_cancel` | scalar | `aio_id` | `BOOLEAN` | Request cancellation of a pending aio handle. |
+| `ducknng_aio_drop` | scalar | `aio_id` | `BOOLEAN` | Release a terminal aio handle from the runtime registry. |
+
 ## RPC Helper
 
 | name | kind | arguments | returns | description |
@@ -57,3 +68,12 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_run_rpc` | table | `url, sql, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)` | Execute a metadata-oriented RPC call and return a structured result row. |
 | `ducknng_run_rpc_raw` | scalar | `url, sql, tls_config_id` | `BLOB` | Execute the exec RPC and return the raw reply frame as BLOB. |
 | `ducknng_query_rpc` | table | `url, sql, tls_config_id` | `table` | Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table. |
+
+## RPC Session
+
+| name | kind | arguments | returns | description |
+|---|---|---|---|---|
+| `ducknng_open_query` | table | `url, sql, batch_rows, batch_bytes, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)` | Open a server-side query session and return the JSON control metadata as a structured row. |
+| `ducknng_fetch_query` | table | `url, session_id, batch_rows, batch_bytes, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)` | Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload. |
+| `ducknng_close_query` | table | `url, session_id, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)` | Close a server-side query session and return the JSON control metadata as a structured row. |
+| `ducknng_cancel_query` | table | `url, session_id, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)` | Cancel and close a server-side query session and return the JSON control metadata as a structured row. |

@@ -17,6 +17,19 @@ static int ducknng_build_exec_request_schema(struct ArrowSchema *schema, struct 
     return 0;
 }
 
+static int ducknng_build_query_open_request_schema(struct ArrowSchema *schema, struct ArrowError *error) {
+    ArrowSchemaInit(schema);
+    if (ArrowSchemaSetTypeStruct(schema, 3) != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetName(schema->children[0], "sql") != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_STRING) != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetName(schema->children[1], "batch_rows") != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetType(schema->children[1], NANOARROW_TYPE_UINT64) != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetName(schema->children[2], "batch_bytes") != NANOARROW_OK) return -1;
+    if (ArrowSchemaSetType(schema->children[2], NANOARROW_TYPE_UINT64) != NANOARROW_OK) return -1;
+    (void)error;
+    return 0;
+}
+
 static int ducknng_build_metadata_schema(struct ArrowSchema *schema, struct ArrowError *error) {
     ArrowSchemaInit(schema);
     if (ArrowSchemaSetTypeStruct(schema, 3) != NANOARROW_OK) return -1;
@@ -328,6 +341,88 @@ int ducknng_exec_request_to_ipc(const char *sql, int want_result,
     copy = (uint8_t *)duckdb_malloc((size_t)output_buf.size_bytes);
     if (!copy) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying exec request payload");
+        goto cleanup;
+    }
+    memcpy(copy, output_buf.data, (size_t)output_buf.size_bytes);
+    *out_bytes = copy;
+    *out_len = (size_t)output_buf.size_bytes;
+    copy = NULL;
+    rc = 0;
+cleanup:
+    if (copy) duckdb_free(copy);
+    if (writer.private_data) ArrowIpcWriterReset(&writer);
+    if (output_stream.release) output_stream.release(&output_stream);
+    if (output_buf.data) ArrowBufferReset(&output_buf);
+    if (stream.release) ArrowArrayStreamRelease(&stream);
+    if (array.release) ArrowArrayRelease(&array);
+    if (schema.release) ArrowSchemaRelease(&schema);
+    return rc;
+}
+
+int ducknng_query_open_request_to_ipc(const char *sql, uint64_t batch_rows,
+    uint64_t batch_bytes, uint8_t **out_bytes, size_t *out_len, char **errmsg) {
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    struct ArrowArrayStream stream;
+    struct ArrowIpcOutputStream output_stream;
+    struct ArrowIpcWriter writer;
+    struct ArrowBuffer output_buf;
+    struct ArrowError error;
+    struct ArrowStringView sql_view;
+    uint8_t *copy = NULL;
+    int rc = -1;
+    memset(&schema, 0, sizeof(schema));
+    memset(&array, 0, sizeof(array));
+    memset(&stream, 0, sizeof(stream));
+    memset(&output_stream, 0, sizeof(output_stream));
+    memset(&writer, 0, sizeof(writer));
+    memset(&output_buf, 0, sizeof(output_buf));
+    memset(&error, 0, sizeof(error));
+    if (!sql || !sql[0] || !out_bytes || !out_len) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid query_open request arguments");
+        return -1;
+    }
+    if (ducknng_build_query_open_request_schema(&schema, &error) != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to build query_open request Arrow schema");
+        goto cleanup;
+    }
+    if (ArrowArrayInitFromSchema(&array, &schema, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (ArrowArrayStartAppending(&array) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to start query_open request Arrow append");
+        goto cleanup;
+    }
+    sql_view.data = sql;
+    sql_view.size_bytes = (int64_t)strlen(sql);
+    if (ArrowArrayAppendString(array.children[0], sql_view) != NANOARROW_OK ||
+        (batch_rows > 0 ? ArrowArrayAppendUInt(array.children[1], batch_rows) : ArrowArrayAppendNull(array.children[1], 1)) != NANOARROW_OK ||
+        (batch_bytes > 0 ? ArrowArrayAppendUInt(array.children[2], batch_bytes) : ArrowArrayAppendNull(array.children[2], 1)) != NANOARROW_OK ||
+        ArrowArrayFinishElement(&array) != NANOARROW_OK ||
+        ArrowArrayFinishBuildingDefault(&array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message :
+            "ducknng: failed to build query_open request Arrow payload");
+        goto cleanup;
+    }
+    if (ArrowBasicArrayStreamInit(&stream, &schema, 1) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize query_open request Arrow stream");
+        goto cleanup;
+    }
+    memset(&schema, 0, sizeof(schema));
+    ArrowBasicArrayStreamSetArray(&stream, 0, &array);
+    memset(&array, 0, sizeof(array));
+    ArrowBufferInit(&output_buf);
+    if (ArrowIpcOutputStreamInitBuffer(&output_stream, &output_buf) != NANOARROW_OK ||
+        ArrowIpcWriterInit(&writer, &output_stream) != NANOARROW_OK ||
+        ArrowIpcWriterWriteArrayStream(&writer, &stream, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message :
+            "ducknng: failed to encode query_open request Arrow IPC payload");
+        goto cleanup;
+    }
+    copy = (uint8_t *)duckdb_malloc((size_t)output_buf.size_bytes);
+    if (!copy) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying query_open request payload");
         goto cleanup;
     }
     memcpy(copy, output_buf.data, (size_t)output_buf.size_bytes);

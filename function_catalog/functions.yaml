@@ -289,6 +289,110 @@
       ]
     },
     {
+      "name": "ducknng_request_raw_aio",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_request_raw_aio(url, frame, timeout_ms, tls_config_id)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id.",
+      "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "The returned handle represents one pending request operation backed by NNG aio state.",
+        "Use ducknng_aio_collect() to retrieve the full reply frame later."
+      ],
+      "examples": [
+        "SELECT ducknng_request_raw_aio('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_request_socket_raw_aio",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_request_socket_raw_aio(socket_id, frame, timeout_ms)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Launch one raw req/rep roundtrip asynchronously on an existing socket handle and return an aio handle id.",
+      "notes": [
+        "The socket must already be opened, dialed, and connected.",
+        "Use ducknng_aio_collect() to retrieve the full reply frame later."
+      ],
+      "examples": [
+        "SELECT ducknng_request_socket_raw_aio(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_aio_ready",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_aio_ready(aio_id)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Return whether an aio handle has reached a terminal state.",
+      "notes": [
+        "Returns FALSE for unknown handles and for pending operations.",
+        "A collected handle remains ready until it is dropped."
+      ],
+      "examples": [
+        "SELECT ducknng_aio_ready(1::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_aio_collect",
+      "kind": "table",
+      "category": "Async I/O",
+      "signature": "ducknng_aio_collect(aio_ids, wait_ms)",
+      "returns": "TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Wait for any requested aio handles to finish and return one row per newly collected terminal result.",
+      "notes": [
+        "Pass a LIST<UBIGINT> of aio handle ids, for example list_value(aio1, aio2).",
+        "Dynamic list expressions are supported through the SQL macro wrapper, including scalar subqueries that produce one list value.",
+        "wait_ms = 0 performs a pure poll.",
+        "frame contains the full reply frame when transport-level request/reply succeeded; decode it with ducknng_decode_frame()."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_aio_collect(list_value(1::UBIGINT, 2::UBIGINT), 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_aio_cancel",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_aio_cancel(aio_id)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Request cancellation of a pending aio handle.",
+      "notes": [
+        "Returns FALSE for unknown handles and for handles that are no longer pending."
+      ],
+      "examples": [
+        "SELECT ducknng_aio_cancel(1::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_aio_drop",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_aio_drop(aio_id)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Release a terminal aio handle from the runtime registry.",
+      "notes": [
+        "Returns FALSE for unknown handles and for still-pending handles.",
+        "Collected handles should be dropped explicitly because SQL has no destructors."
+      ],
+      "examples": [
+        "SELECT ducknng_aio_drop(1::UBIGINT);"
+      ]
+    },
+    {
       "name": "ducknng_get_rpc_manifest",
       "kind": "table",
       "category": "RPC Helper",
@@ -375,6 +479,76 @@
       ],
       "examples": [
         "SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer', 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_open_query",
+      "kind": "table",
+      "category": "RPC Session",
+      "signature": "ducknng_open_query(url, sql, batch_rows, batch_bytes, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Open a server-side query session and return the JSON control metadata as a structured row.",
+      "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "batch_rows and batch_bytes are optional fetch-hint fields carried in the query_open payload.",
+        "This surface is still development scaffolding until session ownership is bound to a real client identity model."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_open_query('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_fetch_query",
+      "kind": "table",
+      "category": "RPC Session",
+      "signature": "ducknng_fetch_query(url, session_id, batch_rows, batch_bytes, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.",
+      "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "When a row batch is returned, payload contains one Arrow IPC batch and control_json is NULL.",
+        "When the session is exhausted, payload is NULL, state is usually exhausted, and end_of_stream is TRUE."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_fetch_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_close_query",
+      "kind": "table",
+      "category": "RPC Session",
+      "signature": "ducknng_close_query(url, session_id, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Close a server-side query session and return the JSON control metadata as a structured row.",
+      "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "This is the normal explicit cleanup path after fetch reaches end-of-stream."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_close_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_cancel_query",
+      "kind": "table",
+      "category": "RPC Session",
+      "signature": "ducknng_cancel_query(url, session_id, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Cancel and close a server-side query session and return the JSON control metadata as a structured row.",
+      "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "This is best-effort cancellation and still part of the development session surface."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_cancel_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, 0::UBIGINT);"
       ]
     },
     {

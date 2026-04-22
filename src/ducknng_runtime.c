@@ -1,5 +1,6 @@
 #include "ducknng_runtime.h"
 #include "ducknng_manifest.h"
+#include "ducknng_nng_compat.h"
 #include "ducknng_util.h"
 #include <stdatomic.h>
 #include <string.h>
@@ -73,11 +74,14 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
     rt->init_con = connection;
     rt->next_service_id = 1;
     rt->next_client_socket_id = 1;
+    rt->next_client_aio_id = 1;
     rt->next_tls_config_id = 1;
     ducknng_mutex_init(&rt->mu);
+    if (ducknng_cond_init(&rt->aio_cv) == 0) rt->aio_cv_initialized = 1;
     ducknng_method_registry_init(&rt->registry);
     if (!ducknng_register_builtin_methods(rt, &errmsg)) {
         ducknng_method_registry_destroy(&rt->registry);
+        if (rt->aio_cv_initialized) ducknng_cond_destroy(&rt->aio_cv);
         ducknng_mutex_destroy(&rt->mu);
         duckdb_free(rt);
         reg_unlock();
@@ -91,6 +95,22 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
     *out_rt = rt;
     reg_unlock();
     return 1;
+}
+
+void ducknng_client_aio_destroy(ducknng_client_aio *aio) {
+    if (!aio) return;
+    if (aio->aio) {
+        if (aio->state == DUCKNNG_CLIENT_AIO_PENDING) {
+            ducknng_aio_cancel(aio->aio);
+            ducknng_aio_wait(aio->aio);
+        }
+        ducknng_aio_free(aio->aio);
+    }
+    if (aio->reply_msg) nng_msg_free(aio->reply_msg);
+    if (aio->has_ctx) ducknng_ctx_close(aio->ctx);
+    if (aio->owns_socket && aio->open) ducknng_socket_close(aio->sock);
+    if (aio->error) duckdb_free(aio->error);
+    duckdb_free(aio);
 }
 
 void ducknng_runtime_destroy(ducknng_runtime *rt) {
@@ -110,6 +130,12 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
         }
         duckdb_free(rt->client_sockets);
     }
+    if (rt->client_aios) {
+        for (i = 0; i < rt->client_aio_count; i++) {
+            ducknng_client_aio_destroy(rt->client_aios[i]);
+        }
+        duckdb_free(rt->client_aios);
+    }
     if (rt->tls_configs) {
         for (i = 0; i < rt->tls_config_count; i++) {
             ducknng_tls_config *cfg = rt->tls_configs[i];
@@ -121,6 +147,7 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
         duckdb_free(rt->tls_configs);
     }
     ducknng_method_registry_destroy(&rt->registry);
+    if (rt->aio_cv_initialized) ducknng_cond_destroy(&rt->aio_cv);
 }
 
 ducknng_service *ducknng_runtime_find_service(ducknng_runtime *rt, const char *name) {
@@ -245,6 +272,50 @@ ducknng_client_socket *ducknng_runtime_remove_client_socket(ducknng_runtime *rt,
     }
     ducknng_mutex_unlock(&rt->mu);
     return sock;
+}
+
+int ducknng_runtime_add_client_aio(ducknng_runtime *rt, ducknng_client_aio *aio, char **errmsg) {
+    ducknng_client_aio **new_aios;
+    size_t new_cap;
+    if (!rt || !aio) return -1;
+    ducknng_mutex_lock(&rt->mu);
+    if (rt->client_aio_count == rt->client_aio_cap) {
+        new_cap = rt->client_aio_cap ? rt->client_aio_cap * 2 : 4;
+        new_aios = (ducknng_client_aio **)duckdb_malloc(sizeof(*new_aios) * new_cap);
+        if (!new_aios) {
+            ducknng_mutex_unlock(&rt->mu);
+            if (errmsg) *errmsg = ducknng_strdup("out of memory");
+            return -1;
+        }
+        memset(new_aios, 0, sizeof(*new_aios) * new_cap);
+        if (rt->client_aios && rt->client_aio_count) {
+            memcpy(new_aios, rt->client_aios, sizeof(*new_aios) * rt->client_aio_count);
+        }
+        if (rt->client_aios) duckdb_free(rt->client_aios);
+        rt->client_aios = new_aios;
+        rt->client_aio_cap = new_cap;
+    }
+    aio->aio_id = rt->next_client_aio_id++;
+    rt->client_aios[rt->client_aio_count++] = aio;
+    ducknng_mutex_unlock(&rt->mu);
+    return 0;
+}
+
+ducknng_client_aio *ducknng_runtime_remove_client_aio(ducknng_runtime *rt, uint64_t aio_id) {
+    size_t i;
+    ducknng_client_aio *aio = NULL;
+    if (!rt || aio_id == 0) return NULL;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->client_aio_count; i++) {
+        if (rt->client_aios[i] && rt->client_aios[i]->aio_id == aio_id) {
+            aio = rt->client_aios[i];
+            for (; i + 1 < rt->client_aio_count; i++) rt->client_aios[i] = rt->client_aios[i + 1];
+            rt->client_aio_count--;
+            break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    return aio;
 }
 
 ducknng_tls_config *ducknng_runtime_find_tls_config(ducknng_runtime *rt, uint64_t tls_config_id) {

@@ -88,7 +88,7 @@ static int ducknng_json_reply(ducknng_method_reply *reply, const char *method_na
     if (!payload) return -1;
     memcpy(payload, json_text, payload_len);
     return ducknng_method_reply_set_payload(reply, DUCKNNG_RPC_RESULT,
-        flags | DUCKNNG_RPC_FLAG_PAYLOAD_JSON, payload, payload_len);
+        flags | DUCKNNG_RPC_FLAG_PAYLOAD_JSON, payload, payload_len) ? 0 : -1;
 }
 
 static int ducknng_method_query_open_handler(ducknng_service *svc,

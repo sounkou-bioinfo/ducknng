@@ -29,21 +29,59 @@ typedef struct ducknng_tls_config {
     ducknng_tls_opts opts;
 } ducknng_tls_config;
 
+enum ducknng_client_aio_phase {
+    DUCKNNG_CLIENT_AIO_PHASE_SEND = 1,
+    DUCKNNG_CLIENT_AIO_PHASE_RECV = 2
+};
+
+enum ducknng_client_aio_state {
+    DUCKNNG_CLIENT_AIO_PENDING = 0,
+    DUCKNNG_CLIENT_AIO_READY = 1,
+    DUCKNNG_CLIENT_AIO_ERROR = 2,
+    DUCKNNG_CLIENT_AIO_CANCELLED = 3,
+    DUCKNNG_CLIENT_AIO_COLLECTED = 4
+};
+
+typedef struct ducknng_client_aio {
+    struct ducknng_runtime *rt;
+    uint64_t aio_id;
+    uint64_t socket_id;
+    nng_socket sock;
+    nng_ctx ctx;
+    nng_aio *aio;
+    nng_msg *reply_msg;
+    int owns_socket;
+    int open;
+    int has_ctx;
+    int phase;
+    int state;
+    int timeout_ms;
+    uint64_t started_ms;
+    uint64_t finished_ms;
+    char *error;
+} ducknng_client_aio;
+
 typedef struct ducknng_runtime {
     duckdb_database *db;
     duckdb_connection init_con;
     ducknng_mutex mu;
+    ducknng_cond aio_cv;
+    int aio_cv_initialized;
     ducknng_service **services;
     size_t service_count;
     size_t service_cap;
     ducknng_client_socket **client_sockets;
     size_t client_socket_count;
     size_t client_socket_cap;
+    ducknng_client_aio **client_aios;
+    size_t client_aio_count;
+    size_t client_aio_cap;
     ducknng_tls_config **tls_configs;
     size_t tls_config_count;
     size_t tls_config_cap;
     uint64_t next_service_id;
     uint64_t next_client_socket_id;
+    uint64_t next_client_aio_id;
     uint64_t next_tls_config_id;
     int shutting_down;
     ducknng_method_registry registry;
@@ -58,6 +96,9 @@ ducknng_service *ducknng_runtime_remove_service(ducknng_runtime *rt, const char 
 ducknng_client_socket *ducknng_runtime_find_client_socket(ducknng_runtime *rt, uint64_t socket_id);
 int ducknng_runtime_add_client_socket(ducknng_runtime *rt, ducknng_client_socket *sock, char **errmsg);
 ducknng_client_socket *ducknng_runtime_remove_client_socket(ducknng_runtime *rt, uint64_t socket_id);
+int ducknng_runtime_add_client_aio(ducknng_runtime *rt, ducknng_client_aio *aio, char **errmsg);
+ducknng_client_aio *ducknng_runtime_remove_client_aio(ducknng_runtime *rt, uint64_t aio_id);
+void ducknng_client_aio_destroy(ducknng_client_aio *aio);
 ducknng_tls_config *ducknng_runtime_find_tls_config(ducknng_runtime *rt, uint64_t tls_config_id);
 int ducknng_runtime_add_tls_config(ducknng_runtime *rt, ducknng_tls_config *cfg, char **errmsg);
 ducknng_tls_config *ducknng_runtime_remove_tls_config(ducknng_runtime *rt, uint64_t tls_config_id);
