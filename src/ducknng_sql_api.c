@@ -86,6 +86,19 @@ typedef struct {
 } ducknng_request_bind_data;
 
 typedef struct {
+    bool ok;
+    char *error;
+    uint8_t version;
+    uint8_t type;
+    uint32_t flags;
+    char *type_name;
+    char *name;
+    char *payload_text;
+    uint8_t *payload;
+    idx_t payload_len;
+} ducknng_frame_decode_bind_data;
+
+typedef struct {
     idx_t emitted;
 } ducknng_single_row_init_data;
 
@@ -140,6 +153,33 @@ static void set_null(duckdb_vector vec, idx_t row) {
 }
 static void assign_blob(duckdb_vector vec, idx_t row, const uint8_t *data, idx_t len) {
     duckdb_vector_assign_string_element_len(vec, row, (const char *)data, len);
+}
+static char *ducknng_dup_bytes(const uint8_t *data, size_t len) {
+    char *out = (char *)duckdb_malloc(len + 1);
+    if (!out) return NULL;
+    if (len) memcpy(out, data, len);
+    out[len] = '\0';
+    return out;
+}
+static int ducknng_bytes_look_text(const uint8_t *data, size_t len) {
+    size_t i;
+    if (!data) return 0;
+    for (i = 0; i < len; i++) {
+        uint8_t b = data[i];
+        if (b == 0) return 0;
+        if (b < 0x20 && b != '\n' && b != '\r' && b != '\t') return 0;
+    }
+    return 1;
+}
+static const char *ducknng_rpc_type_name(uint8_t type) {
+    switch (type) {
+    case DUCKNNG_RPC_MANIFEST: return "manifest";
+    case DUCKNNG_RPC_CALL: return "call";
+    case DUCKNNG_RPC_RESULT: return "result";
+    case DUCKNNG_RPC_ERROR: return "error";
+    case DUCKNNG_RPC_EVENT: return "event";
+    default: return "unknown";
+    }
 }
 
 static void destroy_servers_bind_data(void *ptr) {
@@ -208,6 +248,17 @@ static void destroy_request_bind_data(void *ptr) {
     ducknng_request_bind_data *data = (ducknng_request_bind_data *)ptr;
     if (!data) return;
     if (data->error) duckdb_free(data->error);
+    if (data->payload) duckdb_free(data->payload);
+    duckdb_free(data);
+}
+
+static void destroy_frame_decode_bind_data(void *ptr) {
+    ducknng_frame_decode_bind_data *data = (ducknng_frame_decode_bind_data *)ptr;
+    if (!data) return;
+    if (data->error) duckdb_free(data->error);
+    if (data->type_name) duckdb_free(data->type_name);
+    if (data->name) duckdb_free(data->name);
+    if (data->payload_text) duckdb_free(data->payload_text);
     if (data->payload) duckdb_free(data->payload);
     duckdb_free(data);
 }
@@ -416,36 +467,18 @@ static void ducknng_get_rpc_manifest_raw_scalar(duckdb_function_info info, duckd
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
         char *errmsg = NULL;
         nng_msg *resp_msg;
-        ducknng_frame frame;
         if (!url) {
-            duckdb_scalar_function_set_error(info, "ducknng: remote manifest URL must not be NULL");
-            return;
+            set_null(output, row);
+            continue;
         }
         resp_msg = ducknng_client_roundtrip(url, ducknng_client_manifest_request(), 5000, &errmsg);
         duckdb_free(url);
         if (!resp_msg) {
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: manifest request failed");
             if (errmsg) duckdb_free(errmsg);
-            return;
+            set_null(output, row);
+            continue;
         }
-        if (ducknng_decode_request(resp_msg, &frame) != 0) {
-            nng_msg_free(resp_msg);
-            duckdb_scalar_function_set_error(info, "ducknng: invalid manifest response envelope");
-            return;
-        }
-        if (frame.type == DUCKNNG_RPC_ERROR) {
-            char *detail = ducknng_frame_error_detail(&frame, "ducknng: manifest request failed");
-            nng_msg_free(resp_msg);
-            duckdb_scalar_function_set_error(info, detail ? detail : "ducknng: manifest request failed");
-            if (detail) duckdb_free(detail);
-            return;
-        }
-        if (frame.type != DUCKNNG_RPC_RESULT || !(frame.flags & DUCKNNG_RPC_FLAG_PAYLOAD_JSON)) {
-            nng_msg_free(resp_msg);
-            duckdb_scalar_function_set_error(info, "ducknng: manifest response was not JSON result payload");
-            return;
-        }
-        duckdb_vector_assign_string_element_len(output, row, (const char *)frame.payload, (idx_t)frame.payload_len);
+        assign_blob(output, row, (const uint8_t *)nng_msg_body(resp_msg), (idx_t)nng_msg_len(resp_msg));
         nng_msg_free(resp_msg);
     }
 }
@@ -453,57 +486,34 @@ static void ducknng_get_rpc_manifest_raw_scalar(duckdb_function_info info, duckd
 static void ducknng_run_rpc_raw_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
-    uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
         char *sql = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
         char *errmsg = NULL;
+        nng_msg *req = NULL;
         nng_msg *resp_msg;
-        ducknng_frame frame;
-        uint64_t rows_changed = 0;
-        uint32_t statement_type = 0;
-        uint32_t result_type = 0;
         if (!url || !sql) {
             if (url) duckdb_free(url);
             if (sql) duckdb_free(sql);
-            duckdb_scalar_function_set_error(info, "ducknng: remote exec URL and SQL must not be NULL");
-            return;
+            set_null(output, row);
+            continue;
         }
-        resp_msg = ducknng_client_roundtrip(url, ducknng_client_exec_request(sql, 0, &errmsg), 5000, &errmsg);
-        duckdb_free(url);
+        req = ducknng_client_exec_request(sql, 0, &errmsg);
         duckdb_free(sql);
+        if (!req) {
+            duckdb_free(url);
+            if (errmsg) duckdb_free(errmsg);
+            set_null(output, row);
+            continue;
+        }
+        resp_msg = ducknng_client_roundtrip(url, req, 5000, &errmsg);
+        duckdb_free(url);
         if (!resp_msg) {
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: remote exec request failed");
             if (errmsg) duckdb_free(errmsg);
-            return;
+            set_null(output, row);
+            continue;
         }
-        if (ducknng_decode_request(resp_msg, &frame) != 0) {
-            nng_msg_free(resp_msg);
-            duckdb_scalar_function_set_error(info, "ducknng: invalid remote exec response envelope");
-            return;
-        }
-        if (frame.type == DUCKNNG_RPC_ERROR) {
-            char *detail = ducknng_frame_error_detail(&frame, "ducknng: remote exec request failed");
-            nng_msg_free(resp_msg);
-            duckdb_scalar_function_set_error(info, detail ? detail : "ducknng: remote exec request failed");
-            if (detail) duckdb_free(detail);
-            return;
-        }
-        if (frame.type != DUCKNNG_RPC_RESULT || !(frame.flags & DUCKNNG_RPC_FLAG_RESULT_METADATA)) {
-            nng_msg_free(resp_msg);
-            duckdb_scalar_function_set_error(info, "ducknng: remote exec expected metadata reply");
-            return;
-        }
-        if (ducknng_decode_exec_metadata_payload(frame.payload, (size_t)frame.payload_len,
-                &rows_changed, &statement_type, &result_type, &errmsg) != 0) {
-            nng_msg_free(resp_msg);
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to decode remote exec metadata");
-            if (errmsg) duckdb_free(errmsg);
-            return;
-        }
-        (void)statement_type;
-        (void)result_type;
-        out[row] = rows_changed;
+        assign_blob(output, row, (const uint8_t *)nng_msg_body(resp_msg), (idx_t)nng_msg_len(resp_msg));
         nng_msg_free(resp_msg);
     }
 }
@@ -749,16 +759,16 @@ static void ducknng_request_scalar(duckdb_function_info info, duckdb_data_chunk 
         if (!url || (!payload && payload_len > 0)) {
             if (url) duckdb_free(url);
             if (payload) duckdb_free(payload);
-            duckdb_scalar_function_set_error(info, "ducknng: request URL and payload are required");
-            return;
+            set_null(output, row);
+            continue;
         }
         resp = ducknng_client_roundtrip_raw(url, payload, (size_t)payload_len, timeout_ms, &errmsg);
         duckdb_free(url);
         if (payload) duckdb_free(payload);
         if (!resp) {
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: request failed");
             if (errmsg) duckdb_free(errmsg);
-            return;
+            set_null(output, row);
+            continue;
         }
         assign_blob(output, row, (const uint8_t *)nng_msg_body(resp), (idx_t)nng_msg_len(resp));
         nng_msg_free(resp);
@@ -779,21 +789,21 @@ static void ducknng_request_socket_scalar(duckdb_function_info info, duckdb_data
         char *errmsg = NULL;
         if (!ctx || !ctx->rt || socket_id == 0 || (!payload && payload_len > 0)) {
             if (payload) duckdb_free(payload);
-            duckdb_scalar_function_set_error(info, "ducknng: socket id and payload are required");
-            return;
+            set_null(output, row);
+            continue;
         }
         sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
         if (!sock || !sock->open || !sock->connected || !sock->url) {
             if (payload) duckdb_free(payload);
-            duckdb_scalar_function_set_error(info, "ducknng: connected client socket not found");
-            return;
+            set_null(output, row);
+            continue;
         }
         resp = ducknng_client_roundtrip_raw(sock->url, payload, (size_t)payload_len, timeout_ms, &errmsg);
         if (payload) duckdb_free(payload);
         if (!resp) {
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: socket request failed");
             if (errmsg) duckdb_free(errmsg);
-            return;
+            set_null(output, row);
+            continue;
         }
         assign_blob(output, row, (const uint8_t *)nng_msg_body(resp), (idx_t)nng_msg_len(resp));
         nng_msg_free(resp);
@@ -1443,6 +1453,114 @@ static void ducknng_request_scan(duckdb_function_info info, duckdb_data_chunk ou
     init->emitted = 1;
 }
 
+static void ducknng_decode_frame_bind(duckdb_bind_info info) {
+    ducknng_frame_decode_bind_data *bind;
+    duckdb_logical_type type;
+    duckdb_value frame_val;
+    duckdb_blob blob;
+    ducknng_frame frame;
+    bind = (ducknng_frame_decode_bind_data *)duckdb_malloc(sizeof(*bind));
+    if (!bind) {
+        duckdb_bind_set_error(info, "ducknng: out of memory");
+        return;
+    }
+    memset(bind, 0, sizeof(*bind));
+    frame_val = duckdb_bind_get_parameter(info, 0);
+    blob = duckdb_get_blob(frame_val);
+    duckdb_destroy_value(&frame_val);
+    if (!blob.data || blob.size == 0) {
+        bind->ok = false;
+        bind->error = ducknng_strdup("ducknng: frame blob must not be NULL or empty");
+    } else if (ducknng_decode_frame_bytes((const uint8_t *)blob.data, (size_t)blob.size, &frame) != 0) {
+        bind->ok = false;
+        bind->error = ducknng_strdup("ducknng: invalid frame envelope");
+    } else {
+        bind->ok = true;
+        bind->version = frame.version;
+        bind->type = frame.type;
+        bind->flags = frame.flags;
+        bind->type_name = ducknng_strdup(ducknng_rpc_type_name(frame.type));
+        if (!bind->type_name) {
+            bind->ok = false;
+            bind->error = ducknng_strdup("ducknng: out of memory copying frame type name");
+        } else {
+            if (frame.name_len > 0) bind->name = ducknng_dup_bytes(frame.name, (size_t)frame.name_len);
+            bind->payload_len = (idx_t)frame.payload_len;
+            if (frame.payload_len > 0) {
+                bind->payload = (uint8_t *)duckdb_malloc((size_t)frame.payload_len);
+                if (!bind->payload) {
+                    bind->ok = false;
+                    bind->error = ducknng_strdup("ducknng: out of memory copying frame payload");
+                } else {
+                    memcpy(bind->payload, frame.payload, (size_t)frame.payload_len);
+                    if (ducknng_bytes_look_text(frame.payload, (size_t)frame.payload_len)) {
+                        bind->payload_text = ducknng_dup_bytes(frame.payload, (size_t)frame.payload_len);
+                    }
+                }
+            }
+        }
+    }
+    if (blob.data) duckdb_free(blob.data);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    duckdb_bind_add_result_column(info, "ok", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "error", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_UTINYINT);
+    duckdb_bind_add_result_column(info, "version", type);
+    duckdb_bind_add_result_column(info, "type", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_UINTEGER);
+    duckdb_bind_add_result_column(info, "flags", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "type_name", type);
+    duckdb_bind_add_result_column(info, "name", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+    duckdb_bind_add_result_column(info, "payload", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "payload_text", type);
+    duckdb_destroy_logical_type(&type);
+    duckdb_bind_set_bind_data(info, bind, destroy_frame_decode_bind_data);
+    duckdb_bind_set_cardinality(info, 1, true);
+}
+
+static void ducknng_decode_frame_scan(duckdb_function_info info, duckdb_data_chunk output) {
+    ducknng_single_row_init_data *init = (ducknng_single_row_init_data *)duckdb_function_get_init_data(info);
+    ducknng_frame_decode_bind_data *bind = (ducknng_frame_decode_bind_data *)duckdb_function_get_bind_data(info);
+    bool *ok_data;
+    uint8_t *version_data;
+    uint8_t *type_data;
+    uint32_t *flags_data;
+    if (!init || !bind || init->emitted) {
+        duckdb_data_chunk_set_size(output, 0);
+        return;
+    }
+    ok_data = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 0));
+    version_data = (uint8_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 2));
+    type_data = (uint8_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 3));
+    flags_data = (uint32_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 4));
+    ok_data[0] = bind->ok;
+    if (bind->error) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), 0, bind->error);
+    else set_null(duckdb_data_chunk_get_vector(output, 1), 0);
+    version_data[0] = bind->version;
+    type_data[0] = bind->type;
+    flags_data[0] = bind->flags;
+    if (bind->type_name) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 5), 0, bind->type_name);
+    else set_null(duckdb_data_chunk_get_vector(output, 5), 0);
+    if (bind->name) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 6), 0, bind->name);
+    else set_null(duckdb_data_chunk_get_vector(output, 6), 0);
+    if (bind->payload) assign_blob(duckdb_data_chunk_get_vector(output, 7), 0, bind->payload, bind->payload_len);
+    else set_null(duckdb_data_chunk_get_vector(output, 7), 0);
+    if (bind->payload_text) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 8), 0, bind->payload_text);
+    else set_null(duckdb_data_chunk_get_vector(output, 8), 0);
+    duckdb_data_chunk_set_size(output, 1);
+    init->emitted = 1;
+}
+
 static int register_scalar(duckdb_connection con, const char *name, idx_t nparams,
     duckdb_scalar_function_t fn, ducknng_sql_context *ctx, duckdb_type *param_types,
     duckdb_type return_type_id) {
@@ -1878,6 +1996,26 @@ static int register_request_socket_result_table_named(duckdb_connection con, duc
     return 1;
 }
 
+static int register_frame_decode_table_named(duckdb_connection con, const char *name) {
+    duckdb_table_function tf;
+    duckdb_logical_type type_blob;
+    tf = duckdb_create_table_function();
+    if (!tf) return 0;
+    duckdb_table_function_set_name(tf, name);
+    type_blob = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+    duckdb_table_function_add_parameter(tf, type_blob);
+    duckdb_destroy_logical_type(&type_blob);
+    duckdb_table_function_set_bind(tf, ducknng_decode_frame_bind);
+    duckdb_table_function_set_init(tf, ducknng_single_row_init);
+    duckdb_table_function_set_function(tf, ducknng_decode_frame_scan);
+    if (duckdb_register_table_function(con, tf) == DuckDBError) {
+        duckdb_destroy_table_function(&tf);
+        return 0;
+    }
+    duckdb_destroy_table_function(&tf);
+    return 1;
+}
+
 int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) {
     static ducknng_sql_context ctx;
     duckdb_type start_types[8] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT,
@@ -1893,8 +2031,8 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     ctx.rt = rt;
     if (!register_scalar(connection, "ducknng_start_server", 8, ducknng_server_start_scalar, &ctx, start_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_stop_server", 1, ducknng_server_stop_scalar, &ctx, stop_types, DUCKDB_TYPE_BOOLEAN)) return 0;
-    if (!register_scalar(connection, "ducknng_run_rpc_raw", 2, ducknng_run_rpc_raw_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_UBIGINT)) return 0;
-    if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 1, ducknng_get_rpc_manifest_raw_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_VARCHAR)) return 0;
+    if (!register_scalar(connection, "ducknng_run_rpc_raw", 2, ducknng_run_rpc_raw_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_BLOB)) return 0;
+    if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 1, ducknng_get_rpc_manifest_raw_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_BLOB)) return 0;
     if (!register_scalar(connection, "ducknng_open_socket", 1, ducknng_socket_scalar, &ctx, socket_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_dial_socket", 3, ducknng_dial_scalar, &ctx, dial_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_close_socket", 1, ducknng_close_scalar, &ctx, close_types, DUCKDB_TYPE_BOOLEAN)) return 0;
@@ -1907,5 +2045,6 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_exec_result_table_named(connection, &ctx, "ducknng_run_rpc")) return 0;
     if (!register_request_result_table_named(connection, &ctx, "ducknng_request")) return 0;
     if (!register_request_socket_result_table_named(connection, &ctx, "ducknng_request_socket")) return 0;
+    if (!register_frame_decode_table_named(connection, "ducknng_decode_frame")) return 0;
     return 1;
 }

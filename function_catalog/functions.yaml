@@ -159,13 +159,16 @@
       "kind": "scalar",
       "category": "RPC Helper",
       "signature": "ducknng_get_rpc_manifest_raw(url)",
-      "returns": "VARCHAR",
+      "returns": "BLOB",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Request the RPC manifest and return only the manifest payload as VARCHAR.",
-      "notes": [],
+      "description": "Request the RPC manifest and return the raw reply frame as BLOB.",
+      "notes": [
+        "This is a raw helper: it returns the full reply frame and yields NULL on local request failure.",
+        "Use ducknng_decode_frame() to inspect the envelope and payload from SQL."
+      ],
       "examples": [
-        "SELECT ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql0.ipc');"
+        "SELECT ok, type_name, name, payload_text FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql0.ipc'));"
       ]
     },
     {
@@ -189,13 +192,16 @@
       "kind": "scalar",
       "category": "RPC Helper",
       "signature": "ducknng_run_rpc_raw(url, sql)",
-      "returns": "UBIGINT",
+      "returns": "BLOB",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Execute a metadata-oriented RPC call and return only rows_changed.",
-      "notes": [],
+      "description": "Execute the exec RPC and return the raw reply frame as BLOB.",
+      "notes": [
+        "This is a raw helper: it returns the full reply frame and yields NULL on local request failure.",
+        "Use ducknng_decode_frame() or a payload-specific decoder after inspection."
+      ],
       "examples": [
-        "SELECT ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)');"
+        "SELECT ok, type_name, name FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)'));"
       ]
     },
     {
@@ -223,8 +229,11 @@
       "returns": "BLOB",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Perform a one-shot raw request and return the raw reply bytes.",
-      "notes": [],
+      "description": "Perform a one-shot raw request and return the raw reply frame bytes.",
+      "notes": [
+        "Returns NULL on local request failure instead of throwing.",
+        "Use ducknng_decode_frame() to inspect the envelope and textual payload from SQL."
+      ],
       "examples": [
         "SELECT hex(ducknng_request_raw('ipc:///tmp/ducknng_sql0.ipc', from_hex('0100'), 1000));"
       ]
@@ -237,10 +246,30 @@
       "returns": "BLOB",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Perform a raw request through a dialed socket handle and return the raw reply bytes.",
-      "notes": [],
+      "description": "Perform a raw request through a dialed socket handle and return the raw reply frame bytes.",
+      "notes": [
+        "Returns NULL on local request failure instead of throwing.",
+        "Use ducknng_decode_frame() to inspect the envelope and textual payload from SQL."
+      ],
       "examples": [
         "SELECT hex(ducknng_request_socket_raw(1::UBIGINT, from_hex('0100'), 1000));"
+      ]
+    },
+    {
+      "name": "ducknng_decode_frame",
+      "kind": "table",
+      "category": "Primitive Transport",
+      "signature": "ducknng_decode_frame(frame)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Decode a raw ducknng frame into envelope fields and extracted payload columns.",
+      "notes": [
+        "Useful after ducknng_request() or ducknng_request_raw() when inspecting wire replies from SQL.",
+        "payload_text is populated only when the payload looks textual."
+      ],
+      "examples": [
+        "SELECT ok, version, type_name, name, payload_text FROM ducknng_decode_frame(ducknng_request_raw('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000));"
       ]
     }
   ]

@@ -53,6 +53,7 @@ typedef struct ducknng_frame {
     uint64_t payload_len;
 } ducknng_frame;
 
+int ducknng_decode_frame_bytes(const uint8_t *data, size_t len, ducknng_frame *out);
 int ducknng_decode_request(nng_msg *msg, ducknng_frame *out);
 int ducknng_frame_name_equals(const ducknng_frame *frame, const char *name);
 nng_msg *ducknng_build_reply(uint8_t type, const char *name, uint32_t flags,

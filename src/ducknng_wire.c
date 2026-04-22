@@ -5,9 +5,7 @@
 
 DUCKDB_EXTENSION_EXTERN
 
-int ducknng_decode_request(nng_msg *msg, ducknng_frame *out) {
-    const uint8_t *data = (const uint8_t *)nng_msg_body(msg);
-    size_t len = nng_msg_len(msg);
+int ducknng_decode_frame_bytes(const uint8_t *data, size_t len, ducknng_frame *out) {
     uint32_t name_len;
     uint32_t flags;
     uint32_t error_len;
@@ -33,6 +31,12 @@ int ducknng_decode_request(nng_msg *msg, ducknng_frame *out) {
     out->payload_len = payload_len;
     out->payload = out->error + error_len;
     return 0;
+}
+
+int ducknng_decode_request(nng_msg *msg, ducknng_frame *out) {
+    const uint8_t *data = (const uint8_t *)nng_msg_body(msg);
+    size_t len = nng_msg_len(msg);
+    return ducknng_decode_frame_bytes(data, len, out);
 }
 
 int ducknng_frame_name_equals(const ducknng_frame *frame, const char *name) {

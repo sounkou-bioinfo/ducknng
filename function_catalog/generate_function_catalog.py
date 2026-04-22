@@ -58,25 +58,40 @@ def load_manifest(path: Path) -> list[dict[str, object]]:
     return functions
 
 
+def extract_arguments(signature: str) -> str:
+    start = signature.find("(")
+    end = signature.rfind(")")
+    if start == -1 or end == -1 or end < start:
+        return ""
+    return signature[start + 1 : end]
+
+
 def render_markdown(functions: list[dict[str, object]]) -> str:
+    by_category: dict[str, list[dict[str, object]]] = {}
+    for entry in functions:
+        by_category.setdefault(str(entry["category"]), []).append(entry)
+
     lines: list[str] = []
     lines.append("# Function Catalog")
     lines.append("")
     lines.append("This file is generated from `function_catalog/functions.yaml`.")
     lines.append("")
-    lines.append("| name | kind | returns | implemented | description |")
-    lines.append("|---|---|---|---|---|")
-    for entry in functions:
-        lines.append(
-            "| `{name}` | {kind} | `{returns}` | {implemented} | {description} |".format(
-                name=escape_md(str(entry["name"])),
-                kind=escape_md(str(entry["kind"])),
-                returns=escape_md(str(entry["returns"])),
-                implemented="yes" if entry["implemented"] else "no",
-                description=escape_md(str(entry["description"])),
+    for category, entries in by_category.items():
+        lines.append(f"## {category}")
+        lines.append("")
+        lines.append("| name | kind | arguments | returns | description |")
+        lines.append("|---|---|---|---|---|")
+        for entry in entries:
+            lines.append(
+                "| `{name}` | {kind} | `{arguments}` | `{returns}` | {description} |".format(
+                    name=escape_md(str(entry["name"])),
+                    kind=escape_md(str(entry["kind"])),
+                    arguments=escape_md(extract_arguments(str(entry["signature"]))),
+                    returns=escape_md(str(entry["returns"])),
+                    description=escape_md(str(entry["description"])),
+                )
             )
-        )
-    lines.append("")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -84,7 +99,7 @@ def write_tsv(path: Path, functions: list[dict[str, object]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(
-            ["name", "kind", "category", "signature", "returns", "since", "implemented", "description"]
+            ["name", "kind", "category", "arguments", "signature", "returns", "since", "description"]
         )
         for entry in functions:
             writer.writerow(
@@ -92,10 +107,10 @@ def write_tsv(path: Path, functions: list[dict[str, object]]) -> None:
                     entry["name"],
                     entry["kind"],
                     entry["category"],
+                    extract_arguments(str(entry["signature"])),
                     entry["signature"],
                     entry["returns"],
                     entry["since"],
-                    entry["implemented"],
                     entry["description"],
                 ]
             )

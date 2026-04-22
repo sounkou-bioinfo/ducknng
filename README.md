@@ -20,11 +20,15 @@ At the moment, `ducknng` already exposes a low-level transport layer
 with socket-open, dial, close, and raw request primitives, alongside
 SQL-visible server lifecycle control and runtime introspection through
 `ducknng_start_server()`, `ducknng_stop_server()`, and
-`ducknng_list_servers()`. On the server side it runs one REP socket with
-one or more REP contexts, and on top of that transport it already
-supports a working RPC request/reply path with manifest discovery,
-metadata-oriented execution, and unary row-returning execution over the
-current raw wire and Arrow IPC model.
+`ducknng_list_servers()`. That transport surface is operation-oriented
+rather than transport-specific: transport is autodetected from the URL
+scheme in the same general style as `nanonext`, so the same API can work
+with `inproc://`, `ipc://`, `tcp://`, and later `tls+tcp://` without
+spawning a separate helper family for each scheme. On the server side it
+runs one REP socket with one or more REP contexts, and on top of that
+transport it already supports a working RPC request/reply path with
+manifest discovery, metadata-oriented execution, and unary row-returning
+execution over the current raw wire and Arrow IPC model.
 
 The next documented protocol slice is the session query family:
 `query_open`, `fetch`, `close`, and `cancel`. In the current contract,
@@ -33,8 +37,8 @@ control metadata, `fetch` is the only method that may return streamed
 row batches, `close` is the normal explicit cleanup path, and `cancel`
 is best-effort rather than a guarantee of immediate interruption. Until
 a real owner-identity model is implemented, that family should still be
-treated as scaffolding for loopback or development use rather than as a
-production-safe multi-client surface.
+treated as development scaffolding rather than as a production-safe
+multi-client surface.
 
 ## Functions
 
@@ -42,24 +46,37 @@ production-safe multi-client surface.
 
 This file is generated from `function_catalog/functions.yaml`.
 
-| name                           | kind   | returns                                                                                                                                      | implemented | description                                                                                         |
-|--------------------------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------|-------------|-----------------------------------------------------------------------------------------------------|
-| `ducknng_start_server`         | scalar | `BOOLEAN`                                                                                                                                    | yes         | Start a named ducknng REP listener.                                                                 |
-| `ducknng_stop_server`          | scalar | `BOOLEAN`                                                                                                                                    | yes         | Stop a named ducknng service.                                                                       |
-| `ducknng_list_servers`         | table  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)`                               | yes         | List registered ducknng services.                                                                   |
-| `ducknng_open_socket`          | scalar | `UBIGINT`                                                                                                                                    | yes         | Open a client socket handle for a supported protocol.                                               |
-| `ducknng_dial_socket`          | scalar | `BOOLEAN`                                                                                                                                    | yes         | Dial a URL using an opened socket handle.                                                           |
-| `ducknng_close_socket`         | scalar | `BOOLEAN`                                                                                                                                    | yes         | Close a client socket handle.                                                                       |
-| `ducknng_list_sockets`         | table  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | yes         | List client socket handles in the runtime.                                                          |
-| `ducknng_request`              | table  | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                             | yes         | Perform a one-shot raw request and return a structured result row.                                  |
-| `ducknng_request_socket`       | table  | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                             | yes         | Perform a raw request through a previously dialed socket handle and return a structured result row. |
-| `ducknng_get_rpc_manifest`     | table  | `TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)`                                                                                         | yes         | Request the RPC manifest and return a structured result row.                                        |
-| `ducknng_get_rpc_manifest_raw` | scalar | `VARCHAR`                                                                                                                                    | yes         | Request the RPC manifest and return only the manifest payload as VARCHAR.                           |
-| `ducknng_run_rpc`              | table  | `TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)`                                        | yes         | Execute a metadata-oriented RPC call and return a structured result row.                            |
-| `ducknng_run_rpc_raw`          | scalar | `UBIGINT`                                                                                                                                    | yes         | Execute a metadata-oriented RPC call and return only rows_changed.                                  |
-| `ducknng_query_rpc`            | table  | `table`                                                                                                                                      | yes         | Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table.       |
-| `ducknng_request_raw`          | scalar | `BLOB`                                                                                                                                       | yes         | Perform a one-shot raw request and return the raw reply bytes.                                      |
-| `ducknng_request_socket_raw`   | scalar | `BLOB`                                                                                                                                       | yes         | Perform a raw request through a dialed socket handle and return the raw reply bytes.                |
+## Service Control
+
+| name                   | kind   | arguments                                                                                                | returns   | description                         |
+|------------------------|--------|----------------------------------------------------------------------------------------------------------|-----------|-------------------------------------|
+| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode` | `BOOLEAN` | Start a named ducknng REP listener. |
+| `ducknng_stop_server`  | scalar | `name`                                                                                                   | `BOOLEAN` | Stop a named ducknng service.       |
+
+## Introspection
+
+| name                   | kind  | arguments                                                                                                           | returns                           | description |
+|------------------------|-------|---------------------------------------------------------------------------------------------------------------------|-----------------------------------|-------------|
+| `ducknng_list_servers` | table | \``|`TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)\` | List registered ducknng services. |             |
+
+## Primitive Transport
+
+| name                   | kind   | arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | returns                                                                        | description                                           |
+|------------------------|--------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|-------------------------------------------------------|
+| `ducknng_open_socket`  | scalar | `protocol`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `UBIGINT`                                                                      | Open a client socket handle for a supported protocol. |
+| `ducknng_dial_socket`  | scalar | `socket_id, url, timeout_ms`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `BOOLEAN`                                                                      | Dial a URL using an opened socket handle.             |
+| `ducknng_close_socket` | scalar | `socket_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `BOOLEAN`                                                                      | Close a client socket handle.                         |
+| `ducknng_list_sockets` | table  | \``|`TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)`| List client socket handles in the runtime. | |`ducknng_request`| table |`url, payload, timeout_ms`|`TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`| Perform a one-shot raw request and return a structured result row. | |`ducknng_request_socket`| table |`socket_id, payload, timeout_ms`|`TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`| Perform a raw request through a previously dialed socket handle and return a structured result row. | |`ducknng_request_raw`| scalar |`url, payload, timeout_ms`|`BLOB`| Perform a one-shot raw request and return the raw reply frame bytes. | |`ducknng_request_socket_raw`| scalar |`socket_id, payload, timeout_ms`|`BLOB`| Perform a raw request through a dialed socket handle and return the raw reply frame bytes. | |`ducknng_decode_frame`| table |`frame`|`TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)\` | Decode a raw ducknng frame into envelope fields and extracted payload columns. |                                                       |
+
+## RPC Helper
+
+| name                           | kind   | arguments  | returns                                                                                               | description                                                                                   |
+|--------------------------------|--------|------------|-------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| `ducknng_get_rpc_manifest`     | table  | `url`      | `TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)`                                                  | Request the RPC manifest and return a structured result row.                                  |
+| `ducknng_get_rpc_manifest_raw` | scalar | `url`      | `BLOB`                                                                                                | Request the RPC manifest and return the raw reply frame as BLOB.                              |
+| `ducknng_run_rpc`              | table  | `url, sql` | `TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)` | Execute a metadata-oriented RPC call and return a structured result row.                      |
+| `ducknng_run_rpc_raw`          | scalar | `url, sql` | `BLOB`                                                                                                | Execute the exec RPC and return the raw reply frame as BLOB.                                  |
+| `ducknng_query_rpc`            | table  | `url, sql` | `table`                                                                                               | Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table. |
 
 ## Build
 
@@ -71,7 +88,11 @@ make release
 See also `NEWS.md` for the current implementation status and planned
 next steps, and `docs/protocol.md`, `docs/manifest.md`,
 `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the
-binding session/query-family contract.
+binding transport, TLS, and session/query-family contract. Those design
+docs also define the intended TLS direction: certificate and key
+material should be accepted either from files or from in-memory PEM
+content, with helper utilities for development certificate generation
+and client/server TLS configuration rather than a file-only setup path.
 
 ## Examples
 
@@ -191,10 +212,23 @@ SELECT * FROM ducknng_list_sockets();
 SELECT * FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
 SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);
 
--- Raw scalar forms remain available when only the payload bytes are wanted.
+-- Raw scalar forms now mean raw reply frames as BLOBs.
 SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
-SELECT position('"name":"exec"' IN ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
-SELECT ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');
+
+-- Decode raw manifest and exec replies into envelope fields plus extracted text payload.
+SELECT ok, version, type_name, name, position('"name":"exec"' IN payload_text) > 0
+FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc'));
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(
+  ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)')
+);
+
+-- The generic raw request helper can be decoded the same way.
+SELECT ok, version, type_name, name, payload_text
+FROM ducknng_decode_frame(
+  ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)
+);
 
 -- Close the client socket handle and stop the demo server.
 SELECT ducknng_close_socket(1);
@@ -268,18 +302,24 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
     │ 0102040000000800000000000000                                                                                      │
     └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ (main."position"(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc'), '"name":"exec"') > 0) │
-    │                                                    boolean                                                     │
-    ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                                                           │
-    └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)') │
-    │                                                         uint64                                                          │
-    ├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │                                                                                                                       0 │
-    └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
+    │   ok    │ version │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
+    │ boolean │  uint8  │  varchar  │ varchar  │                       boolean                        │
+    ├─────────┼─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
+    │ true    │       1 │ result    │ manifest │ true                                                 │
+    └─────────┴─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
+    ┌─────────┬───────────┬─────────┐
+    │   ok    │ type_name │  name   │
+    │ boolean │  varchar  │ varchar │
+    ├─────────┼───────────┼─────────┤
+    │ true    │ result    │ exec    │
+    └─────────┴───────────┴─────────┘
+    ┌─────────┬─────────┬───────────┬──────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │   ok    │ version │ type_name │   name   │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                payload_text                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                │
+    │ boolean │  uint8  │  varchar  │ varchar  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  varchar                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   │
+    ├─────────┼─────────┼───────────┼──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true    │       1 │ result    │ manifest │ {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"exec","family":"sql","summary":"Execute SQL and return metadata or rows","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"arrow_ipc_stream","response_mode":"metadata_or_rows","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":11,"max_request_bytes":16777216,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]},"response_schema":{"mode":"metadata_or_rows"}}]} │
+    └─────────┴─────────┴───────────┴──────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
     ┌─────────────────────────┐
     │ ducknng_close_socket(1) │
     │         boolean         │

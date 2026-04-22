@@ -28,9 +28,9 @@ knitr::knit_engines$set(sql = function(options) {
 
 Its SQL-facing client and server interface is explicitly modeled over [`r-lib/nanonext`](https://github.com/r-lib/nanonext), taking req/rep sockets, dial/listen semantics, context-oriented NNG usage, and a practical messaging surface as the reference point for what should feel natural from DuckDB SQL. Its RPC framing and tabular payload direction are likewise informed by Arrow IPC based RPC work such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro) and related projects, where a thin envelope is kept separate from Arrow IPC request and reply payloads instead of being buried inside one-off method-specific binaries.
 
-At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
+At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. That transport surface is operation-oriented rather than transport-specific: transport is autodetected from the URL scheme in the same general style as `nanonext`, so the same API can work with `inproc://`, `ipc://`, `tcp://`, and later `tls+tcp://` without spawning a separate helper family for each scheme. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
 
-The next documented protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should still be treated as scaffolding for loopback or development use rather than as a production-safe multi-client surface.
+The next documented protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should still be treated as development scaffolding rather than as a production-safe multi-client surface.
 
 ## Functions
 
@@ -45,7 +45,7 @@ make configure
 make release
 ```
 
-See also `NEWS.md` for the current implementation status and planned next steps, and `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the binding session/query-family contract.
+See also `NEWS.md` for the current implementation status and planned next steps, and `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the binding transport, TLS, and session/query-family contract. Those design docs also define the intended TLS direction: certificate and key material should be accepted either from files or from in-memory PEM content, with helper utilities for development certificate generation and client/server TLS configuration rather than a file-only setup path.
 
 ## Examples
 
@@ -124,10 +124,23 @@ SELECT * FROM ducknng_list_sockets();
 SELECT * FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
 SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);
 
--- Raw scalar forms remain available when only the payload bytes are wanted.
+-- Raw scalar forms now mean raw reply frames as BLOBs.
 SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
-SELECT position('"name":"exec"' IN ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
-SELECT ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');
+
+-- Decode raw manifest and exec replies into envelope fields plus extracted text payload.
+SELECT ok, version, type_name, name, position('"name":"exec"' IN payload_text) > 0
+FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc'));
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(
+  ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)')
+);
+
+-- The generic raw request helper can be decoded the same way.
+SELECT ok, version, type_name, name, payload_text
+FROM ducknng_decode_frame(
+  ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)
+);
 
 -- Close the client socket handle and stop the demo server.
 SELECT ducknng_close_socket(1);
