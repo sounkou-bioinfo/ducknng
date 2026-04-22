@@ -5,6 +5,16 @@
 
 `ducknng` is a pure C DuckDB extension for DuckDB + NNG REQ/REP interop.
 
+Its SQL-facing client and server interface is explicitly modeled over
+[`r-lib/nanonext`](https://github.com/r-lib/nanonext): req/rep sockets,
+dial/listen semantics, context-oriented NNG usage, and a practical
+messaging surface that can be used directly from DuckDB SQL. Its RPC
+framing and tabular payload direction are also explicitly informed by
+Arrow IPC based RPC work such as
+[`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro)
+and related projects, where a thin envelope is kept separate from Arrow
+IPC request and reply payloads.
+
 Today it provides:
 
 - named server start/stop from SQL
