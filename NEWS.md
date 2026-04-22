@@ -27,7 +27,9 @@
 - `exec` metadata replies are now Arrow IPC generated with vendored nanoarrow C.
 - Unary `exec(..., want_result = true)` now returns Arrow IPC row payloads for the current scalar subset: BOOLEAN, signed/unsigned integers, FLOAT/DOUBLE, VARCHAR, and BLOB.
 - Added client-side SQL helpers `ducknng_remote_manifest(url)` and `ducknng_remote_exec(url, sql)` so DuckDB can request manifest and metadata-only exec operations from another ducknng-compatible service.
+- Added non-throwing result-table companions `ducknng_remote_manifest_result(url)` and `ducknng_remote_exec_result(url, sql)` so client-side transport and protocol failures can be handled in-band as rows.
 - Added SQL-native req-style client handle helpers `ducknng_socket(protocol)`, `ducknng_dial(socket_id, url, timeout_ms)`, `ducknng_request_socket(socket_id, payload, timeout_ms)`, `ducknng_request(url, payload, timeout_ms)`, `ducknng_close(socket_id)`, and `ducknng_sockets()`.
+- Added non-throwing raw request companions `ducknng_request_result(url, payload, timeout_ms)` and `ducknng_request_socket_result(socket_id, payload, timeout_ms)`.
 - Added `ducknng_remote(url, sql)` as the current unary row-reply client table function, exposing Arrow IPC row replies as DuckDB tables for the currently supported unary row subset.
 - Wider row-result type coverage and session-based query streaming are still pending.
 - The docs contract for the session query family now fixes the intended lifecycle: `query_open` returns JSON control metadata and a session id, `fetch` is the only row-bearing method, `close` is the normal cleanup path, and `cancel` is best-effort until the implementation can bind sessions to a concrete owner identity.

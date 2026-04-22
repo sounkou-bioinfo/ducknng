@@ -85,6 +85,24 @@
       ]
     },
     {
+      "name": "ducknng_remote_exec_result",
+      "kind": "table",
+      "category": "Client / Test Helper",
+      "signature": "ducknng_remote_exec_result(url, sql)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Execute a metadata-only remote exec request and return a single result row with success status, error text, and decoded metadata fields.",
+      "notes": [
+        "This is the non-throwing companion to ducknng_remote_exec(url, sql).",
+        "On success, ok is true and the metadata columns are populated from the remote Arrow IPC metadata reply."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_remote_exec_result('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)');"
+      ]
+    },
+    {
       "name": "ducknng_remote_manifest",
       "kind": "scalar",
       "category": "Client / Test Helper",
@@ -99,6 +117,24 @@
       ],
       "examples": [
         "SELECT ducknng_remote_manifest('ipc:///tmp/ducknng_sql0.ipc');"
+      ]
+    },
+    {
+      "name": "ducknng_remote_manifest_result",
+      "kind": "table",
+      "category": "Client / Test Helper",
+      "signature": "ducknng_remote_manifest_result(url)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Request the remote manifest without raising a SQL error on transport or protocol failure; returns a single result row with ok, error, and manifest fields.",
+      "notes": [
+        "Modeled after non-throwing object-style result surfaces rather than fail-fast scalar errors.",
+        "On success, ok is true, error is NULL, and manifest contains the JSON payload."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_remote_manifest_result('ipc:///tmp/ducknng_sql0.ipc');"
       ]
     },
     {
@@ -185,6 +221,24 @@
       ]
     },
     {
+      "name": "ducknng_request_result",
+      "kind": "table",
+      "category": "Client Socket",
+      "signature": "ducknng_request_result(url, payload, timeout_ms)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Perform a one-shot raw request and return a single structured result row instead of throwing on transport failure.",
+      "notes": [
+        "On success, ok is true and payload contains the raw reply bytes.",
+        "On failure, ok is false and error contains the diagnostic string."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_request_result('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);"
+      ]
+    },
+    {
       "name": "ducknng_request_socket",
       "kind": "scalar",
       "category": "Client Socket",
@@ -199,6 +253,23 @@
       ],
       "examples": [
         "SELECT hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000));"
+      ]
+    },
+    {
+      "name": "ducknng_request_socket_result",
+      "kind": "table",
+      "category": "Client Socket",
+      "signature": "ducknng_request_socket_result(socket_id, payload, timeout_ms)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Perform a raw request through a previously dialed socket handle and return a single structured result row instead of throwing on failure.",
+      "notes": [
+        "This is the non-throwing companion to ducknng_request_socket(socket_id, payload, timeout_ms)."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_request_socket_result(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);"
       ]
     },
     {

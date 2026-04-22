@@ -55,11 +55,11 @@ int ducknng_req_socket_open(nng_socket *out) { return nng_req0_open(out); }
 int ducknng_socket_set_timeout_ms(nng_socket sock, int send_timeout_ms, int recv_timeout_ms) {
     int rv;
     if (send_timeout_ms > 0) {
-        rv = nng_setopt_ms(sock, NNG_OPT_SENDTIMEO, send_timeout_ms);
+        rv = nng_socket_set_ms(sock, NNG_OPT_SENDTIMEO, send_timeout_ms);
         if (rv != 0) return rv;
     }
     if (recv_timeout_ms > 0) {
-        rv = nng_setopt_ms(sock, NNG_OPT_RECVTIMEO, recv_timeout_ms);
+        rv = nng_socket_set_ms(sock, NNG_OPT_RECVTIMEO, recv_timeout_ms);
         if (rv != 0) return rv;
     }
     return 0;
@@ -118,7 +118,7 @@ done:
     if (up) nng_url_free(up);
     return rc;
 }
-int ducknng_listener_set_recvmaxsz(nng_listener lst, size_t bytes) { return nng_listener_setopt_size(lst, NNG_OPT_RECVMAXSZ, bytes); }
+int ducknng_listener_set_recvmaxsz(nng_listener lst, size_t bytes) { return nng_listener_set_size(lst, NNG_OPT_RECVMAXSZ, bytes); }
 int ducknng_listener_apply_tls(nng_listener lst, const ducknng_tls_opts *opts) {
     (void)lst;
     if (ducknng_tls_requested(opts)) return NNG_ENOTSUP;
