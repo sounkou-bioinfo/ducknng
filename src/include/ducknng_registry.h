@@ -93,6 +93,8 @@ int ducknng_method_registry_register(ducknng_method_registry *registry,
     const ducknng_method_descriptor *method, char **errmsg);
 int ducknng_method_registry_register_many(ducknng_method_registry *registry,
     const ducknng_method_descriptor *const *methods, size_t n_methods, char **errmsg);
+int ducknng_method_registry_unregister(ducknng_method_registry *registry, const char *name);
+size_t ducknng_method_registry_unregister_family(ducknng_method_registry *registry, const char *family);
 const ducknng_method_descriptor *ducknng_method_registry_find(
     const ducknng_method_registry *registry, const uint8_t *name, uint32_t name_len);
 char *ducknng_method_registry_manifest_json(const ducknng_method_registry *registry,

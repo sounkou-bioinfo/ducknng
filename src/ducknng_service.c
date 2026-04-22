@@ -241,6 +241,15 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
     tls_opts.cert_key_file = svc->tls_cert_key_file;
     tls_opts.ca_file = svc->tls_ca_file;
     tls_opts.auth_mode = svc->tls_auth_mode;
+    svc->tls_enabled = tls_opts.enabled ? 1 : 0;
+
+    if (svc->running) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service is already running");
+        return -1;
+    }
+    if (ducknng_listener_validate_startup_url(svc->listen_url, &tls_opts, errmsg) != 0) {
+        return -1;
+    }
 
     rv = ducknng_rep_socket_open(&svc->rep_sock);
     if (rv != 0) goto fail;

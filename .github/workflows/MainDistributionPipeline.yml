@@ -3,8 +3,8 @@
 #
 name: Main Extension Distribution Pipeline
 on:
-  push:
-    branches: [main]
+ # push:
+ #   branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -19,5 +19,5 @@ jobs:
     with:
       duckdb_version: v1.5.1
       ci_tools_version: v1.5.1
-      extension_name: capi_quack
-      extra_toolchains: python3
+      extension_name: ducknng
+      extra_toolchains: python3,R

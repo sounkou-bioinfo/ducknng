@@ -36,6 +36,27 @@ static int ducknng_method_name_exists(const ducknng_method_registry *registry, c
     return 0;
 }
 
+static int ducknng_method_descriptor_valid(const ducknng_method_descriptor *method) {
+    return method && method->name && method->name[0] && method->handler;
+}
+
+static int ducknng_method_name_exists_in_batch(
+    const ducknng_method_descriptor *const *methods, size_t n_methods, size_t upto, const char *name) {
+    size_t i;
+    if (!methods || !name) return 0;
+    for (i = 0; i < upto; i++) {
+        if (methods[i] && methods[i]->name && strcmp(methods[i]->name, name) == 0) return 1;
+    }
+    return 0;
+}
+
+static void ducknng_registry_remove_at(ducknng_method_registry *registry, size_t idx) {
+    if (!registry || idx >= registry->method_count) return;
+    for (; idx + 1 < registry->method_count; idx++) registry->methods[idx] = registry->methods[idx + 1];
+    registry->method_count--;
+    registry->methods[registry->method_count] = NULL;
+}
+
 int ducknng_method_registry_init(ducknng_method_registry *registry) {
     if (!registry) return 0;
     memset(registry, 0, sizeof(*registry));
@@ -50,7 +71,7 @@ void ducknng_method_registry_destroy(ducknng_method_registry *registry) {
 
 int ducknng_method_registry_register(ducknng_method_registry *registry,
     const ducknng_method_descriptor *method, char **errmsg) {
-    if (!registry || !method || !method->name || !method->handler) {
+    if (!registry || !ducknng_method_descriptor_valid(method)) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid method descriptor");
         return 0;
     }
@@ -71,9 +92,50 @@ int ducknng_method_registry_register_many(ducknng_method_registry *registry,
         return 0;
     }
     for (i = 0; i < n_methods; i++) {
-        if (!ducknng_method_registry_register(registry, methods[i], errmsg)) return 0;
+        if (!ducknng_method_descriptor_valid(methods[i])) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid method descriptor in bulk registration");
+            return 0;
+        }
+        if (ducknng_method_name_exists(registry, methods[i]->name) ||
+            ducknng_method_name_exists_in_batch(methods, n_methods, i, methods[i]->name)) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: duplicate method name in bulk registration");
+            return 0;
+        }
+    }
+    if (!ducknng_registry_reserve(registry, registry->method_count + n_methods, errmsg)) return 0;
+    for (i = 0; i < n_methods; i++) {
+        registry->methods[registry->method_count++] = methods[i];
     }
     return 1;
+}
+
+int ducknng_method_registry_unregister(ducknng_method_registry *registry, const char *name) {
+    size_t i;
+    if (!registry || !name || !name[0]) return 0;
+    for (i = 0; i < registry->method_count; i++) {
+        const ducknng_method_descriptor *method = registry->methods[i];
+        if (method && method->name && strcmp(method->name, name) == 0) {
+            ducknng_registry_remove_at(registry, i);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+size_t ducknng_method_registry_unregister_family(ducknng_method_registry *registry, const char *family) {
+    size_t i;
+    size_t removed = 0;
+    if (!registry || !family || !family[0]) return 0;
+    for (i = 0; i < registry->method_count;) {
+        const ducknng_method_descriptor *method = registry->methods[i];
+        if (method && method->family && strcmp(method->family, family) == 0) {
+            ducknng_registry_remove_at(registry, i);
+            removed++;
+            continue;
+        }
+        i++;
+    }
+    return removed;
 }
 
 const ducknng_method_descriptor *ducknng_method_registry_find(
@@ -268,11 +330,19 @@ char *ducknng_method_registry_manifest_json(const ducknng_method_registry *regis
         if (!append_text(&buf, &len, &cap, m->deprecated ? "true" : "false")) goto oom;
         if (!append_text(&buf, &len, &cap, ",\"disabled\":")) goto oom;
         if (!append_text(&buf, &len, &cap, m->disabled ? "true" : "false")) goto oom;
-        snprintf(numbuf, sizeof(numbuf), ",\"accepted_request_flags\":%u,\"emitted_reply_flags\":%u,\"max_request_bytes\":%lu,\"max_reply_bytes\":%lu,\"version_introduced\":%d",
-            (unsigned int)m->accepted_request_flags,
-            (unsigned int)m->emitted_reply_flags,
-            (unsigned long)m->max_request_bytes,
-            (unsigned long)m->max_reply_bytes,
+        snprintf(numbuf, sizeof(numbuf), ",\"accepted_request_flags\":%u",
+            (unsigned int)m->accepted_request_flags);
+        if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
+        snprintf(numbuf, sizeof(numbuf), ",\"emitted_reply_flags\":%u",
+            (unsigned int)m->emitted_reply_flags);
+        if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
+        snprintf(numbuf, sizeof(numbuf), ",\"max_request_bytes\":%lu",
+            (unsigned long)m->max_request_bytes);
+        if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
+        snprintf(numbuf, sizeof(numbuf), ",\"max_reply_bytes\":%lu",
+            (unsigned long)m->max_reply_bytes);
+        if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
+        snprintf(numbuf, sizeof(numbuf), ",\"version_introduced\":%d",
             m->version_introduced);
         if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
         if (!append_text(&buf, &len, &cap, ",\"request_schema\":")) goto oom;
