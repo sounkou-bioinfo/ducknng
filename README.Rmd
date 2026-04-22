@@ -110,6 +110,13 @@ SELECT ducknng_server_start(
 SELECT position('"name":"exec"' IN ducknng_remote_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
 SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE client_side_demo(i INTEGER)');
 SELECT ducknng_remote_exec('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+
+SELECT ducknng_socket('req');
+SELECT ducknng_dial(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
+SELECT * FROM ducknng_sockets();
+SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
+SELECT ducknng_close(1);
+
 SELECT ducknng_server_stop('sql_client_demo');
 ```
 

@@ -111,6 +111,112 @@
       ]
     },
     {
+      "name": "ducknng_socket",
+      "kind": "scalar",
+      "category": "Client Socket",
+      "signature": "ducknng_socket(protocol)",
+      "returns": "UBIGINT",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 2,
+      "description": "Open a client socket handle for a supported NNG protocol family.",
+      "notes": [
+        "Currently only req is implemented on the SQL client side."
+      ],
+      "examples": [
+        "SELECT ducknng_socket('req');"
+      ]
+    },
+    {
+      "name": "ducknng_dial",
+      "kind": "scalar",
+      "category": "Client Socket",
+      "signature": "ducknng_dial(socket_id, url, timeout_ms)",
+      "returns": "BOOLEAN",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 2,
+      "description": "Associate a client socket handle with a remote URL using req-style timeout semantics.",
+      "notes": [
+        "Currently only req client sockets are implemented."
+      ],
+      "examples": [
+        "SELECT ducknng_dial(ducknng_socket('req'), 'ipc:///tmp/ducknng_sql0.ipc', 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_close",
+      "kind": "scalar",
+      "category": "Client Socket",
+      "signature": "ducknng_close(socket_id)",
+      "returns": "BOOLEAN",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 2,
+      "description": "Close a client socket handle and release its runtime state.",
+      "notes": [],
+      "examples": [
+        "SELECT ducknng_close(1);"
+      ]
+    },
+    {
+      "name": "ducknng_sockets",
+      "kind": "table",
+      "category": "Introspection",
+      "signature": "ducknng_sockets()",
+      "returns": "TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 2,
+      "description": "List client socket handles registered in the current DuckDB runtime.",
+      "notes": [
+        "Useful for SQL-native req-style client workflows."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_sockets();"
+      ]
+    },
+    {
+      "name": "ducknng_request",
+      "kind": "scalar",
+      "category": "Client Socket",
+      "signature": "ducknng_request(url, payload, timeout_ms)",
+      "returns": "BLOB",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 2,
+      "description": "Perform a one-shot req-style raw request and return the raw reply bytes.",
+      "notes": [
+        "This is the lowest-level SQL helper for the current req/rep client path."
+      ],
+      "examples": [
+        "SELECT ducknng_request('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_request_socket",
+      "kind": "scalar",
+      "category": "Client Socket",
+      "signature": "ducknng_request_socket(socket_id, payload, timeout_ms)",
+      "returns": "BLOB",
+      "aliases": [],
+      "since": "0.1.0",
+      "implemented": true,
+      "phase": 2,
+      "description": "Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes.",
+      "notes": [
+        "This follows the SQL handle model and keeps the current req transport under one function call per roundtrip."
+      ],
+      "examples": [
+        "SELECT hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000));"
+      ]
+    },
+    {
       "name": "ducknng_remote",
       "kind": "table",
       "category": "Client / Test Helper",

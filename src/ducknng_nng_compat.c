@@ -52,18 +52,33 @@ static int ducknng_host_is_loopback(const char *host) {
 
 int ducknng_rep_socket_open(nng_socket *out) { return nng_rep0_open(out); }
 int ducknng_req_socket_open(nng_socket *out) { return nng_req0_open(out); }
-int ducknng_req_dial(nng_socket sock, const char *url, int timeout_ms) {
-    if (timeout_ms > 0) {
-        nng_setopt_ms(sock, NNG_OPT_SENDTIMEO, timeout_ms);
-        nng_setopt_ms(sock, NNG_OPT_RECVTIMEO, timeout_ms);
+int ducknng_socket_set_timeout_ms(nng_socket sock, int send_timeout_ms, int recv_timeout_ms) {
+    int rv;
+    if (send_timeout_ms > 0) {
+        rv = nng_setopt_ms(sock, NNG_OPT_SENDTIMEO, send_timeout_ms);
+        if (rv != 0) return rv;
     }
-    return nng_dial(sock, url, NULL, 0);
+    if (recv_timeout_ms > 0) {
+        rv = nng_setopt_ms(sock, NNG_OPT_RECVTIMEO, recv_timeout_ms);
+        if (rv != 0) return rv;
+    }
+    return 0;
+}
+int ducknng_socket_dial(nng_socket sock, const char *url) { return nng_dial(sock, url, NULL, 0); }
+int ducknng_socket_send(nng_socket sock, nng_msg *msg) { return nng_sendmsg(sock, msg, 0); }
+int ducknng_socket_recv(nng_socket sock, nng_msg **msg) { return nng_recvmsg(sock, msg, 0); }
+int ducknng_ctx_send(nng_ctx ctx, nng_msg *msg) { return nng_ctx_sendmsg(ctx, msg, 0); }
+int ducknng_ctx_recv(nng_ctx ctx, nng_msg **msg) { return nng_ctx_recvmsg(ctx, msg, 0); }
+int ducknng_req_dial(nng_socket sock, const char *url, int timeout_ms) {
+    int rv = ducknng_socket_set_timeout_ms(sock, timeout_ms, timeout_ms);
+    if (rv != 0) return rv;
+    return ducknng_socket_dial(sock, url);
 }
 int ducknng_req_transact(nng_socket sock, nng_msg *req, nng_msg **resp) {
     int rv;
-    rv = nng_sendmsg(sock, req, 0);
+    rv = ducknng_socket_send(sock, req);
     if (rv != 0) return rv;
-    return nng_recvmsg(sock, resp, 0);
+    return ducknng_socket_recv(sock, resp);
 }
 int ducknng_listener_create(nng_listener *out, nng_socket sock, const char *url) { return nng_listener_create(out, sock, url); }
 int ducknng_listener_validate_startup_url(const char *url, const ducknng_tls_opts *opts, char **errmsg) {

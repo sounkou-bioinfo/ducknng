@@ -14,6 +14,12 @@ typedef struct ducknng_tls_opts {
 
 int ducknng_rep_socket_open(nng_socket *out);
 int ducknng_req_socket_open(nng_socket *out);
+int ducknng_socket_set_timeout_ms(nng_socket sock, int send_timeout_ms, int recv_timeout_ms);
+int ducknng_socket_dial(nng_socket sock, const char *url);
+int ducknng_socket_send(nng_socket sock, nng_msg *msg);
+int ducknng_socket_recv(nng_socket sock, nng_msg **msg);
+int ducknng_ctx_send(nng_ctx ctx, nng_msg *msg);
+int ducknng_ctx_recv(nng_ctx ctx, nng_msg **msg);
 int ducknng_req_dial(nng_socket sock, const char *url, int timeout_ms);
 int ducknng_req_transact(nng_socket sock, nng_msg *req, nng_msg **resp);
 int ducknng_listener_create(nng_listener *out, nng_socket sock, const char *url);

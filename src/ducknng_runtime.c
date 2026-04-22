@@ -72,6 +72,7 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
     rt->db = db;
     rt->init_con = connection;
     rt->next_service_id = 1;
+    rt->next_client_socket_id = 1;
     ducknng_mutex_init(&rt->mu);
     ducknng_method_registry_init(&rt->registry);
     if (!ducknng_register_builtin_methods(rt, &errmsg)) {
@@ -92,7 +93,22 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
 }
 
 void ducknng_runtime_destroy(ducknng_runtime *rt) {
+    size_t i;
     if (!rt) return;
+    if (rt->client_sockets) {
+        for (i = 0; i < rt->client_socket_count; i++) {
+            ducknng_client_socket *sock = rt->client_sockets[i];
+            if (!sock) continue;
+            if (sock->has_ctx) nng_ctx_close(sock->ctx);
+            if (sock->open) nng_close(sock->sock);
+            if (sock->protocol) duckdb_free(sock->protocol);
+            if (sock->url) duckdb_free(sock->url);
+            if (sock->pending_request) duckdb_free(sock->pending_request);
+            if (sock->pending_reply) duckdb_free(sock->pending_reply);
+            duckdb_free(sock);
+        }
+        duckdb_free(rt->client_sockets);
+    }
     ducknng_method_registry_destroy(&rt->registry);
 }
 
@@ -159,4 +175,63 @@ ducknng_service *ducknng_runtime_remove_service(ducknng_runtime *rt, const char 
     }
     ducknng_mutex_unlock(&rt->mu);
     return svc;
+}
+
+ducknng_client_socket *ducknng_runtime_find_client_socket(ducknng_runtime *rt, uint64_t socket_id) {
+    size_t i;
+    ducknng_client_socket *sock = NULL;
+    if (!rt || socket_id == 0) return NULL;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->client_socket_count; i++) {
+        if (rt->client_sockets[i] && rt->client_sockets[i]->socket_id == socket_id) {
+            sock = rt->client_sockets[i];
+            break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    return sock;
+}
+
+int ducknng_runtime_add_client_socket(ducknng_runtime *rt, ducknng_client_socket *sock, char **errmsg) {
+    ducknng_client_socket **new_sockets;
+    size_t new_cap;
+    if (!rt || !sock) return -1;
+    ducknng_mutex_lock(&rt->mu);
+    if (rt->client_socket_count == rt->client_socket_cap) {
+        new_cap = rt->client_socket_cap ? rt->client_socket_cap * 2 : 4;
+        new_sockets = (ducknng_client_socket **)duckdb_malloc(sizeof(*new_sockets) * new_cap);
+        if (!new_sockets) {
+            ducknng_mutex_unlock(&rt->mu);
+            if (errmsg) *errmsg = ducknng_strdup("out of memory");
+            return -1;
+        }
+        memset(new_sockets, 0, sizeof(*new_sockets) * new_cap);
+        if (rt->client_sockets && rt->client_socket_count) {
+            memcpy(new_sockets, rt->client_sockets, sizeof(*new_sockets) * rt->client_socket_count);
+        }
+        if (rt->client_sockets) duckdb_free(rt->client_sockets);
+        rt->client_sockets = new_sockets;
+        rt->client_socket_cap = new_cap;
+    }
+    sock->socket_id = rt->next_client_socket_id++;
+    rt->client_sockets[rt->client_socket_count++] = sock;
+    ducknng_mutex_unlock(&rt->mu);
+    return 0;
+}
+
+ducknng_client_socket *ducknng_runtime_remove_client_socket(ducknng_runtime *rt, uint64_t socket_id) {
+    size_t i;
+    ducknng_client_socket *sock = NULL;
+    if (!rt || socket_id == 0) return NULL;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->client_socket_count; i++) {
+        if (rt->client_sockets[i] && rt->client_sockets[i]->socket_id == socket_id) {
+            sock = rt->client_sockets[i];
+            for (; i + 1 < rt->client_socket_count; i++) rt->client_sockets[i] = rt->client_sockets[i + 1];
+            rt->client_socket_count--;
+            break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    return sock;
 }

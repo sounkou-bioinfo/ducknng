@@ -26,6 +26,37 @@ SELECT ducknng_remote_exec('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'INSERT IN
 2
 
 query I
+SELECT ducknng_socket('req')
+----
+1
+
+query I
+SELECT CASE WHEN ducknng_dial(1, 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1000) THEN 1 ELSE 0 END
+----
+1
+
+query ITTII
+SELECT socket_id, protocol, url, open, connected
+FROM ducknng_sockets()
+----
+1	req	ipc:///tmp/ducknng_rpc_client_smoke.ipc	true	true
+
+query I
+SELECT substr(hex(ducknng_request_socket(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) = '0102040000000800000000000000'
+----
+1
+
+query I
+SELECT substr(hex(ducknng_request('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) = '0102040000000800000000000000'
+----
+1
+
+query I
+SELECT CASE WHEN ducknng_close(1) THEN 1 ELSE 0 END
+----
+1
+
+query I
 SELECT CASE WHEN ducknng_server_stop('rpc_smoke') THEN 1 ELSE 0 END
 ----
 1

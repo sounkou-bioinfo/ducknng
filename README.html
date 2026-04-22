@@ -695,6 +695,59 @@ changed from the remote reply metadata.</td>
 ducknng-compatible service.</td>
 </tr>
 <tr class="odd">
+<td><code>ducknng_socket</code></td>
+<td>scalar</td>
+<td><code>UBIGINT</code></td>
+<td align="right">2</td>
+<td>yes</td>
+<td>Open a client socket handle for a supported NNG protocol
+family.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_dial</code></td>
+<td>scalar</td>
+<td><code>BOOLEAN</code></td>
+<td align="right">2</td>
+<td>yes</td>
+<td>Associate a client socket handle with a remote URL using req-style
+timeout semantics.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_close</code></td>
+<td>scalar</td>
+<td><code>BOOLEAN</code></td>
+<td align="right">2</td>
+<td>yes</td>
+<td>Close a client socket handle and release its runtime state.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_sockets</code></td>
+<td>table</td>
+<td><code>TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)</code></td>
+<td align="right">2</td>
+<td>yes</td>
+<td>List client socket handles registered in the current DuckDB
+runtime.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_request</code></td>
+<td>scalar</td>
+<td><code>BLOB</code></td>
+<td align="right">2</td>
+<td>yes</td>
+<td>Perform a one-shot req-style raw request and return the raw reply
+bytes.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_request_socket</code></td>
+<td>scalar</td>
+<td><code>BLOB</code></td>
+<td align="right">2</td>
+<td>yes</td>
+<td>Perform a req-style raw request using a previously dialed client
+socket handle and return the raw reply bytes.</td>
+</tr>
+<tr class="odd">
 <td><code>ducknng_remote</code></td>
 <td>table</td>
 <td><code>table</code></td>
@@ -804,7 +857,14 @@ client</h3>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a><span class="kw">SELECT</span> position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> ducknng_remote_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>)) <span class="op">&gt;</span> <span class="dv">0</span>;</span>
 <span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_remote_exec(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE client_side_demo(i INTEGER)&#39;</span>);</span>
 <span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_remote_exec(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;INSERT INTO client_side_demo VALUES (10), (11)&#39;</span>);</span>
-<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_stop(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a></span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_socket(<span class="st">&#39;req&#39;</span>);</span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_dial(<span class="dv">1</span>, <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">1000</span>);</span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_sockets();</span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a><span class="kw">SELECT</span> <span class="fu">substr</span>(hex(ducknng_request_socket(<span class="dv">1</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>)), <span class="dv">1</span>, <span class="dv">28</span>);</span>
+<span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_close(<span class="dv">1</span>);</span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a></span>
+<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_server_stop(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
 <pre><code>┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ ducknng_server_start(&#39;sql_client_demo&#39;, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1, 134217728, 300000, NULL, NULL, NULL) │
 │                                                          boolean                                                          │
@@ -829,6 +889,36 @@ client</h3>
 ├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                                               2 │
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────┐
+│ ducknng_socket(&#39;req&#39;) │
+│        uint64         │
+├───────────────────────┤
+│                     1 │
+└───────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│ ducknng_dial(1, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1000) │
+│                             boolean                             │
+├─────────────────────────────────────────────────────────────────┤
+│ true                                                            │
+└─────────────────────────────────────────────────────────────────┘
+┌───────────┬──────────┬────────────────────────────────────────┬─────────┬───────────┬─────────────────┬─────────────────┐
+│ socket_id │ protocol │                  url                   │  open   │ connected │ send_timeout_ms │ recv_timeout_ms │
+│  uint64   │ varchar  │                varchar                 │ boolean │  boolean  │      int32      │      int32      │
+├───────────┼──────────┼────────────────────────────────────────┼─────────┼───────────┼─────────────────┼─────────────────┤
+│         1 │ req      │ ipc:///tmp/ducknng_sql_client_demo.ipc │ true    │ true      │            1000 │            1000 │
+└───────────┴──────────┴────────────────────────────────────────┴─────────┴───────────┴─────────────────┴─────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ substr(hex(ducknng_request_socket(1, from_hex(&#39;01000000000000000000000000000000000000000000&#39;), 1000)), 1, 28) │
+│                                                    varchar                                                    │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 0102040000000800000000000000                                                                                  │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────┐
+│ ducknng_close(1) │
+│     boolean      │
+├──────────────────┤
+│ true             │
+└──────────────────┘
 ┌────────────────────────────────────────┐
 │ ducknng_server_stop(&#39;sql_client_demo&#39;) │
 │                boolean                 │
