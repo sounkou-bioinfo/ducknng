@@ -1,7 +1,6 @@
 #include "ducknng_manifest.h"
 #include "ducknng_ipc_in.h"
 #include "ducknng_ipc_out.h"
-#include "ducknng_duckdb_streaming_compat.h"
 #include "ducknng_service.h"
 #include "ducknng_session.h"
 #include "ducknng_util.h"

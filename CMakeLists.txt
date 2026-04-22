@@ -61,7 +61,6 @@ set(EXTENSION_SOURCES
     src/ducknng_ipc_in.c
     src/ducknng_ipc_out.c
     src/ducknng_nng_compat.c
-    src/ducknng_duckdb_streaming_compat.c
     src/ducknng_util.c
     third_party/nanoarrow/src/nanoarrow/common/array.c
     third_party/nanoarrow/src/nanoarrow/common/schema.c

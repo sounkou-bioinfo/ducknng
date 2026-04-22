@@ -12,25 +12,7 @@ knitr::knit_engines$set(sql = function(options) {
   extension_path <- gsub("'", "''", extension_path, fixed = TRUE)
   code <- paste(sprintf("LOAD '%s';", extension_path), code, sep = "\n")
   if (isTRUE(options$eval)) {
-    py <- file.path(getwd(), "configure", "venv", "bin", "python3")
-    py_script <- tempfile(fileext = ".py")
-    writeLines(c(
-      "import duckdb, sys",
-      "sql = sys.stdin.read()",
-      "con = duckdb.connect(config={'allow_unsigned_extensions': 'true'})",
-      "for stmt in con.extract_statements(sql):",
-      "    rel = con.execute(stmt.query)",
-      "    if rel.description is None:",
-      "        continue",
-      "    cols = [d[0] for d in rel.description]",
-      "    rows = rel.fetchall()",
-      "    print('\\t'.join(cols))",
-      "    for row in rows:",
-      "        print('\\t'.join('' if v is None else str(v) for v in row))",
-      "    print()"
-    ), py_script)
-    out <- system2(py, py_script, input = code, stdout = TRUE, stderr = TRUE)
-    unlink(py_script)
+    out <- system2("duckdb", "-unsigned", input = code, stdout = TRUE, stderr = TRUE)
     status <- attr(out, "status")
     if (!is.null(status) && status != 0) stop(paste(out, collapse = "\n"))
     knitr::engine_output(options, code, out)
@@ -46,7 +28,7 @@ knitr::knit_engines$set(sql = function(options) {
 
 Its SQL-facing client and server interface is explicitly modeled over [`r-lib/nanonext`](https://github.com/r-lib/nanonext), taking req/rep sockets, dial/listen semantics, context-oriented NNG usage, and a practical messaging surface as the reference point for what should feel natural from DuckDB SQL. Its RPC framing and tabular payload direction are likewise informed by Arrow IPC based RPC work such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro) and related projects, where a thin envelope is kept separate from Arrow IPC request and reply payloads instead of being buried inside one-off method-specific binaries.
 
-`ducknng` now declares itself explicitly as an unstable C API extension targeting a single DuckDB version line. This is deliberate and should not be hidden behind stable-ABI language. The DuckDB project’s own release-cycle documentation classifies unstable API extensions as version-tied extensions that are not binary-compatible across multiple DuckDB versions, and that is the correct model for `ducknng` while it reaches into unstable ABI territory for deeper Arrow/runtime work. The repo should therefore be read as an unstable-ABI extension that targets one DuckDB release line at a time, not as a stable C API extension promising cross-version binary compatibility. In the current local development/test setup that target line is DuckDB `v1.5.2`, and changing DuckDB versions now requires rebuilding and retargeting the extension on purpose.
+`ducknng` is now back on the stable DuckDB C extension API. The extension metadata targets the stable C API line (`v1.2.0`), while the repo currently compiles against DuckDB `v1.5.0` headers in the same style used by stable C API extensions such as DuckHTS. That means the project should be read as a stable C API extension that avoids both unstable and deprecated DuckDB extension entrypoints in its implementation. The cost of that choice is that Arrow export stays on the carefully maintained nanoarrow mapping path instead of delegating schema and batch conversion to newer unstable DuckDB Arrow helper APIs.
 
 At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. That transport surface is operation-oriented rather than transport-specific: transport is autodetected from the URL scheme in the same general style as `nanonext`, so the same API can work with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning a separate helper family for each scheme, while TLS material is passed through reusable `tls_config_id` handles instead of inline transport-specific arguments. The current SQL client socket-handle layer is still honest but narrow: `ducknng_open_socket()` only implements `req` today. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
 

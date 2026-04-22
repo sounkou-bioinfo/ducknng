@@ -47,14 +47,11 @@ This checklist tracks the implementation status of the recommendations in `docs/
   - `function_catalog/functions.yaml`
   - generated `function_catalog/functions.md` / `functions.tsv`
   - SQLLogicTests and `test/rpc_smoke.R`
-- [x] Land the first real unstable-ABI Arrow conversion rewrite.
-  - The unstable ABI choice is now justified by implementation, not only by metadata.
-  - Row-bearing RPC export no longer relies solely on the older hand-built row encoder on this path.
-  - The current landed rewrite uses DuckDB unstable Arrow conversion APIs directly in the extension:
-    - `duckdb_result_get_arrow_options()`
-    - `duckdb_to_arrow_schema()`
-    - `duckdb_data_chunk_to_arrow()`
-  - This is the current real bridge from DuckDB result chunks to Arrow IPC batches for row-returning RPC replies.
+- [x] Return the extension to a stable-only DuckDB C API posture.
+  - `USE_UNSTABLE_C_API` is back to `0`.
+  - Stable extension metadata now targets `v1.2.0`.
+  - The repo now compiles against DuckDB `v1.5.0` headers while remaining on the stable C API surface.
+  - Unstable and deprecated DuckDB Arrow entrypoints were removed from implementation code.
 
 ## Partial / clarified but not fully solved
 
@@ -68,14 +65,10 @@ This checklist tracks the implementation status of the recommendations in `docs/
 ## Blocked by larger architectural replacement work
 
 - [~] Replace the hand-rolled Arrow encode/decode path with DuckDB-native Arrow C API plumbing.
-  - Current state: the row-bearing RPC export path now uses DuckDB unstable Arrow conversion APIs for schema and batch conversion.
-  - Landed implementation:
-    - `duckdb_result_get_arrow_options()`
-    - `duckdb_to_arrow_schema()`
-    - `duckdb_data_chunk_to_arrow()`
+  - Current state: the project explicitly chose the stable C API route again, so the row-bearing RPC export path is back on manual nanoarrow schema and batch mapping.
   - Remaining work:
-    - replace the remaining manual Arrow ingress/decode path with DuckDB-native Arrow scan APIs
-    - remove the remaining mirrored/manual conversion logic that still exists outside the landed export path
+    - decide whether a future non-deprecated stable DuckDB Arrow seam exists that would justify another re-plumb
+    - until then, keep the manual mappings careful, documented, and fully tested instead of mixing in unstable or deprecated DuckDB entrypoints
 - [ ] Implement the session query family.
   - `query_open`
   - `fetch`
@@ -109,8 +102,8 @@ This checklist tracks the implementation status of the recommendations in `docs/
 
 ## Current blockers to report upstream
 
-1. **Arrow re-plumbing is now partially landed, not merely aspirational.** The important change in this pass is that the unstable ABI stance is now justified by implementation: the row-bearing RPC export path uses DuckDB unstable Arrow conversion APIs directly through `duckdb_ext_api`, specifically `duckdb_result_get_arrow_options()`, `duckdb_to_arrow_schema()`, and `duckdb_data_chunk_to_arrow()`. The earlier attempt against deprecated `duckdb_query_arrow_schema()` / `duckdb_query_arrow_array()` wrappers was not the right seam here and led to a crash, so that path was discarded. What remains blocked is the rest of the rewrite: Arrow ingress/scan-side plumbing and deletion of the remaining manual conversion code outside the landed export path.
+1. **Stable-only policy now blocks the DuckDB-native Arrow helper route.** This pass deliberately removed both unstable and deprecated DuckDB Arrow entrypoints from implementation code and returned the row-bearing RPC path to manual nanoarrow mappings. That keeps the extension on the stable C API, but it also means the future Arrow re-plumb must wait for a non-deprecated stable seam or be abandoned in favor of maintaining careful manual mappings.
 2. **Session-family work is only partially unblocked.** This pass added real service-owned query session scaffolding and registry-visible `query_open` / `fetch` / `close` / `cancel` methods, but a bare `session_id` protocol without concrete owner rules is still not acceptable as the final multi-client design.
 3. **Async/aio work is blocked on runtime lifecycle design.** SQL-visible futures need a registry, cleanup policy, and completion signaling layer first.
-4. **Codec work should not be built on the remaining manual Arrow paths.** It belongs after the rest of the Arrow replacement, not before it.
+4. **Codec work should not be built on undocumented mapping behavior.** If the project remains on the stable-only manual nanoarrow route, codec decisions should sit on top of explicit tested mappings rather than implicit assumptions about a future Arrow helper path.
 5. **Full multi-protocol NNG exposure is a product-level API redesign.** It is larger than a cleanup patch and should be scoped deliberately. During this pass, a first client-side broadening attempt showed a lower-level blocker too: the current vendored/build-linked NNG artifact for this extension does not export additional protocol entry points such as `nng_sub0_open` into the final extension load path, so simply widening the SQL surface is not enough.

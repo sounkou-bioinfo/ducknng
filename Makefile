@@ -13,13 +13,22 @@ rpc_smoke_r:
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 EXTENSION_NAME=ducknng
-USE_UNSTABLE_C_API=1
-TARGET_DUCKDB_VERSION=v1.5.2
+USE_UNSTABLE_C_API=0
+
+# Stable C API metadata line
+TARGET_DUCKDB_VERSION=v1.2.0
+
+# Actual DuckDB release to fetch headers from for compilation
+DUCKDB_HEADER_VERSION=v1.5.0
 
 all: configure release
 
 include extension-ci-tools/makefiles/c_api_extensions/base.Makefile
 include extension-ci-tools/makefiles/c_api_extensions/c_cpp.Makefile
+
+BASE_HEADER_URL=https://raw.githubusercontent.com/duckdb/duckdb/$(DUCKDB_HEADER_VERSION)/src/include
+DUCKDB_C_HEADER_URL=$(BASE_HEADER_URL)/duckdb.h
+DUCKDB_C_EXTENSION_HEADER_URL=$(BASE_HEADER_URL)/duckdb_extension.h
 
 configure: venv platform extension_version
 

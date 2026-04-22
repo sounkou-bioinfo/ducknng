@@ -1,5 +1,4 @@
 #include "ducknng_ipc_out.h"
-#include "ducknng_duckdb_streaming_compat.h"
 #include "ducknng_util.h"
 #include "nanoarrow/nanoarrow.h"
 #include "nanoarrow/nanoarrow_ipc.h"
@@ -78,41 +77,27 @@ static int ducknng_set_arrow_schema_type(duckdb_logical_type logical_type, struc
 static int ducknng_build_result_schema(duckdb_result result, struct ArrowSchema *schema, char **errmsg) {
     idx_t ncols;
     idx_t col;
-    duckdb_logical_type *types = NULL;
-    const char **names = NULL;
-    duckdb_arrow_options options = NULL;
-    duckdb_error_data err = NULL;
-    int rc = -1;
     ArrowSchemaInit(schema);
     ncols = duckdb_column_count(&result);
-    types = (duckdb_logical_type *)duckdb_malloc(sizeof(*types) * (size_t)ncols);
-    names = (const char **)duckdb_malloc(sizeof(*names) * (size_t)ncols);
-    if ((ncols && !types) || (ncols && !names)) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory preparing Arrow result schema conversion");
-        goto cleanup;
+    if (ArrowSchemaSetTypeStruct(schema, (int64_t)ncols) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize Arrow result schema");
+        return -1;
     }
     for (col = 0; col < ncols; col++) {
-        types[col] = duckdb_column_logical_type(&result, col);
-        names[col] = duckdb_column_name(&result, col);
-    }
-    options = duckdb_result_get_arrow_options(&result);
-    err = duckdb_to_arrow_schema(options, types, names, ncols, schema);
-    if (duckdb_error_data_has_error(err)) {
-        if (errmsg) *errmsg = ducknng_strdup(duckdb_error_data_message(err));
-        goto cleanup;
-    }
-    rc = 0;
-cleanup:
-    if (err) duckdb_destroy_error_data(&err);
-    if (options) duckdb_destroy_arrow_options(&options);
-    if (types) {
-        for (col = 0; col < ncols; col++) {
-            if (types[col]) duckdb_destroy_logical_type(&types[col]);
+        duckdb_logical_type logical_type = duckdb_column_logical_type(&result, col);
+        const char *name = duckdb_column_name(&result, col);
+        if (ArrowSchemaSetName(schema->children[col], name ? name : "") != NANOARROW_OK) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to set Arrow result column name");
+            if (logical_type) duckdb_destroy_logical_type(&logical_type);
+            return -1;
         }
-        duckdb_free(types);
+        if (ducknng_set_arrow_schema_type(logical_type, schema->children[col], errmsg) != 0) {
+            if (logical_type) duckdb_destroy_logical_type(&logical_type);
+            return -1;
+        }
+        if (logical_type) duckdb_destroy_logical_type(&logical_type);
     }
-    if (names) duckdb_free((void *)names);
-    return rc;
+    return 0;
 }
 
 static int ducknng_is_valid(uint64_t *validity, idx_t row) {
@@ -361,108 +346,6 @@ cleanup:
     return rc;
 }
 
-typedef struct ducknng_arrow_ipc_stream_ctx {
-    duckdb_arrow result;
-} ducknng_arrow_ipc_stream_ctx;
-
-static const char *ducknng_arrow_ipc_stream_get_last_error(struct ArrowArrayStream *stream) {
-    (void)stream;
-    return NULL;
-}
-
-static int ducknng_arrow_ipc_stream_get_schema(struct ArrowArrayStream *stream, struct ArrowSchema *out) {
-    ducknng_arrow_ipc_stream_ctx *ctx = stream ? (ducknng_arrow_ipc_stream_ctx *)stream->private_data : NULL;
-    return ducknng_arrow_query_take_schema(ctx ? ctx->result : NULL, out, NULL) == 0 ? 0 : EINVAL;
-}
-
-static int ducknng_arrow_ipc_stream_get_next(struct ArrowArrayStream *stream, struct ArrowArray *out) {
-    ducknng_arrow_ipc_stream_ctx *ctx = stream ? (ducknng_arrow_ipc_stream_ctx *)stream->private_data : NULL;
-    int has_array = 0;
-    if (ducknng_arrow_query_next_array(ctx ? ctx->result : NULL, out, &has_array, NULL) != 0) return EINVAL;
-    if (!has_array) memset(out, 0, sizeof(*out));
-    return 0;
-}
-
-static void ducknng_arrow_ipc_stream_release(struct ArrowArrayStream *stream) {
-    ducknng_arrow_ipc_stream_ctx *ctx;
-    if (!stream || !stream->release) return;
-    ctx = (ducknng_arrow_ipc_stream_ctx *)stream->private_data;
-    if (ctx) {
-        ducknng_arrow_query_close(&ctx->result);
-        duckdb_free(ctx);
-    }
-    memset(stream, 0, sizeof(*stream));
-}
-
-static int ducknng_arrow_array_stream_to_bytes(struct ArrowArrayStream *stream,
-    uint8_t **out_bytes, size_t *out_len, char **errmsg) {
-    struct ArrowIpcOutputStream output_stream;
-    struct ArrowIpcWriter writer;
-    struct ArrowBuffer output_buf;
-    struct ArrowError error;
-    uint8_t *copy = NULL;
-    int rc = -1;
-    memset(&output_stream, 0, sizeof(output_stream));
-    memset(&writer, 0, sizeof(writer));
-    memset(&output_buf, 0, sizeof(output_buf));
-    memset(&error, 0, sizeof(error));
-    ArrowBufferInit(&output_buf);
-    if (ArrowIpcOutputStreamInitBuffer(&output_stream, &output_buf) != NANOARROW_OK) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize Arrow IPC output stream");
-        goto cleanup;
-    }
-    if (ArrowIpcWriterInit(&writer, &output_stream) != NANOARROW_OK) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize Arrow IPC writer");
-        goto cleanup;
-    }
-    if (ArrowIpcWriterWriteArrayStream(&writer, stream, &error) != NANOARROW_OK) {
-        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message : "ducknng: failed to encode Arrow stream");
-        goto cleanup;
-    }
-    copy = (uint8_t *)duckdb_malloc((size_t)output_buf.size_bytes);
-    if (!copy) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying Arrow IPC bytes");
-        goto cleanup;
-    }
-    memcpy(copy, output_buf.data, (size_t)output_buf.size_bytes);
-    *out_bytes = copy;
-    *out_len = (size_t)output_buf.size_bytes;
-    copy = NULL;
-    rc = 0;
-cleanup:
-    if (copy) duckdb_free(copy);
-    if (writer.private_data) ArrowIpcWriterReset(&writer);
-    if (output_stream.release) output_stream.release(&output_stream);
-    if (output_buf.data) ArrowBufferReset(&output_buf);
-    return rc;
-}
-
-static int ducknng_arrow_query_stream_to_ipc(duckdb_arrow result,
-    uint8_t **out_bytes, size_t *out_len, char **errmsg) {
-    struct ArrowArrayStream stream;
-    ducknng_arrow_ipc_stream_ctx *ctx;
-    memset(&stream, 0, sizeof(stream));
-    ctx = (ducknng_arrow_ipc_stream_ctx *)duckdb_malloc(sizeof(*ctx));
-    if (!ctx) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory allocating Arrow stream context");
-        ducknng_arrow_query_close(&result);
-        return -1;
-    }
-    memset(ctx, 0, sizeof(*ctx));
-    ctx->result = result;
-    stream.private_data = ctx;
-    stream.get_schema = ducknng_arrow_ipc_stream_get_schema;
-    stream.get_next = ducknng_arrow_ipc_stream_get_next;
-    stream.get_last_error = ducknng_arrow_ipc_stream_get_last_error;
-    stream.release = ducknng_arrow_ipc_stream_release;
-    if (ducknng_arrow_array_stream_to_bytes(&stream, out_bytes, out_len, errmsg) != 0) {
-        ArrowArrayStreamRelease(&stream);
-        return -1;
-    }
-    ArrowArrayStreamRelease(&stream);
-    return 0;
-}
-
 int ducknng_query_to_ipc_stream(duckdb_connection con, const char *sql,
     uint8_t **out_bytes, size_t *out_len, char **errmsg) {
     duckdb_result result;
@@ -492,14 +375,11 @@ int ducknng_result_next_chunk_to_ipc(duckdb_result result,
     uint8_t **out_bytes, size_t *out_len, int *has_chunk, char **errmsg) {
     struct ArrowSchema schema;
     struct ArrowArray array;
-    struct ArrowArrayStream stream;
+    struct ArrowError error;
     duckdb_data_chunk chunk = NULL;
-    duckdb_arrow_options options = NULL;
-    duckdb_error_data err = NULL;
-    int rc = -1;
     memset(&schema, 0, sizeof(schema));
     memset(&array, 0, sizeof(array));
-    memset(&stream, 0, sizeof(stream));
+    memset(&error, 0, sizeof(error));
     if (has_chunk) *has_chunk = 0;
     if (!out_bytes || !out_len) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid next chunk output pointers");
@@ -507,34 +387,32 @@ int ducknng_result_next_chunk_to_ipc(duckdb_result result,
     }
     chunk = duckdb_fetch_chunk(result);
     if (!chunk) {
-        rc = 0;
-        goto cleanup;
+        if (has_chunk) *has_chunk = 0;
+        return 0;
     }
     if (ducknng_build_result_schema(result, &schema, errmsg) != 0) goto cleanup;
-    options = duckdb_result_get_arrow_options(&result);
-    err = duckdb_data_chunk_to_arrow(options, chunk, &array);
-    if (duckdb_error_data_has_error(err)) {
-        if (errmsg) *errmsg = ducknng_strdup(duckdb_error_data_message(err));
+    if (ArrowArrayInitFromSchema(&array, &schema, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message : "ducknng: failed to initialize Arrow chunk array");
         goto cleanup;
     }
-    if (ArrowBasicArrayStreamInit(&stream, &schema, 1) != NANOARROW_OK) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize single-batch Arrow stream");
+    if (ArrowArrayStartAppending(&array) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to start Arrow chunk append");
         goto cleanup;
     }
-    memset(&schema, 0, sizeof(schema));
-    ArrowBasicArrayStreamSetArray(&stream, 0, &array);
-    memset(&array, 0, sizeof(array));
-    if (ducknng_arrow_array_stream_to_bytes(&stream, out_bytes, out_len, errmsg) != 0) goto cleanup;
+    if (ducknng_append_chunk_to_arrow(chunk, &array, errmsg) != 0) goto cleanup;
+    if (ArrowArrayFinishBuildingDefault(&array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message : "ducknng: failed to finalize Arrow chunk array");
+        goto cleanup;
+    }
+    if (ducknng_arrow_stream_to_bytes(&schema, &array, out_bytes, out_len, errmsg) != 0) goto cleanup;
     if (has_chunk) *has_chunk = 1;
-    rc = 0;
+    duckdb_destroy_data_chunk(&chunk);
+    return 0;
 cleanup:
-    if (err) duckdb_destroy_error_data(&err);
-    if (options) duckdb_destroy_arrow_options(&options);
     if (chunk) duckdb_destroy_data_chunk(&chunk);
-    if (stream.release) ArrowArrayStreamRelease(&stream);
     if (array.release) ArrowArrayRelease(&array);
     if (schema.release) ArrowSchemaRelease(&schema);
-    return rc;
+    return -1;
 }
 
 int ducknng_result_to_ipc_stream(duckdb_prepared_statement stmt, duckdb_result result,
