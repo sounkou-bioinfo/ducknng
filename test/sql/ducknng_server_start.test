@@ -4,34 +4,34 @@
 require ducknng
 
 statement error
-SELECT ducknng_server_start('bad_contexts', 'ipc:///tmp/ducknng_bad_contexts.ipc', 0, 134217728, 300000, NULL, NULL, NULL)
+SELECT ducknng_start_server('bad_contexts', 'ipc:///tmp/ducknng_bad_contexts.ipc', 0, 134217728, 300000, NULL, NULL, NULL)
 ----
 ducknng: contexts must be >= 1
 
 statement error
-SELECT ducknng_server_start('bad_tcp', 'tcp://0.0.0.0:0', 1, 134217728, 300000, NULL, NULL, NULL)
+SELECT ducknng_start_server('bad_tcp', 'tcp://0.0.0.0:0', 1, 134217728, 300000, NULL, NULL, NULL)
 ----
 ducknng: refusing unauthenticated non-loopback tcp listener
 
 statement error
-SELECT ducknng_server_start('bad_tls', 'ipc:///tmp/ducknng_bad_tls.ipc', 1, 134217728, 300000, '/tmp/cert.pem', NULL, NULL)
+SELECT ducknng_start_server('bad_tls', 'ipc:///tmp/ducknng_bad_tls.ipc', 1, 134217728, 300000, '/tmp/cert.pem', NULL, NULL)
 ----
 ducknng: TLS listener options are not implemented; refusing to start listener
 
 query I
 SELECT CASE
-  WHEN ducknng_server_start('sql0', 'ipc:///tmp/ducknng_phase1_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
+  WHEN ducknng_start_server('sql0', 'ipc:///tmp/ducknng_phase1_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
   THEN 1 ELSE 0 END
 ----
 1
 
 query TTIII
 SELECT name, listen, contexts, running, sessions
-FROM ducknng_servers()
+FROM ducknng_list_servers()
 ----
 sql0	ipc:///tmp/ducknng_phase1_sql0.ipc	1	true	0
 
 query I
-SELECT CASE WHEN ducknng_server_stop('sql0') THEN 1 ELSE 0 END
+SELECT CASE WHEN ducknng_stop_server('sql0') THEN 1 ELSE 0 END
 ----
 1

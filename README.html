@@ -607,33 +607,35 @@ padding-top: 0px;
 <p><code>ducknng</code> is a pure C DuckDB extension for DuckDB + NNG
 REQ/REP interop.</p>
 <p>Its SQL-facing client and server interface is explicitly modeled over
-<a href="https://github.com/r-lib/nanonext"><code>r-lib/nanonext</code></a>:
-req/rep sockets, dial/listen semantics, context-oriented NNG usage, and
-a practical messaging surface that can be used directly from DuckDB SQL.
-Its RPC framing and tabular payload direction are also explicitly
-informed by Arrow IPC based RPC work such as <a href="https://github.com/sounkou-bioinfo/mangoro"><code>sounkou-bioinfo/mangoro</code></a>
+<a href="https://github.com/r-lib/nanonext"><code>r-lib/nanonext</code></a>,
+taking req/rep sockets, dial/listen semantics, context-oriented NNG
+usage, and a practical messaging surface as the reference point for what
+should feel natural from DuckDB SQL. Its RPC framing and tabular payload
+direction are likewise informed by Arrow IPC based RPC work such as <a href="https://github.com/sounkou-bioinfo/mangoro"><code>sounkou-bioinfo/mangoro</code></a>
 and related projects, where a thin envelope is kept separate from Arrow
-IPC request and reply payloads.</p>
-<p>Today it provides:</p>
-<ul>
-<li>a low-level transport surface modeled over nanonext-style
-primitives</li>
-<li>named server start/stop from SQL</li>
-<li>registry introspection with <code>ducknng_list_servers()</code></li>
-<li>one REP socket with one or more REP contexts</li>
-<li>a working RPC request/reply path over the raw wire protocol</li>
-</ul>
-<p>The documented next protocol slice is the session query family:
+IPC request and reply payloads instead of being buried inside one-off
+method-specific binaries.</p>
+<p>At the moment, <code>ducknng</code> already exposes a low-level
+transport layer with socket-open, dial, close, and raw request
+primitives, alongside SQL-visible server lifecycle control and runtime
+introspection through <code>ducknng_start_server()</code>,
+<code>ducknng_stop_server()</code>, and
+<code>ducknng_list_servers()</code>. On the server side it runs one REP
+socket with one or more REP contexts, and on top of that transport it
+already supports a working RPC request/reply path with manifest
+discovery, metadata-oriented execution, and unary row-returning
+execution over the current raw wire and Arrow IPC model.</p>
+<p>The next documented protocol slice is the session query family:
 <code>query_open</code>, <code>fetch</code>, <code>close</code>, and
-<code>cancel</code>. In the current docs contract,
-<code>query_open</code> opens one server-owned query session and returns
-JSON control metadata, <code>fetch</code> is the only method that may
-return streamed row batches, <code>close</code> is the normal explicit
-cleanup path, and <code>cancel</code> is best-effort rather than a
-guarantee of immediate interruption. Until a real owner-identity model
-is implemented, that family should be treated as scaffolding for
-loopback or development use rather than production-safe multi-client
-exposure.</p>
+<code>cancel</code>. In the current contract, <code>query_open</code>
+opens one server-owned query session and returns JSON control metadata,
+<code>fetch</code> is the only method that may return streamed row
+batches, <code>close</code> is the normal explicit cleanup path, and
+<code>cancel</code> is best-effort rather than a guarantee of immediate
+interruption. Until a real owner-identity model is implemented, that
+family should still be treated as scaffolding for loopback or
+development use rather than as a production-safe multi-client
+surface.</p>
 <h2 id="functions">Functions</h2>
 <h1 id="function-catalog">Function Catalog</h1>
 <p>This file is generated from
@@ -1058,12 +1060,12 @@ client</h3>
 <span id="cb8-69"><a href="#cb8-69" tabindex="-1"></a>  con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(drv, <span class="at">dbdir =</span> <span class="st">&quot;:memory:&quot;</span>)</span>
 <span id="cb8-70"><a href="#cb8-70" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbExecute</span>(con, <span class="fu">sprintf</span>(<span class="st">&quot;LOAD &#39;%s&#39;&quot;</span>, ext_path))</span>
 <span id="cb8-71"><a href="#cb8-71" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="fu">sprintf</span>(</span>
-<span id="cb8-72"><a href="#cb8-72" tabindex="-1"></a>    <span class="st">&quot;SELECT ducknng_server_start(&#39;sql_exec&#39;, &#39;%s&#39;, 1, 134217728, 300000, NULL, NULL, NULL)&quot;</span>,</span>
+<span id="cb8-72"><a href="#cb8-72" tabindex="-1"></a>    <span class="st">&quot;SELECT ducknng_start_server(&#39;sql_exec&#39;, &#39;%s&#39;, 1, 134217728, 300000, NULL, NULL, NULL)&quot;</span>,</span>
 <span id="cb8-73"><a href="#cb8-73" tabindex="-1"></a>    ipc_url</span>
 <span id="cb8-74"><a href="#cb8-74" tabindex="-1"></a>  ))</span>
 <span id="cb8-75"><a href="#cb8-75" tabindex="-1"></a>  <span class="fu">Sys.sleep</span>(<span class="dv">2</span>)</span>
 <span id="cb8-76"><a href="#cb8-76" tabindex="-1"></a>  rows <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT * FROM ducknng_exec_demo ORDER BY i&quot;</span>)</span>
-<span id="cb8-77"><a href="#cb8-77" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT ducknng_server_stop(&#39;sql_exec&#39;)&quot;</span>)</span>
+<span id="cb8-77"><a href="#cb8-77" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT ducknng_stop_server(&#39;sql_exec&#39;)&quot;</span>)</span>
 <span id="cb8-78"><a href="#cb8-78" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbDisconnect</span>(con, <span class="at">shutdown =</span> <span class="cn">TRUE</span>)</span>
 <span id="cb8-79"><a href="#cb8-79" tabindex="-1"></a>  rows</span>
 <span id="cb8-80"><a href="#cb8-80" tabindex="-1"></a>})</span>

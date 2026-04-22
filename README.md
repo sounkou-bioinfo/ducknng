@@ -6,32 +6,35 @@
 `ducknng` is a pure C DuckDB extension for DuckDB + NNG REQ/REP interop.
 
 Its SQL-facing client and server interface is explicitly modeled over
-[`r-lib/nanonext`](https://github.com/r-lib/nanonext): req/rep sockets,
-dial/listen semantics, context-oriented NNG usage, and a practical
-messaging surface that can be used directly from DuckDB SQL. Its RPC
-framing and tabular payload direction are also explicitly informed by
-Arrow IPC based RPC work such as
+[`r-lib/nanonext`](https://github.com/r-lib/nanonext), taking req/rep
+sockets, dial/listen semantics, context-oriented NNG usage, and a
+practical messaging surface as the reference point for what should feel
+natural from DuckDB SQL. Its RPC framing and tabular payload direction
+are likewise informed by Arrow IPC based RPC work such as
 [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro)
 and related projects, where a thin envelope is kept separate from Arrow
-IPC request and reply payloads.
+IPC request and reply payloads instead of being buried inside one-off
+method-specific binaries.
 
-Today it provides:
+At the moment, `ducknng` already exposes a low-level transport layer
+with socket-open, dial, close, and raw request primitives, alongside
+SQL-visible server lifecycle control and runtime introspection through
+`ducknng_start_server()`, `ducknng_stop_server()`, and
+`ducknng_list_servers()`. On the server side it runs one REP socket with
+one or more REP contexts, and on top of that transport it already
+supports a working RPC request/reply path with manifest discovery,
+metadata-oriented execution, and unary row-returning execution over the
+current raw wire and Arrow IPC model.
 
-- a low-level transport surface modeled over nanonext-style primitives
-- named server start/stop from SQL
-- registry introspection with `ducknng_list_servers()`
-- one REP socket with one or more REP contexts
-- a working RPC request/reply path over the raw wire protocol
-
-The documented next protocol slice is the session query family:
-`query_open`, `fetch`, `close`, and `cancel`. In the current docs
-contract, `query_open` opens one server-owned query session and returns
-JSON control metadata, `fetch` is the only method that may return
-streamed row batches, `close` is the normal explicit cleanup path, and
-`cancel` is best-effort rather than a guarantee of immediate
-interruption. Until a real owner-identity model is implemented, that
-family should be treated as scaffolding for loopback or development use
-rather than production-safe multi-client exposure.
+The next documented protocol slice is the session query family:
+`query_open`, `fetch`, `close`, and `cancel`. In the current contract,
+`query_open` opens one server-owned query session and returns JSON
+control metadata, `fetch` is the only method that may return streamed
+row batches, `close` is the normal explicit cleanup path, and `cancel`
+is best-effort rather than a guarantee of immediate interruption. Until
+a real owner-identity model is implemented, that family should still be
+treated as scaffolding for loopback or development use rather than as a
+production-safe multi-client surface.
 
 ## Functions
 
@@ -364,12 +367,12 @@ server_job <- parallel::mcparallel({
   con <- DBI::dbConnect(drv, dbdir = ":memory:")
   DBI::dbExecute(con, sprintf("LOAD '%s'", ext_path))
   DBI::dbGetQuery(con, sprintf(
-    "SELECT ducknng_server_start('sql_exec', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
+    "SELECT ducknng_start_server('sql_exec', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
     ipc_url
   ))
   Sys.sleep(2)
   rows <- DBI::dbGetQuery(con, "SELECT * FROM ducknng_exec_demo ORDER BY i")
-  DBI::dbGetQuery(con, "SELECT ducknng_server_stop('sql_exec')")
+  DBI::dbGetQuery(con, "SELECT ducknng_stop_server('sql_exec')")
   DBI::dbDisconnect(con, shutdown = TRUE)
   rows
 })
