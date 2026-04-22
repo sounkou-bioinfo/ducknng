@@ -60,16 +60,25 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Service Control
 
-| name                   | kind   | arguments                                                                                                | returns   | description                         |
-|------------------------|--------|----------------------------------------------------------------------------------------------------------|-----------|-------------------------------------|
-| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode` | `BOOLEAN` | Start a named ducknng REP listener. |
-| `ducknng_stop_server`  | scalar | `name`                                                                                                   | `BOOLEAN` | Stop a named ducknng service.       |
+| name                   | kind   | arguments                                                                                                                                                                                                | returns   | description                         |
+|------------------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|-------------------------------------|
+| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode) or ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng REP listener. |
+| `ducknng_stop_server`  | scalar | `name`                                                                                                                                                                                                   | `BOOLEAN` | Stop a named ducknng service.       |
 
 ## Introspection
 
 | name                   | kind  | arguments | returns                                                                                                        | description                       |
 |------------------------|-------|-----------|----------------------------------------------------------------------------------------------------------------|-----------------------------------|
 | `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)` | List registered ducknng services. |
+
+## Method Registry
+
+| name                           | kind   | arguments | returns                                                                                                                                                                                                                                                                       | description                                                        |
+|--------------------------------|--------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+| `ducknng_register_exec_method` | scalar |           | `BOOLEAN`                                                                                                                                                                                                                                                                     | Register the built-in exec RPC method explicitly.                  |
+| `ducknng_unregister_method`    | scalar | `name`    | `BOOLEAN`                                                                                                                                                                                                                                                                     | Unregister a method from the runtime registry.                     |
+| `ducknng_unregister_family`    | scalar | `family`  | `UBIGINT`                                                                                                                                                                                                                                                                     | Unregister all methods in a family and return the number removed.  |
+| `ducknng_list_methods`         | table  |           | `TABLE(name VARCHAR, family VARCHAR, summary VARCHAR, transport_pattern VARCHAR, request_payload_format VARCHAR, response_payload_format VARCHAR, response_mode VARCHAR, request_schema_json VARCHAR, response_schema_json VARCHAR, requires_auth BOOLEAN, disabled BOOLEAN)` | List the currently registered RPC methods in the runtime registry. |
 
 ## Primitive Transport
 
@@ -128,14 +137,14 @@ client/server TLS configuration rather than a file-only setup path.
 ``` sql
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
 SELECT ducknng_start_server(
-  'sql0',
-  'ipc:///tmp/ducknng_sql0.ipc',
-  1,
-  134217728,
-  300000,
-  NULL,
-  NULL,
-  NULL
+  'sql0',                         -- service name
+  'ipc:///tmp/ducknng_sql0.ipc', -- listen URL
+  1,                              -- REP contexts
+  134217728,                      -- recv_max_bytes
+  300000,                         -- session_idle_ms
+  NULL,                           -- tls_cert_key_file
+  NULL,                           -- tls_ca_file
+  NULL                            -- tls_auth_mode
 );
 
 SELECT name, listen, contexts, running, sessions
@@ -168,14 +177,14 @@ SELECT ducknng_stop_server('sql0');
 ``` sql
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
 SELECT ducknng_start_server(
-  'sql_multi',
-  'ipc:///tmp/ducknng_sql_multi.ipc',
-  3,
-  134217728,
-  300000,
-  NULL,
-  NULL,
-  NULL
+  'sql_multi',                    -- service name
+  'ipc:///tmp/ducknng_sql_multi.ipc', -- listen URL
+  3,                              -- REP contexts
+  134217728,                      -- recv_max_bytes
+  300000,                         -- session_idle_ms
+  NULL,                           -- tls_cert_key_file
+  NULL,                           -- tls_ca_file
+  NULL                            -- tls_auth_mode
 );
 
 SELECT name, contexts, running
@@ -210,17 +219,23 @@ SELECT ducknng_stop_server('sql_multi');
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
 -- Start a local ducknng service that the following client examples will talk to.
 SELECT ducknng_start_server(
-  'sql_client_demo',
-  'ipc:///tmp/ducknng_sql_client_demo.ipc',
-  1,
-  134217728,
-  300000,
-  NULL,
-  NULL,
-  NULL
+  'sql_client_demo',              -- service name
+  'ipc:///tmp/ducknng_sql_client_demo.ipc', -- listen URL
+  1,                              -- REP contexts
+  134217728,                      -- recv_max_bytes
+  300000,                         -- session_idle_ms
+  NULL,                           -- tls_cert_key_file
+  NULL,                           -- tls_ca_file
+  NULL                            -- tls_auth_mode
 );
 
--- RPC helper: fetch the manifest as a structured status row.
+-- The default RPC surface is minimal: manifest is built in, exec is opt-in.
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc');
+SELECT * FROM ducknng_list_methods();
+
+-- Register exec explicitly before exposing SQL execution over RPC.
+SELECT ducknng_register_exec_method();
+SELECT * FROM ducknng_list_methods();
 SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc');
 
 -- RPC helper: run non-row statements and keep errors in-band.
@@ -268,6 +283,31 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
     │ true                                                                                                                      │
     └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬─────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                               manifest                                                                                                                                                                                                                                                                                                                                               │
+    │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                               varchar                                                                                                                                                                                                                                                                                                                                                │
+    ├─────────┼─────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true    │ NULL    │ {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}}]} │
+    └─────────┴─────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌──────────┬─────────┬───────────────────────────────────────────┬───────────────────┬────────────────────────┬─────────────────────────┬───────────────┬─────────────────────┬──────────────────────┬───────────────┬──────────┐
+    │   name   │ family  │                  summary                  │ transport_pattern │ request_payload_format │ response_payload_format │ response_mode │ request_schema_json │ response_schema_json │ requires_auth │ disabled │
+    │ varchar  │ varchar │                  varchar                  │      varchar      │        varchar         │         varchar         │    varchar    │       varchar       │       varchar        │    boolean    │ boolean  │
+    ├──────────┼─────────┼───────────────────────────────────────────┼───────────────────┼────────────────────────┼─────────────────────────┼───────────────┼─────────────────────┼──────────────────────┼───────────────┼──────────┤
+    │ manifest │ control │ Return the registry-derived manifest JSON │ reqrep            │ none                   │ json                    │ metadata_only │ NULL                │ {"type":"json"}      │ false         │ false    │
+    └──────────┴─────────┴───────────────────────────────────────────┴───────────────────┴────────────────────────┴─────────────────────────┴───────────────┴─────────────────────┴──────────────────────┴───────────────┴──────────┘
+    ┌────────────────────────────────┐
+    │ ducknng_register_exec_method() │
+    │            boolean             │
+    ├────────────────────────────────┤
+    │ true                           │
+    └────────────────────────────────┘
+    ┌──────────┬─────────┬───────────────────────────────────────────┬───────────────────┬────────────────────────┬─────────────────────────┬──────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────┬───────────────┬──────────┐
+    │   name   │ family  │                  summary                  │ transport_pattern │ request_payload_format │ response_payload_format │  response_mode   │                                               request_schema_json                                                │    response_schema_json     │ requires_auth │ disabled │
+    │ varchar  │ varchar │                  varchar                  │      varchar      │        varchar         │         varchar         │     varchar      │                                                     varchar                                                      │           varchar           │    boolean    │ boolean  │
+    ├──────────┼─────────┼───────────────────────────────────────────┼───────────────────┼────────────────────────┼─────────────────────────┼──────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────┼───────────────┼──────────┤
+    │ manifest │ control │ Return the registry-derived manifest JSON │ reqrep            │ none                   │ json                    │ metadata_only    │ NULL                                                                                                             │ {"type":"json"}             │ false         │ false    │
+    │ exec     │ sql     │ Execute SQL and return metadata or rows   │ reqrep            │ arrow_ipc_stream       │ arrow_ipc_stream        │ metadata_or_rows │ {"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]} │ {"mode":"metadata_or_rows"} │ false         │ false    │
+    └──────────┴─────────┴───────────────────────────────────────────┴───────────────────┴────────────────────────┴─────────────────────────┴──────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────┴───────────────┴──────────┘
     ┌─────────┬─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
     │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  manifest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  │
     │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  varchar                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   │
@@ -409,7 +449,7 @@ SELECT ducknng_drop_tls_config(1);
     │   ok    │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
     │ boolean │  varchar  │ varchar  │                       boolean                        │
     ├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
-    │ true    │ result    │ manifest │ true                                                 │
+    │ true    │ result    │ manifest │ false                                                │
     └─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
     ┌──────────────────────────────────────┐
     │ ducknng_stop_server('tls_demo_self') │
@@ -478,7 +518,7 @@ SELECT ducknng_drop_tls_config(1);
     │   ok    │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
     │ boolean │  varchar  │ varchar  │                       boolean                        │
     ├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
-    │ true    │ result    │ manifest │ true                                                 │
+    │ true    │ result    │ manifest │ false                                                │
     └─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
     ┌───────────────────────────────────────┐
     │ ducknng_stop_server('tls_demo_files') │
@@ -496,56 +536,87 @@ SELECT ducknng_drop_tls_config(1);
 ### REQ/REP `EXEC` via `nanonext` as an interop example
 
 ``` r
-suppressWarnings(suppressPackageStartupMessages({
-  library(DBI)
-  library(duckdb)
-  library(nanonext)
-  library(nanoarrow)
-}))
-
-# Little-endian integer encoders for the versioned ducknng RPC envelope.
-u32le <- function(x) writeBin(as.integer(x), raw(), size = 4L, endian = "little")
-u64le <- function(x) {
-  x <- as.double(x)
-  c(u32le(x %% 2^32), u32le(floor(x / 2^32)))
+# Little-endian helpers for the versioned ducknng RPC envelope.
+write_u32le <- function(x) {
+  writeBin(as.integer(x), raw(), size = 4L, endian = "little")
 }
-le_u32_from_raw <- function(x) sum(as.double(as.integer(x)) * 256^(0:3))
-le_u64_from_raw <- function(x) le_u32_from_raw(x[1:4]) + 2^32 * le_u32_from_raw(x[5:8])
-read_u32le <- function(buf, offset) le_u32_from_raw(buf[offset + 0:3])
-read_u64le <- function(buf, offset) le_u64_from_raw(buf[offset + 0:7])
 
-# Serialize a one-row exec request as Arrow IPC using nanoarrow.
-encode_ducknng_exec_request <- function(sql, want_result = FALSE) {
-  con <- rawConnection(raw(), open = "r+")
-  on.exit(close(con))
+write_u64le <- function(x) {
+  x <- as.double(x)
+  c(write_u32le(x %% 2^32), write_u32le(floor(x / 2^32)))
+}
+
+read_u32le_bytes <- function(x) {
+  sum(as.double(as.integer(x)) * 256^(0:3))
+}
+
+read_u64le_bytes <- function(x) {
+  read_u32le_bytes(x[1:4]) + 2^32 * read_u32le_bytes(x[5:8])
+}
+
+read_u32le <- function(buf, offset) {
+  read_u32le_bytes(buf[offset + 0:3])
+}
+
+read_u64le <- function(buf, offset) {
+  read_u64le_bytes(buf[offset + 0:7])
+}
+
+# Encode the Arrow IPC payload carried by the built-in exec RPC method.
+encode_ducknng_exec_payload <- function(sql, want_result = FALSE) {
+  raw_con <- rawConnection(raw(), open = "r+")
+  on.exit(close(raw_con), add = TRUE)
+
   nanoarrow::write_nanoarrow(
     data.frame(sql = sql, want_result = want_result),
-    con
+    raw_con
   )
-  payload <- rawConnectionValue(con)
-  name <- charToRaw("exec")
+
+  rawConnectionValue(raw_con)
+}
+
+# Build a version 1 RPC call frame for the named method.
+encode_ducknng_call_frame <- function(method, payload, flags = 0L) {
+  method_name <- charToRaw(method)
+
   c(
-    as.raw(1L),                  # envelope version
-    as.raw(1L),                  # message type: call
-    u32le(0),                    # flags
-    u32le(length(name)),         # method-name length
-    u32le(0),                    # error-string length on requests
-    u64le(length(payload)),      # payload length
-    name,
+    as.raw(1L),
+    as.raw(1L),
+    write_u32le(flags),
+    write_u32le(length(method_name)),
+    write_u32le(0),
+    write_u64le(length(payload)),
+    method_name,
     payload
   )
 }
 
-# Decode a reply envelope and, when present, parse the Arrow IPC payload.
+encode_ducknng_exec_request <- function(sql, want_result = FALSE) {
+  encode_ducknng_call_frame(
+    method = "exec",
+    payload = encode_ducknng_exec_payload(sql, want_result = want_result)
+  )
+}
+
+# Decode a reply envelope and parse its Arrow IPC payload when present.
 decode_ducknng_exec_reply <- function(buf) {
+  header_size <- 23L
+
+  if (!is.raw(buf) || length(buf) < (header_size - 1L)) {
+    stop("ducknng reply frame was empty or truncated", call. = FALSE)
+  }
+
   name_len <- read_u32le(buf, 7)
   error_len <- read_u32le(buf, 11)
   payload_len <- read_u64le(buf, 15)
-  name_start <- 23L
+
+  name_start <- header_size
   error_start <- name_start + name_len
   payload_start <- error_start + error_len
   payload_end <- payload_start + payload_len - 1L
+
   payload <- if (payload_len > 0) buf[payload_start:payload_end] else raw()
+
   list(
     version = as.integer(buf[1]),
     type = as.integer(buf[2]),
@@ -557,66 +628,136 @@ decode_ducknng_exec_reply <- function(buf) {
   )
 }
 
-# Use a temporary IPC path and launch a DuckDB-backed ducknng server in a child process.
+# Send and receive with the same retry style used in mangoro examples.
+send_ducknng_frame <- function(socket, frame, timeout_ms = 1000L, max_attempts = 20L) {
+  attempt <- 1L
+  send_result <- nanonext::send(socket, frame, mode = "raw", block = timeout_ms)
+
+  while (nanonext::is_error_value(send_result) && attempt < max_attempts) {
+    Sys.sleep(0.25)
+    send_result <- nanonext::send(socket, frame, mode = "raw", block = timeout_ms)
+    attempt <- attempt + 1L
+  }
+
+  send_result
+}
+
+recv_ducknng_frame <- function(socket, timeout_ms = 1000L, max_attempts = 20L) {
+  attempt <- 1L
+  response <- nanonext::recv(socket, mode = "raw", block = timeout_ms)
+
+  while (
+    (
+      nanonext::is_error_value(response) ||
+      !is.raw(response) ||
+      length(response) < 22L
+    ) &&
+    attempt < max_attempts
+  ) {
+    Sys.sleep(0.25)
+    response <- nanonext::recv(socket, mode = "raw", block = timeout_ms)
+    attempt <- attempt + 1L
+  }
+
+  response
+}
+
+run_ducknng_req <- function(socket, frame, timeout_ms = 1000L) {
+  send_ducknng_frame(socket, frame, timeout_ms = timeout_ms)
+  decode_ducknng_exec_reply(
+    recv_ducknng_frame(socket, timeout_ms = timeout_ms)
+  )
+}
+
+# Wait for an IPC listener path to appear before dialing it.
+wait_for_ducknng_listener <- function(path, timeout_secs = 10, interval_secs = 0.1) {
+  deadline <- Sys.time() + timeout_secs
+
+  while (Sys.time() < deadline) {
+    if (file.exists(path)) {
+      return(invisible(TRUE))
+    }
+    Sys.sleep(interval_secs)
+  }
+
+  stop("ducknng IPC listener did not become ready in time", call. = FALSE)
+}
+
+# Start a ducknng server in this R session, then talk to it over a req socket.
 ext_path <- normalizePath("build/release/ducknng.duckdb_extension")
 ipc_path <- tempfile(pattern = "ducknng_readme_exec_", tmpdir = "/tmp", fileext = ".ipc")
 ipc_url <- paste0("ipc://", ipc_path)
 
-server_job <- parallel::mcparallel({
-  drv <- duckdb::duckdb(config = list(allow_unsigned_extensions = "true"))
-  con <- DBI::dbConnect(drv, dbdir = ":memory:")
-  DBI::dbExecute(con, sprintf("LOAD '%s'", ext_path))
-  DBI::dbGetQuery(con, sprintf(
+db_driver <- duckdb::duckdb(
+  dbdir = ":memory:",
+  config = list(allow_unsigned_extensions = "true")
+)
+db_con <- DBI::dbConnect(db_driver)
+
+DBI::dbGetQuery(db_con, "SELECT 42 AS ok")
+#>   ok
+#> 1 42
+DBI::dbExecute(db_con, sprintf("LOAD '%s'", ext_path))
+#> [1] 0
+DBI::dbGetQuery(
+  db_con,
+  sprintf(
     "SELECT ducknng_start_server('sql_exec', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
     ipc_url
-  ))
-  Sys.sleep(2)
-  rows <- DBI::dbGetQuery(con, "SELECT * FROM ducknng_exec_demo ORDER BY i")
-  DBI::dbGetQuery(con, "SELECT ducknng_stop_server('sql_exec')")
-  DBI::dbDisconnect(con, shutdown = TRUE)
-  rows
-})
+  )
+)
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_f3341538f691d.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
+#> 1                                                                                                                         TRUE
+DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
+#>   ducknng_register_exec_method()
+#> 1                           TRUE
 
-# Give the listener a moment to come up, then dial it with a normal req socket.
-Sys.sleep(1)
-req <- nanonext::socket("req", dial = ipc_url, autostart = NA)
+wait_for_ducknng_listener(ipc_path)
+req <- nanonext::socket("req", dial = ipc_url)
 
-# Create a table remotely and inspect the reply metadata.
-nanonext::send(req, encode_ducknng_exec_request("CREATE TABLE ducknng_exec_demo(i INTEGER)"), mode = "raw", block = 1000L)
-#> [1] 0
-create_reply <- decode_ducknng_exec_reply(nanonext::recv(req, mode = "raw", block = 1000L))
+# Create a table remotely and inspect the metadata reply.
+create_reply <- run_ducknng_req(
+  req,
+  encode_ducknng_exec_request("CREATE TABLE ducknng_exec_demo(i INTEGER)")
+)
 create_reply$data
 #>   rows_changed statement_type result_type
 #> 1            0              7           2
 
-# Insert rows remotely and inspect the second reply.
-nanonext::send(req, encode_ducknng_exec_request("INSERT INTO ducknng_exec_demo VALUES (42), (99)"), mode = "raw", block = 1000L)
-#> [1] 0
-insert_reply <- decode_ducknng_exec_reply(nanonext::recv(req, mode = "raw", block = 1000L))
+# Insert rows remotely and inspect the second metadata reply.
+insert_reply <- run_ducknng_req(
+  req,
+  encode_ducknng_exec_request("INSERT INTO ducknng_exec_demo VALUES (42), (99)")
+)
 insert_reply$data
 #>   rows_changed statement_type result_type
 #> 1            2              2           1
 
 # Request result rows directly with want_result = TRUE.
-nanonext::send(
+select_reply <- run_ducknng_req(
   req,
-  encode_ducknng_exec_request("SELECT i, i > 50 AS gt_50 FROM ducknng_exec_demo ORDER BY i", want_result = TRUE),
-  mode = "raw",
-  block = 1000L
+  encode_ducknng_exec_request(
+    "SELECT i, i > 50 AS gt_50 FROM ducknng_exec_demo ORDER BY i",
+    want_result = TRUE
+  )
 )
-#> [1] 0
-select_reply <- decode_ducknng_exec_reply(nanonext::recv(req, mode = "raw", block = 1000L))
 select_reply$data
 #>    i gt_50
 #> 1 42 FALSE
 #> 2 99  TRUE
 
-# Collect the server-side query result from the child process.
-server_rows <- parallel::mccollect(server_job)[[1]]
+# Inspect the same table locally through the DuckDB connection that owns the server.
+server_rows <- DBI::dbGetQuery(db_con, "SELECT * FROM ducknng_exec_demo ORDER BY i")
 server_rows
 #>    i
 #> 1 42
 #> 2 99
 
+# Stop the server and clean up the socket and temporary IPC path.
+DBI::dbGetQuery(db_con, "SELECT ducknng_stop_server('sql_exec')")
+#>   ducknng_stop_server('sql_exec')
+#> 1                            TRUE
 close(req)
+DBI::dbDisconnect(db_con)
+unlink(ipc_path)
 ```

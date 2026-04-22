@@ -13,12 +13,14 @@
 - `ducknng_server_start(...)` now creates the requested number of REP contexts on one REP socket instead of hard-coding a single worker.
 - Vendored `nng` and `nanoarrow` as third-party dependencies.
 - Added `README.Rmd` and `make rdm` for generated documentation.
-- Added extension metadata files `description.yml` and `description.yaml`.
+- Added extension metadata file `description.yml`.
 - Added excluded platform metadata for wasm and Windows targets while native Linux development is underway.
 - Added initial SQLLogicTest coverage in `test/sql/ducknng_server_start.test`.
 - Added initial `function_catalog/functions.yaml` metadata plus generated markdown and TSV catalogs.
 - Added a versioned RPC envelope with a method name, flags, error field, and payload length instead of the older ad hoc opcode frame.
 - Added a registry-backed built-in method surface with `manifest` and `exec` descriptors.
+- `manifest` now remains the only always-on built-in RPC method; `exec` must be registered explicitly with `ducknng_register_exec_method()`.
+- Added SQL-visible method registry administration with `ducknng_register_exec_method()`, `ducknng_unregister_method(name)`, `ducknng_unregister_family(family)`, and `ducknng_list_methods()`.
 - Added `docs/security.md` and `docs/registry.md` as binding design and implementation contracts.
 - Added a project-local Pi skill at `.pi/skills/ducknng-rpc-framework/` for protocol, registry, session, and security work in this repo.
 - Added `test/rpc_smoke.R` plus `make rpc_smoke` to validate manifest discovery and Arrow-metadata `exec` replies over real NNG REQ/REP.

@@ -4,12 +4,15 @@
       "name": "ducknng_start_server",
       "kind": "scalar",
       "category": "Service Control",
-      "signature": "ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode)",
+      "signature": "ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode) or ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id)",
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
       "description": "Start a named ducknng REP listener.",
-      "notes": [],
+      "notes": [
+        "The 8-argument form is the non-TLS or inline-file-args form: name, listen URL, REP contexts, receive limit in bytes, session idle timeout in milliseconds, TLS cert+key file, TLS CA file, and TLS auth mode.",
+        "The 6-argument form is the preferred TLS-handle form and requires a real tls_config_id returned by ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config()."
+      ],
       "examples": [
         "SELECT ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL);"
       ]
@@ -40,6 +43,70 @@
       "notes": [],
       "examples": [
         "SELECT * FROM ducknng_list_servers();"
+      ]
+    },
+    {
+      "name": "ducknng_register_exec_method",
+      "kind": "scalar",
+      "category": "Method Registry",
+      "signature": "ducknng_register_exec_method()",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Register the built-in exec RPC method explicitly.",
+      "notes": [
+        "exec is not registered by default. Call this deliberately before exposing SQL execution over RPC."
+      ],
+      "examples": [
+        "SELECT ducknng_register_exec_method();"
+      ]
+    },
+    {
+      "name": "ducknng_unregister_method",
+      "kind": "scalar",
+      "category": "Method Registry",
+      "signature": "ducknng_unregister_method(name)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Unregister a method from the runtime registry.",
+      "notes": [
+        "The built-in manifest method cannot be unregistered."
+      ],
+      "examples": [
+        "SELECT ducknng_unregister_method('exec');"
+      ]
+    },
+    {
+      "name": "ducknng_unregister_family",
+      "kind": "scalar",
+      "category": "Method Registry",
+      "signature": "ducknng_unregister_family(family)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Unregister all methods in a family and return the number removed.",
+      "notes": [
+        "The built-in control family cannot be unregistered."
+      ],
+      "examples": [
+        "SELECT ducknng_unregister_family('sql');"
+      ]
+    },
+    {
+      "name": "ducknng_list_methods",
+      "kind": "table",
+      "category": "Method Registry",
+      "signature": "ducknng_list_methods()",
+      "returns": "TABLE(name VARCHAR, family VARCHAR, summary VARCHAR, transport_pattern VARCHAR, request_payload_format VARCHAR, response_payload_format VARCHAR, response_mode VARCHAR, request_schema_json VARCHAR, response_schema_json VARCHAR, requires_auth BOOLEAN, disabled BOOLEAN)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "List the currently registered RPC methods in the runtime registry.",
+      "notes": [
+        "Use this to verify whether exec has been explicitly enabled."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_list_methods();"
       ]
     },
     {
@@ -262,7 +329,7 @@
       "implemented": true,
       "description": "Execute a metadata-oriented RPC call and return a structured result row.",
       "notes": [
-        "Built on top of the primitive request layer and the exec RPC method."
+        "These helpers require the remote server to have explicitly registered the exec method."
       ],
       "examples": [
         "SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)');"
@@ -279,7 +346,8 @@
       "description": "Execute the exec RPC and return the raw reply frame as BLOB.",
       "notes": [
         "This is a raw helper: it returns the full reply frame and yields NULL on local request failure.",
-        "Use ducknng_decode_frame() or a payload-specific decoder after inspection."
+        "Use ducknng_decode_frame() or a payload-specific decoder after inspection.",
+        "These helpers require the remote server to have explicitly registered the exec method."
       ],
       "examples": [
         "SELECT ok, type_name, name FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)'));"
@@ -295,8 +363,8 @@
       "implemented": true,
       "description": "Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table.",
       "notes": [
-        "Built on top of the exec RPC method with want_result = true.",
-        "This is the current unary row path, not the future session streaming path."
+        "This is the current unary row path, not the future session streaming path.",
+        "These helpers require the remote server to have explicitly registered the exec method."
       ],
       "examples": [
         "SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer');"

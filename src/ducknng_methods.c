@@ -190,8 +190,7 @@ const ducknng_method_descriptor ducknng_method_manifest = {
 
 int ducknng_register_builtin_methods(ducknng_runtime *rt, char **errmsg) {
     const ducknng_method_descriptor *methods[] = {
-        &ducknng_method_manifest,
-        &ducknng_method_exec
+        &ducknng_method_manifest
     };
     if (!rt) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: missing runtime for method registration");
@@ -199,4 +198,12 @@ int ducknng_register_builtin_methods(ducknng_runtime *rt, char **errmsg) {
     }
     return ducknng_method_registry_register_many(&rt->registry, methods,
         sizeof(methods) / sizeof(methods[0]), errmsg);
+}
+
+int ducknng_register_exec_method(ducknng_runtime *rt, char **errmsg) {
+    if (!rt) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing runtime for exec method registration");
+        return 0;
+    }
+    return ducknng_method_registry_register(&rt->registry, &ducknng_method_exec, errmsg);
 }
