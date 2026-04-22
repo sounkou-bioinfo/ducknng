@@ -4,6 +4,48 @@
 #include <stdlib.h>
 #include <string.h>
 
+DUCKDB_EXTENSION_EXTERN
+
+void ducknng_tls_opts_init(ducknng_tls_opts *opts) {
+    if (!opts) return;
+    memset(opts, 0, sizeof(*opts));
+}
+
+int ducknng_tls_opts_copy(ducknng_tls_opts *dst, const ducknng_tls_opts *src) {
+    if (!dst) return -1;
+    ducknng_tls_opts_init(dst);
+    if (!src) return 0;
+    dst->enabled = src->enabled;
+    dst->auth_mode = src->auth_mode;
+    dst->cert_key_file = ducknng_strdup(src->cert_key_file);
+    dst->ca_file = ducknng_strdup(src->ca_file);
+    dst->cert_pem = ducknng_strdup(src->cert_pem);
+    dst->key_pem = ducknng_strdup(src->key_pem);
+    dst->ca_pem = ducknng_strdup(src->ca_pem);
+    dst->password = ducknng_strdup(src->password);
+    if ((src->cert_key_file && !dst->cert_key_file) ||
+        (src->ca_file && !dst->ca_file) ||
+        (src->cert_pem && !dst->cert_pem) ||
+        (src->key_pem && !dst->key_pem) ||
+        (src->ca_pem && !dst->ca_pem) ||
+        (src->password && !dst->password)) {
+        ducknng_tls_opts_reset(dst);
+        return -1;
+    }
+    return 0;
+}
+
+void ducknng_tls_opts_reset(ducknng_tls_opts *opts) {
+    if (!opts) return;
+    if (opts->cert_key_file) duckdb_free(opts->cert_key_file);
+    if (opts->ca_file) duckdb_free(opts->ca_file);
+    if (opts->cert_pem) duckdb_free(opts->cert_pem);
+    if (opts->key_pem) duckdb_free(opts->key_pem);
+    if (opts->ca_pem) duckdb_free(opts->ca_pem);
+    if (opts->password) duckdb_free(opts->password);
+    memset(opts, 0, sizeof(*opts));
+}
+
 static char *ducknng_url_with_port(const nng_url *up, int port) {
     char port_buf[32];
     size_t need;
@@ -21,7 +63,12 @@ static char *ducknng_url_with_port(const nng_url *up, int port) {
 static int ducknng_tls_requested(const ducknng_tls_opts *opts) {
     return opts && (opts->enabled ||
         (opts->cert_key_file && opts->cert_key_file[0]) ||
-        (opts->ca_file && opts->ca_file[0]) || opts->auth_mode != 0);
+        (opts->ca_file && opts->ca_file[0]) ||
+        (opts->cert_pem && opts->cert_pem[0]) ||
+        (opts->key_pem && opts->key_pem[0]) ||
+        (opts->ca_pem && opts->ca_pem[0]) ||
+        (opts->password && opts->password[0]) ||
+        opts->auth_mode != 0);
 }
 
 int ducknng_rep_socket_open(nng_socket *out) { return nng_rep0_open(out); }

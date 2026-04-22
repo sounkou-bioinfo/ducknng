@@ -33,9 +33,9 @@ struct ducknng_service {
     char *listen_url;
     char *resolved_listen_url;
     int tls_enabled;
-    char *tls_cert_key_file;
-    char *tls_ca_file;
-    int tls_auth_mode;
+    uint64_t tls_config_id;
+    char *tls_config_source;
+    ducknng_tls_opts tls_opts;
     nng_socket rep_sock;
     nng_listener listener;
     ducknng_rep_ctx *ctxs;
@@ -66,7 +66,7 @@ enum {
 
 ducknng_service *ducknng_service_create(ducknng_runtime *rt, const char *name, const char *listen_url,
     int contexts, size_t recv_max_bytes, uint64_t session_idle_ms,
-    const char *tls_cert_key_file, const char *tls_ca_file, int tls_auth_mode);
+    uint64_t tls_config_id, const char *tls_config_source, const ducknng_tls_opts *tls_opts);
 void ducknng_service_destroy(ducknng_service *svc);
 int ducknng_service_start(ducknng_service *svc, char **errmsg);
 int ducknng_service_stop(ducknng_service *svc, char **errmsg);

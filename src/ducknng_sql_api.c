@@ -6,7 +6,10 @@
 #include "ducknng_service.h"
 #include "ducknng_util.h"
 #include "ducknng_wire.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 DUCKDB_EXTENSION_EXTERN
 
@@ -52,6 +55,29 @@ typedef struct {
     ducknng_sockets_bind_data *bind;
     idx_t offset;
 } ducknng_sockets_init_data;
+
+typedef struct {
+    uint64_t tls_config_id;
+    char *source;
+    bool enabled;
+    bool has_cert_key_file;
+    bool has_ca_file;
+    bool has_cert_pem;
+    bool has_key_pem;
+    bool has_ca_pem;
+    bool has_password;
+    int32_t auth_mode;
+} ducknng_tls_config_row;
+
+typedef struct {
+    ducknng_tls_config_row *rows;
+    idx_t row_count;
+} ducknng_tls_configs_bind_data;
+
+typedef struct {
+    ducknng_tls_configs_bind_data *bind;
+    idx_t offset;
+} ducknng_tls_configs_init_data;
 
 typedef struct {
     struct ArrowSchema schema;
@@ -181,6 +207,98 @@ static const char *ducknng_rpc_type_name(uint8_t type) {
     default: return "unknown";
     }
 }
+static int ducknng_cn_is_safe(const char *cn) {
+    size_t i;
+    if (!cn || !cn[0]) return 0;
+    for (i = 0; cn[i]; i++) {
+        char c = cn[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '.' || c == ':' || c == '-' || c == '_')) {
+            return 0;
+        }
+    }
+    return 1;
+}
+static char *ducknng_read_text_file(const char *path) {
+    FILE *fp;
+    long len;
+    char *buf;
+    if (!path || !path[0]) return NULL;
+    fp = fopen(path, "rb");
+    if (!fp) return NULL;
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+    len = ftell(fp);
+    if (len < 0 || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+    buf = (char *)duckdb_malloc((size_t)len + 1);
+    if (!buf) {
+        fclose(fp);
+        return NULL;
+    }
+    if (len > 0 && fread(buf, 1, (size_t)len, fp) != (size_t)len) {
+        fclose(fp);
+        duckdb_free(buf);
+        return NULL;
+    }
+    buf[len] = '\0';
+    fclose(fp);
+    return buf;
+}
+static int ducknng_generate_self_signed_material(const char *cn, int32_t valid_days,
+    char **cert_pem, char **key_pem, char **ca_pem, char **errmsg) {
+    char templ[] = "/tmp/ducknng-cert-XXXXXX";
+    char cmd[2048];
+    char cert_path[512];
+    char key_path[512];
+    char *dir;
+    int status;
+    if (cert_pem) *cert_pem = NULL;
+    if (key_pem) *key_pem = NULL;
+    if (ca_pem) *ca_pem = NULL;
+    if (!ducknng_cn_is_safe(cn)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: common name must use only letters, digits, dot, colon, dash, or underscore");
+        return -1;
+    }
+    if (valid_days <= 0) valid_days = 365;
+    dir = mkdtemp(templ);
+    if (!dir) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to create temp directory for certificate generation");
+        return -1;
+    }
+    snprintf(cert_path, sizeof(cert_path), "%s/cert.pem", dir);
+    snprintf(key_path, sizeof(key_path), "%s/key.pem", dir);
+    snprintf(cmd, sizeof(cmd), "openssl req -x509 -newkey rsa:2048 -keyout '%s' -out '%s' -sha256 -days %d -nodes -subj '/CN=%s' >/dev/null 2>&1", key_path, cert_path, (int)valid_days, cn);
+    status = system(cmd);
+    if (status != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: openssl certificate generation failed");
+        unlink(cert_path);
+        unlink(key_path);
+        rmdir(dir);
+        return -1;
+    }
+    if (cert_pem) *cert_pem = ducknng_read_text_file(cert_path);
+    if (key_pem) *key_pem = ducknng_read_text_file(key_path);
+    if (ca_pem) *ca_pem = ducknng_read_text_file(cert_path);
+    unlink(cert_path);
+    unlink(key_path);
+    rmdir(dir);
+    if ((cert_pem && !*cert_pem) || (key_pem && !*key_pem) || (ca_pem && !*ca_pem)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to read generated certificate material");
+        if (cert_pem && *cert_pem) duckdb_free(*cert_pem);
+        if (key_pem && *key_pem) duckdb_free(*key_pem);
+        if (ca_pem && *ca_pem) duckdb_free(*ca_pem);
+        if (cert_pem) *cert_pem = NULL;
+        if (key_pem) *key_pem = NULL;
+        if (ca_pem) *ca_pem = NULL;
+        return -1;
+    }
+    return 0;
+}
 
 static void destroy_servers_bind_data(void *ptr) {
     ducknng_servers_bind_data *data = (ducknng_servers_bind_data *)ptr;
@@ -213,6 +331,22 @@ static void destroy_sockets_bind_data(void *ptr) {
 
 static void destroy_sockets_init_data(void *ptr) {
     ducknng_sockets_init_data *data = (ducknng_sockets_init_data *)ptr;
+    if (data) duckdb_free(data);
+}
+
+static void destroy_tls_configs_bind_data(void *ptr) {
+    ducknng_tls_configs_bind_data *data = (ducknng_tls_configs_bind_data *)ptr;
+    idx_t i;
+    if (!data) return;
+    for (i = 0; i < data->row_count; i++) {
+        if (data->rows[i].source) duckdb_free(data->rows[i].source);
+    }
+    if (data->rows) duckdb_free(data->rows);
+    duckdb_free(data);
+}
+
+static void destroy_tls_configs_init_data(void *ptr) {
+    ducknng_tls_configs_init_data *data = (ducknng_tls_configs_init_data *)ptr;
     if (data) duckdb_free(data);
 }
 
@@ -268,6 +402,44 @@ static void destroy_single_row_init_data(void *ptr) {
     if (data) duckdb_free(data);
 }
 
+static int ducknng_start_service_with_tls_opts(ducknng_sql_context *ctx, const char *name, const char *listen,
+    int contexts, uint64_t recv_max, uint64_t idle_ms, uint64_t tls_config_id,
+    const char *tls_config_source, const ducknng_tls_opts *tls_opts, char **errmsg) {
+    ducknng_service *svc;
+    if (!ctx || !ctx->rt || !name || !listen || !name[0] || !listen[0]) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service name and listen URL must be non-empty");
+        return -1;
+    }
+    if (contexts < 1) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: contexts must be >= 1");
+        return -1;
+    }
+    if (recv_max == 0 || idle_ms == 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: recv_max_bytes and session_idle_ms must be > 0");
+        return -1;
+    }
+    if (tls_opts && tls_opts->auth_mode < 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: tls_auth_mode must be >= 0");
+        return -1;
+    }
+    svc = ducknng_service_create(ctx->rt, name, listen, contexts, (size_t)recv_max, idle_ms,
+        tls_config_id, tls_config_source, tls_opts);
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to allocate service");
+        return -1;
+    }
+    if (ducknng_runtime_add_service(ctx->rt, svc, errmsg) != 0) {
+        ducknng_service_destroy(svc);
+        return -1;
+    }
+    if (ducknng_service_start(svc, errmsg) != 0) {
+        ducknng_runtime_remove_service(ctx->rt, svc->name);
+        ducknng_service_destroy(svc);
+        return -1;
+    }
+    return 0;
+}
+
 static void ducknng_server_start_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
@@ -282,70 +454,73 @@ static void ducknng_server_start_scalar(duckdb_function_info info, duckdb_data_c
         char *cert = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 5), row);
         char *ca = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 6), row);
         int auth_mode = arg_int32(duckdb_data_chunk_get_vector(input, 7), row, 0);
-        ducknng_service *svc;
+        ducknng_tls_opts tls_opts;
         char *errmsg = NULL;
-        if (!ctx || !ctx->rt || !name || !listen) {
+        ducknng_tls_opts_init(&tls_opts);
+        tls_opts.cert_key_file = cert ? ducknng_strdup(cert) : NULL;
+        tls_opts.ca_file = ca ? ducknng_strdup(ca) : NULL;
+        tls_opts.auth_mode = auth_mode;
+        tls_opts.enabled = (tls_opts.cert_key_file && tls_opts.cert_key_file[0]) ||
+            (tls_opts.ca_file && tls_opts.ca_file[0]) || auth_mode != 0;
+        if (!ctx || !ctx->rt || !name || !listen ||
+            ((cert && !tls_opts.cert_key_file) || (ca && !tls_opts.ca_file))) {
             if (name) duckdb_free(name);
             if (listen) duckdb_free(listen);
             if (cert) duckdb_free(cert);
             if (ca) duckdb_free(ca);
+            ducknng_tls_opts_reset(&tls_opts);
             duckdb_scalar_function_set_error(info, "ducknng: invalid start arguments");
             return;
         }
-        if (!name[0] || !listen[0]) {
+        if (ducknng_start_service_with_tls_opts(ctx, name, listen, contexts, recv_max, idle_ms, 0, "inline_file_args", &tls_opts, &errmsg) != 0) {
             duckdb_free(name);
             duckdb_free(listen);
             if (cert) duckdb_free(cert);
             if (ca) duckdb_free(ca);
-            duckdb_scalar_function_set_error(info, "ducknng: service name and listen URL must be non-empty");
-            return;
-        }
-        if (contexts < 1) {
-            duckdb_free(name);
-            duckdb_free(listen);
-            if (cert) duckdb_free(cert);
-            if (ca) duckdb_free(ca);
-            duckdb_scalar_function_set_error(info, "ducknng: contexts must be >= 1");
-            return;
-        }
-        if (recv_max == 0 || idle_ms == 0) {
-            duckdb_free(name);
-            duckdb_free(listen);
-            if (cert) duckdb_free(cert);
-            if (ca) duckdb_free(ca);
-            duckdb_scalar_function_set_error(info, "ducknng: recv_max_bytes and session_idle_ms must be > 0");
-            return;
-        }
-        if (auth_mode < 0) {
-            duckdb_free(name);
-            duckdb_free(listen);
-            if (cert) duckdb_free(cert);
-            if (ca) duckdb_free(ca);
-            duckdb_scalar_function_set_error(info, "ducknng: tls_auth_mode must be >= 0");
-            return;
-        }
-        svc = ducknng_service_create(ctx->rt, name, listen, contexts, (size_t)recv_max, idle_ms, cert, ca, auth_mode);
-        duckdb_free(name);
-        duckdb_free(listen);
-        if (cert) duckdb_free(cert);
-        if (ca) duckdb_free(ca);
-        if (!svc) {
-            duckdb_scalar_function_set_error(info, "ducknng: failed to allocate service");
-            return;
-        }
-        if (ducknng_runtime_add_service(ctx->rt, svc, &errmsg) != 0) {
-            ducknng_service_destroy(svc);
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to add service");
-            if (errmsg) duckdb_free(errmsg);
-            return;
-        }
-        if (ducknng_service_start(svc, &errmsg) != 0) {
-            ducknng_runtime_remove_service(ctx->rt, svc->name);
-            ducknng_service_destroy(svc);
+            ducknng_tls_opts_reset(&tls_opts);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to start service");
             if (errmsg) duckdb_free(errmsg);
             return;
         }
+        duckdb_free(name);
+        duckdb_free(listen);
+        if (cert) duckdb_free(cert);
+        if (ca) duckdb_free(ca);
+        ducknng_tls_opts_reset(&tls_opts);
+        out[row] = true;
+    }
+}
+
+static void ducknng_server_start_tls_config_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    bool *out = (bool *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        char *listen = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
+        int contexts = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 1);
+        uint64_t recv_max = arg_u64(duckdb_data_chunk_get_vector(input, 3), row, 134217728ULL);
+        uint64_t idle_ms = arg_u64(duckdb_data_chunk_get_vector(input, 4), row, 300000ULL);
+        uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 5), row, 0);
+        ducknng_tls_config *cfg = ctx && ctx->rt ? ducknng_runtime_find_tls_config(ctx->rt, tls_config_id) : NULL;
+        char *errmsg = NULL;
+        if (!cfg) {
+            if (name) duckdb_free(name);
+            if (listen) duckdb_free(listen);
+            duckdb_scalar_function_set_error(info, "ducknng: tls config not found");
+            return;
+        }
+        if (ducknng_start_service_with_tls_opts(ctx, name, listen, contexts, recv_max, idle_ms,
+                cfg->tls_config_id, cfg->source, &cfg->opts, &errmsg) != 0) {
+            if (name) duckdb_free(name);
+            if (listen) duckdb_free(listen);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to start service");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        if (name) duckdb_free(name);
+        if (listen) duckdb_free(listen);
         out[row] = true;
     }
 }
@@ -371,6 +546,179 @@ static void ducknng_server_stop_scalar(duckdb_function_info info, duckdb_data_ch
         }
         ducknng_service_stop(svc, NULL);
         ducknng_service_destroy(svc);
+        out[row] = true;
+    }
+}
+
+static void ducknng_tls_config_from_files_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        ducknng_tls_config *cfg;
+        char *cert_key_file = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        char *ca_file = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
+        char *password = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 2), row);
+        int auth_mode = arg_int32(duckdb_data_chunk_get_vector(input, 3), row, 0);
+        char *errmsg = NULL;
+        if (!ctx || !ctx->rt || auth_mode < 0 || ((!cert_key_file || !cert_key_file[0]) && (!ca_file || !ca_file[0]) && auth_mode == 0)) {
+            if (cert_key_file) duckdb_free(cert_key_file);
+            if (ca_file) duckdb_free(ca_file);
+            if (password) duckdb_free(password);
+            duckdb_scalar_function_set_error(info, "ducknng: invalid tls config file arguments");
+            return;
+        }
+        cfg = (ducknng_tls_config *)duckdb_malloc(sizeof(*cfg));
+        if (!cfg) {
+            if (cert_key_file) duckdb_free(cert_key_file);
+            if (ca_file) duckdb_free(ca_file);
+            if (password) duckdb_free(password);
+            duckdb_scalar_function_set_error(info, "ducknng: out of memory allocating tls config");
+            return;
+        }
+        memset(cfg, 0, sizeof(*cfg));
+        cfg->source = ducknng_strdup("files");
+        ducknng_tls_opts_init(&cfg->opts);
+        cfg->opts.enabled = 1;
+        cfg->opts.cert_key_file = cert_key_file;
+        cfg->opts.ca_file = ca_file;
+        cfg->opts.password = password;
+        cfg->opts.auth_mode = auth_mode;
+        if (!cfg->source || ducknng_runtime_add_tls_config(ctx->rt, cfg, &errmsg) != 0) {
+            if (cfg->source) duckdb_free(cfg->source);
+            ducknng_tls_opts_reset(&cfg->opts);
+            duckdb_free(cfg);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to register tls config");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        out[row] = cfg->tls_config_id;
+    }
+}
+
+static void ducknng_tls_config_from_pem_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        ducknng_tls_config *cfg;
+        char *cert_pem = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        char *key_pem = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
+        char *ca_pem = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 2), row);
+        char *password = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 3), row);
+        int auth_mode = arg_int32(duckdb_data_chunk_get_vector(input, 4), row, 0);
+        char *errmsg = NULL;
+        if (!ctx || !ctx->rt || auth_mode < 0 || ((!cert_pem || !cert_pem[0]) && (!key_pem || !key_pem[0]) && (!ca_pem || !ca_pem[0]) && auth_mode == 0)) {
+            if (cert_pem) duckdb_free(cert_pem);
+            if (key_pem) duckdb_free(key_pem);
+            if (ca_pem) duckdb_free(ca_pem);
+            if (password) duckdb_free(password);
+            duckdb_scalar_function_set_error(info, "ducknng: invalid tls pem arguments");
+            return;
+        }
+        cfg = (ducknng_tls_config *)duckdb_malloc(sizeof(*cfg));
+        if (!cfg) {
+            if (cert_pem) duckdb_free(cert_pem);
+            if (key_pem) duckdb_free(key_pem);
+            if (ca_pem) duckdb_free(ca_pem);
+            if (password) duckdb_free(password);
+            duckdb_scalar_function_set_error(info, "ducknng: out of memory allocating tls config");
+            return;
+        }
+        memset(cfg, 0, sizeof(*cfg));
+        cfg->source = ducknng_strdup("pem");
+        ducknng_tls_opts_init(&cfg->opts);
+        cfg->opts.enabled = 1;
+        cfg->opts.cert_pem = cert_pem;
+        cfg->opts.key_pem = key_pem;
+        cfg->opts.ca_pem = ca_pem;
+        cfg->opts.password = password;
+        cfg->opts.auth_mode = auth_mode;
+        if (!cfg->source || ducknng_runtime_add_tls_config(ctx->rt, cfg, &errmsg) != 0) {
+            if (cfg->source) duckdb_free(cfg->source);
+            ducknng_tls_opts_reset(&cfg->opts);
+            duckdb_free(cfg);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to register tls config");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        out[row] = cfg->tls_config_id;
+    }
+}
+
+static void ducknng_self_signed_tls_config_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        ducknng_tls_config *cfg;
+        char *cn = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        int32_t valid_days = arg_int32(duckdb_data_chunk_get_vector(input, 1), row, 365);
+        int auth_mode = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 0);
+        char *cert_pem = NULL, *key_pem = NULL, *ca_pem = NULL, *errmsg = NULL;
+        if (!ctx || !ctx->rt || !cn || auth_mode < 0) {
+            if (cn) duckdb_free(cn);
+            duckdb_scalar_function_set_error(info, "ducknng: invalid self-signed tls config arguments");
+            return;
+        }
+        if (ducknng_generate_self_signed_material(cn, valid_days, &cert_pem, &key_pem, &ca_pem, &errmsg) != 0) {
+            duckdb_free(cn);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to generate self-signed certificate");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        duckdb_free(cn);
+        cfg = (ducknng_tls_config *)duckdb_malloc(sizeof(*cfg));
+        if (!cfg) {
+            if (cert_pem) duckdb_free(cert_pem);
+            if (key_pem) duckdb_free(key_pem);
+            if (ca_pem) duckdb_free(ca_pem);
+            duckdb_scalar_function_set_error(info, "ducknng: out of memory allocating tls config");
+            return;
+        }
+        memset(cfg, 0, sizeof(*cfg));
+        cfg->source = ducknng_strdup("self_signed");
+        ducknng_tls_opts_init(&cfg->opts);
+        cfg->opts.enabled = 1;
+        cfg->opts.cert_pem = cert_pem;
+        cfg->opts.key_pem = key_pem;
+        cfg->opts.ca_pem = ca_pem;
+        cfg->opts.auth_mode = auth_mode;
+        if (!cfg->source || ducknng_runtime_add_tls_config(ctx->rt, cfg, &errmsg) != 0) {
+            if (cfg->source) duckdb_free(cfg->source);
+            ducknng_tls_opts_reset(&cfg->opts);
+            duckdb_free(cfg);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to register tls config");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        out[row] = cfg->tls_config_id;
+    }
+}
+
+static void ducknng_drop_tls_config_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    bool *out = (bool *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
+        ducknng_tls_config *cfg;
+        if (!ctx || !ctx->rt || tls_config_id == 0) {
+            duckdb_scalar_function_set_error(info, "ducknng: tls config id is required");
+            return;
+        }
+        cfg = ducknng_runtime_remove_tls_config(ctx->rt, tls_config_id);
+        if (!cfg) {
+            duckdb_scalar_function_set_error(info, "ducknng: tls config not found");
+            return;
+        }
+        if (cfg->source) duckdb_free(cfg->source);
+        ducknng_tls_opts_reset(&cfg->opts);
+        duckdb_free(cfg);
         out[row] = true;
     }
 }
@@ -1832,6 +2180,131 @@ static void ducknng_sockets_scan(duckdb_function_info info, duckdb_data_chunk ou
     duckdb_data_chunk_set_size(output, chunk_size);
 }
 
+static void ducknng_tls_configs_bind(duckdb_bind_info info) {
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    ducknng_tls_configs_bind_data *bind;
+    duckdb_logical_type type;
+    size_t i;
+    if (!ctx || !ctx->rt) {
+        duckdb_bind_set_error(info, "ducknng: missing runtime");
+        return;
+    }
+    bind = (ducknng_tls_configs_bind_data *)duckdb_malloc(sizeof(*bind));
+    if (!bind) {
+        duckdb_bind_set_error(info, "ducknng: out of memory");
+        return;
+    }
+    memset(bind, 0, sizeof(*bind));
+    ducknng_mutex_lock(&ctx->rt->mu);
+    bind->row_count = (idx_t)ctx->rt->tls_config_count;
+    if (bind->row_count > 0) {
+        bind->rows = (ducknng_tls_config_row *)duckdb_malloc(sizeof(*bind->rows) * (size_t)bind->row_count);
+        if (!bind->rows) {
+            ducknng_mutex_unlock(&ctx->rt->mu);
+            duckdb_free(bind);
+            duckdb_bind_set_error(info, "ducknng: out of memory");
+            return;
+        }
+        memset(bind->rows, 0, sizeof(*bind->rows) * (size_t)bind->row_count);
+        for (i = 0; i < (size_t)bind->row_count; i++) {
+            ducknng_tls_config *cfg = ctx->rt->tls_configs[i];
+            bind->rows[i].tls_config_id = cfg ? cfg->tls_config_id : 0;
+            bind->rows[i].source = cfg && cfg->source ? ducknng_strdup(cfg->source) : NULL;
+            bind->rows[i].enabled = cfg ? (bool)cfg->opts.enabled : false;
+            bind->rows[i].has_cert_key_file = cfg && cfg->opts.cert_key_file && cfg->opts.cert_key_file[0];
+            bind->rows[i].has_ca_file = cfg && cfg->opts.ca_file && cfg->opts.ca_file[0];
+            bind->rows[i].has_cert_pem = cfg && cfg->opts.cert_pem && cfg->opts.cert_pem[0];
+            bind->rows[i].has_key_pem = cfg && cfg->opts.key_pem && cfg->opts.key_pem[0];
+            bind->rows[i].has_ca_pem = cfg && cfg->opts.ca_pem && cfg->opts.ca_pem[0];
+            bind->rows[i].has_password = cfg && cfg->opts.password && cfg->opts.password[0];
+            bind->rows[i].auth_mode = cfg ? cfg->opts.auth_mode : 0;
+        }
+    }
+    ducknng_mutex_unlock(&ctx->rt->mu);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
+    duckdb_bind_add_result_column(info, "tls_config_id", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "source", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    duckdb_bind_add_result_column(info, "enabled", type);
+    duckdb_bind_add_result_column(info, "has_cert_key_file", type);
+    duckdb_bind_add_result_column(info, "has_ca_file", type);
+    duckdb_bind_add_result_column(info, "has_cert_pem", type);
+    duckdb_bind_add_result_column(info, "has_key_pem", type);
+    duckdb_bind_add_result_column(info, "has_ca_pem", type);
+    duckdb_bind_add_result_column(info, "has_password", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
+    duckdb_bind_add_result_column(info, "auth_mode", type);
+    duckdb_destroy_logical_type(&type);
+    duckdb_bind_set_bind_data(info, bind, destroy_tls_configs_bind_data);
+    duckdb_bind_set_cardinality(info, bind->row_count, true);
+}
+
+static void ducknng_tls_configs_init(duckdb_init_info info) {
+    ducknng_tls_configs_bind_data *bind = (ducknng_tls_configs_bind_data *)duckdb_init_get_bind_data(info);
+    ducknng_tls_configs_init_data *init = (ducknng_tls_configs_init_data *)duckdb_malloc(sizeof(*init));
+    if (!init) {
+        duckdb_init_set_error(info, "ducknng: out of memory");
+        return;
+    }
+    init->bind = bind;
+    init->offset = 0;
+    duckdb_init_set_max_threads(info, 1);
+    duckdb_init_set_init_data(info, init, destroy_tls_configs_init_data);
+}
+
+static void ducknng_tls_configs_scan(duckdb_function_info info, duckdb_data_chunk output) {
+    ducknng_tls_configs_init_data *init = (ducknng_tls_configs_init_data *)duckdb_function_get_init_data(info);
+    ducknng_tls_configs_bind_data *bind;
+    idx_t remaining;
+    idx_t chunk_size;
+    idx_t i;
+    uint64_t *ids;
+    bool *enabled;
+    bool *has_cert_key_file;
+    bool *has_ca_file;
+    bool *has_cert_pem;
+    bool *has_key_pem;
+    bool *has_ca_pem;
+    bool *has_password;
+    int32_t *auth_mode;
+    if (!init || !init->bind || init->offset >= init->bind->row_count) {
+        duckdb_data_chunk_set_size(output, 0);
+        return;
+    }
+    bind = init->bind;
+    remaining = bind->row_count - init->offset;
+    chunk_size = remaining > duckdb_vector_size() ? duckdb_vector_size() : remaining;
+    ids = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 0));
+    enabled = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 2));
+    has_cert_key_file = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 3));
+    has_ca_file = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 4));
+    has_cert_pem = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 5));
+    has_key_pem = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 6));
+    has_ca_pem = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 7));
+    has_password = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 8));
+    auth_mode = (int32_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 9));
+    for (i = 0; i < chunk_size; i++) {
+        ducknng_tls_config_row *row = &bind->rows[init->offset + i];
+        ids[i] = row->tls_config_id;
+        enabled[i] = row->enabled;
+        has_cert_key_file[i] = row->has_cert_key_file;
+        has_ca_file[i] = row->has_ca_file;
+        has_cert_pem[i] = row->has_cert_pem;
+        has_key_pem[i] = row->has_key_pem;
+        has_ca_pem[i] = row->has_ca_pem;
+        has_password[i] = row->has_password;
+        auth_mode[i] = row->auth_mode;
+        if (row->source) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), i, row->source);
+        else set_null(duckdb_data_chunk_get_vector(output, 1), i);
+    }
+    init->offset += chunk_size;
+    duckdb_data_chunk_set_size(output, chunk_size);
+}
+
 static int register_named_servers_table(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     if (!ctx || !ctx->rt) return 0;
@@ -1860,6 +2333,24 @@ static int register_named_sockets_table(duckdb_connection con, ducknng_sql_conte
     duckdb_table_function_set_bind(tf, ducknng_sockets_bind);
     duckdb_table_function_set_init(tf, ducknng_sockets_init);
     duckdb_table_function_set_function(tf, ducknng_sockets_scan);
+    if (duckdb_register_table_function(con, tf) == DuckDBError) {
+        duckdb_destroy_table_function(&tf);
+        return 0;
+    }
+    duckdb_destroy_table_function(&tf);
+    return 1;
+}
+
+static int register_named_tls_configs_table(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
+    duckdb_table_function tf;
+    if (!ctx || !ctx->rt) return 0;
+    tf = duckdb_create_table_function();
+    if (!tf) return 0;
+    duckdb_table_function_set_name(tf, name);
+    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    duckdb_table_function_set_bind(tf, ducknng_tls_configs_bind);
+    duckdb_table_function_set_init(tf, ducknng_tls_configs_init);
+    duckdb_table_function_set_function(tf, ducknng_tls_configs_scan);
     if (duckdb_register_table_function(con, tf) == DuckDBError) {
         duckdb_destroy_table_function(&tf);
         return 0;
@@ -2020,6 +2511,8 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     static ducknng_sql_context ctx;
     duckdb_type start_types[8] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT,
         DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
+    duckdb_type start_tls_config_types[6] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT,
+        DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
     duckdb_type stop_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type rpc_exec_raw_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR};
     duckdb_type rpc_manifest_raw_types[1] = {DUCKDB_TYPE_VARCHAR};
@@ -2028,9 +2521,18 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type close_types[1] = {DUCKDB_TYPE_UBIGINT};
     duckdb_type request_socket_types[3] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER};
     duckdb_type request_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER};
+    duckdb_type tls_files_types[4] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
+    duckdb_type tls_pem_types[5] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
+    duckdb_type tls_self_signed_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_INTEGER};
+    duckdb_type tls_id_types[1] = {DUCKDB_TYPE_UBIGINT};
     ctx.rt = rt;
     if (!register_scalar(connection, "ducknng_start_server", 8, ducknng_server_start_scalar, &ctx, start_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(connection, "ducknng_start_server", 6, ducknng_server_start_tls_config_scalar, &ctx, start_tls_config_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_stop_server", 1, ducknng_server_stop_scalar, &ctx, stop_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(connection, "ducknng_tls_config_from_files", 4, ducknng_tls_config_from_files_scalar, &ctx, tls_files_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_tls_config_from_pem", 5, ducknng_tls_config_from_pem_scalar, &ctx, tls_pem_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_self_signed_tls_config", 3, ducknng_self_signed_tls_config_scalar, &ctx, tls_self_signed_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_drop_tls_config", 1, ducknng_drop_tls_config_scalar, &ctx, tls_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_run_rpc_raw", 2, ducknng_run_rpc_raw_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_BLOB)) return 0;
     if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 1, ducknng_get_rpc_manifest_raw_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_BLOB)) return 0;
     if (!register_scalar(connection, "ducknng_open_socket", 1, ducknng_socket_scalar, &ctx, socket_types, DUCKDB_TYPE_UBIGINT)) return 0;
@@ -2040,6 +2542,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_request_raw", 3, ducknng_request_scalar, &ctx, request_types, DUCKDB_TYPE_BLOB)) return 0;
     if (!register_named_servers_table(connection, &ctx, "ducknng_list_servers")) return 0;
     if (!register_named_sockets_table(connection, &ctx, "ducknng_list_sockets")) return 0;
+    if (!register_named_tls_configs_table(connection, &ctx, "ducknng_list_tls_configs")) return 0;
     if (!register_remote_table_named(connection, &ctx, "ducknng_query_rpc")) return 0;
     if (!register_manifest_result_table_named(connection, &ctx, "ducknng_get_rpc_manifest")) return 0;
     if (!register_exec_result_table_named(connection, &ctx, "ducknng_run_rpc")) return 0;

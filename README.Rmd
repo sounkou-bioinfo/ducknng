@@ -32,6 +32,8 @@ At the moment, `ducknng` already exposes a low-level transport layer with socket
 
 The next documented protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should still be treated as development scaffolding rather than as a production-safe multi-client surface.
 
+The transport-security utility layer now also has a first runtime model for TLS configuration handles. Those handles can be assembled from file-backed certificate material, from in-memory PEM strings, or from self-signed development certificates generated on demand. The actual `tls+tcp://` transport wiring is still intentionally isolated behind `ducknng_nng_compat.c` and is not enabled yet, but the handle model is now in place so the public API does not need to be reinvented when that transport path is turned on.
+
 ## Functions
 
 ```{r function-catalog, echo=FALSE, results='asis'}

@@ -105,6 +105,87 @@
       ]
     },
     {
+      "name": "ducknng_list_tls_configs",
+      "kind": "table",
+      "category": "Transport Security",
+      "signature": "ducknng_list_tls_configs()",
+      "returns": "TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "List registered TLS config handles and the kinds of material they contain.",
+      "notes": [
+        "This is runtime introspection only and does not expose the sensitive PEM content itself."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_list_tls_configs();"
+      ]
+    },
+    {
+      "name": "ducknng_drop_tls_config",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_drop_tls_config(tls_config_id)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Remove a registered TLS config handle from the runtime.",
+      "notes": [],
+      "examples": [
+        "SELECT ducknng_drop_tls_config(1);"
+      ]
+    },
+    {
+      "name": "ducknng_self_signed_tls_config",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_self_signed_tls_config(common_name, valid_days, auth_mode)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Generate a self-signed development certificate and register it as a TLS config handle.",
+      "notes": [
+        "Intended for development and local testing utilities rather than production PKI.",
+        "Uses the openssl command-line tool available in the runtime environment."
+      ],
+      "examples": [
+        "SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 1);"
+      ]
+    },
+    {
+      "name": "ducknng_tls_config_from_pem",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_tls_config_from_pem(cert_pem, key_pem, ca_pem, password, auth_mode)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Register a TLS config handle from in-memory PEM material.",
+      "notes": [
+        "Stores PEM material in the runtime and returns a reusable config id.",
+        "Actual tls+tcp transport startup remains unavailable until TLS wiring is implemented in the NNG compatibility layer."
+      ],
+      "examples": [
+        "SELECT ducknng_tls_config_from_pem('-----BEGIN CERTIFICATE-----\n...','-----BEGIN PRIVATE KEY-----\n...', '-----BEGIN CERTIFICATE-----\n...', NULL, 1);"
+      ]
+    },
+    {
+      "name": "ducknng_tls_config_from_files",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_tls_config_from_files(cert_key_file, ca_file, password, auth_mode)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Register a TLS config handle from file-backed certificate material.",
+      "notes": [
+        "Stores TLS material references in the runtime and returns a reusable config id.",
+        "Actual tls+tcp transport startup remains unavailable until TLS wiring is implemented in the NNG compatibility layer."
+      ],
+      "examples": [
+        "SELECT ducknng_tls_config_from_files('/tmp/server.pem', '/tmp/ca.pem', NULL, 1);"
+      ]
+    },
+    {
       "name": "ducknng_request",
       "kind": "table",
       "category": "Primitive Transport",

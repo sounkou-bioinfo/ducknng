@@ -200,19 +200,23 @@ static void *ducknng_rep_worker_main(void *arg) {
 
 ducknng_service *ducknng_service_create(ducknng_runtime *rt, const char *name, const char *listen_url,
     int contexts, size_t recv_max_bytes, uint64_t session_idle_ms,
-    const char *tls_cert_key_file, const char *tls_ca_file, int tls_auth_mode) {
+    uint64_t tls_config_id, const char *tls_config_source, const ducknng_tls_opts *tls_opts) {
     ducknng_service *svc = (ducknng_service *)duckdb_malloc(sizeof(*svc));
     if (!svc) return NULL;
     memset(svc, 0, sizeof(*svc));
+    ducknng_tls_opts_init(&svc->tls_opts);
     svc->rt = rt;
     svc->name = ducknng_strdup(name);
     svc->listen_url = ducknng_strdup(listen_url);
     svc->ncontexts = contexts > 0 ? contexts : 1;
     svc->recv_max_bytes = recv_max_bytes ? recv_max_bytes : 134217728u;
     svc->session_idle_ms = session_idle_ms ? session_idle_ms : 300000u;
-    svc->tls_cert_key_file = ducknng_strdup(tls_cert_key_file);
-    svc->tls_ca_file = ducknng_strdup(tls_ca_file);
-    svc->tls_auth_mode = tls_auth_mode;
+    svc->tls_config_id = tls_config_id;
+    svc->tls_config_source = ducknng_strdup(tls_config_source);
+    if ((tls_config_source && !svc->tls_config_source) || ducknng_tls_opts_copy(&svc->tls_opts, tls_opts) != 0) {
+        ducknng_service_destroy(svc);
+        return NULL;
+    }
     ducknng_mutex_init(&svc->mu);
     return svc;
 }
@@ -222,8 +226,8 @@ void ducknng_service_destroy(ducknng_service *svc) {
     if (svc->name) duckdb_free(svc->name);
     if (svc->listen_url) duckdb_free(svc->listen_url);
     if (svc->resolved_listen_url) free(svc->resolved_listen_url);
-    if (svc->tls_cert_key_file) duckdb_free(svc->tls_cert_key_file);
-    if (svc->tls_ca_file) duckdb_free(svc->tls_ca_file);
+    if (svc->tls_config_source) duckdb_free(svc->tls_config_source);
+    ducknng_tls_opts_reset(&svc->tls_opts);
     if (svc->ctxs) duckdb_free(svc->ctxs);
     ducknng_mutex_destroy(&svc->mu);
     duckdb_free(svc);
@@ -235,19 +239,27 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
     ducknng_tls_opts tls_opts;
     if (!svc) return -1;
 
-    memset(&tls_opts, 0, sizeof(tls_opts));
-    tls_opts.enabled = (svc->tls_cert_key_file && svc->tls_cert_key_file[0]) ||
-        (svc->tls_ca_file && svc->tls_ca_file[0]) || svc->tls_auth_mode != 0;
-    tls_opts.cert_key_file = svc->tls_cert_key_file;
-    tls_opts.ca_file = svc->tls_ca_file;
-    tls_opts.auth_mode = svc->tls_auth_mode;
+    ducknng_tls_opts_init(&tls_opts);
+    if (ducknng_tls_opts_copy(&tls_opts, &svc->tls_opts) != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to copy TLS configuration");
+        return -1;
+    }
+    tls_opts.enabled = tls_opts.enabled ||
+        (tls_opts.cert_key_file && tls_opts.cert_key_file[0]) ||
+        (tls_opts.ca_file && tls_opts.ca_file[0]) ||
+        (tls_opts.cert_pem && tls_opts.cert_pem[0]) ||
+        (tls_opts.key_pem && tls_opts.key_pem[0]) ||
+        (tls_opts.ca_pem && tls_opts.ca_pem[0]) ||
+        tls_opts.auth_mode != 0;
     svc->tls_enabled = tls_opts.enabled ? 1 : 0;
 
     if (svc->running) {
+        ducknng_tls_opts_reset(&tls_opts);
         if (errmsg) *errmsg = ducknng_strdup("ducknng: service is already running");
         return -1;
     }
     if (ducknng_listener_validate_startup_url(svc->listen_url, &tls_opts, errmsg) != 0) {
+        ducknng_tls_opts_reset(&tls_opts);
         return -1;
     }
 
@@ -297,9 +309,11 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
     }
 
     svc->running = 1;
+    ducknng_tls_opts_reset(&tls_opts);
     return 0;
 
 fail:
+    ducknng_tls_opts_reset(&tls_opts);
     if (svc->ctxs) {
         for (i = 0; i < svc->ncontexts; i++) {
             ducknng_rep_ctx_teardown(&svc->ctxs[i]);

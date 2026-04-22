@@ -9,8 +9,16 @@ typedef struct ducknng_tls_opts {
     int enabled;
     char *cert_key_file;
     char *ca_file;
+    char *cert_pem;
+    char *key_pem;
+    char *ca_pem;
+    char *password;
     int auth_mode;
 } ducknng_tls_opts;
+
+void ducknng_tls_opts_init(ducknng_tls_opts *opts);
+int ducknng_tls_opts_copy(ducknng_tls_opts *dst, const ducknng_tls_opts *src);
+void ducknng_tls_opts_reset(ducknng_tls_opts *opts);
 
 int ducknng_rep_socket_open(nng_socket *out);
 int ducknng_req_socket_open(nng_socket *out);

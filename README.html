@@ -641,6 +641,14 @@ batches, <code>close</code> is the normal explicit cleanup path, and
 interruption. Until a real owner-identity model is implemented, that
 family should still be treated as development scaffolding rather than as
 a production-safe multi-client surface.</p>
+<p>The transport-security utility layer now also has a first runtime
+model for TLS configuration handles. Those handles can be assembled from
+file-backed certificate material, from in-memory PEM strings, or from
+self-signed development certificates generated on demand. The actual
+<code>tls+tcp://</code> transport wiring is still intentionally isolated
+behind <code>ducknng_nng_compat.c</code> and is not enabled yet, but the
+handle model is now in place so the public API does not need to be
+reinvented when that transport path is turned on.</p>
 <h2 id="functions">Functions</h2>
 <h1 id="function-catalog">Function Catalog</h1>
 <p>This file is generated from
@@ -733,6 +741,28 @@ a production-safe multi-client surface.</p>
 <td>``</td>
 <td><code>TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)</code></td>
 <td>List client socket handles in the runtime.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="transport-security">Transport Security</h2>
+<table>
+<thead>
+<tr class="header">
+<th>name</th>
+<th>kind</th>
+<th>arguments</th>
+<th>returns</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>ducknng_list_tls_configs</code></td>
+<td>table</td>
+<td>``</td>
+<td><code>TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)</code></td>
+<td>List registered TLS config handles and the kinds of material they
+contain.</td>
 </tr>
 </tbody>
 </table>

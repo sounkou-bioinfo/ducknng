@@ -73,6 +73,7 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
     rt->init_con = connection;
     rt->next_service_id = 1;
     rt->next_client_socket_id = 1;
+    rt->next_tls_config_id = 1;
     ducknng_mutex_init(&rt->mu);
     ducknng_method_registry_init(&rt->registry);
     if (!ducknng_register_builtin_methods(rt, &errmsg)) {
@@ -108,6 +109,16 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
             duckdb_free(sock);
         }
         duckdb_free(rt->client_sockets);
+    }
+    if (rt->tls_configs) {
+        for (i = 0; i < rt->tls_config_count; i++) {
+            ducknng_tls_config *cfg = rt->tls_configs[i];
+            if (!cfg) continue;
+            if (cfg->source) duckdb_free(cfg->source);
+            ducknng_tls_opts_reset(&cfg->opts);
+            duckdb_free(cfg);
+        }
+        duckdb_free(rt->tls_configs);
     }
     ducknng_method_registry_destroy(&rt->registry);
 }
@@ -234,4 +245,63 @@ ducknng_client_socket *ducknng_runtime_remove_client_socket(ducknng_runtime *rt,
     }
     ducknng_mutex_unlock(&rt->mu);
     return sock;
+}
+
+ducknng_tls_config *ducknng_runtime_find_tls_config(ducknng_runtime *rt, uint64_t tls_config_id) {
+    size_t i;
+    ducknng_tls_config *cfg = NULL;
+    if (!rt || tls_config_id == 0) return NULL;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->tls_config_count; i++) {
+        if (rt->tls_configs[i] && rt->tls_configs[i]->tls_config_id == tls_config_id) {
+            cfg = rt->tls_configs[i];
+            break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    return cfg;
+}
+
+int ducknng_runtime_add_tls_config(ducknng_runtime *rt, ducknng_tls_config *cfg, char **errmsg) {
+    ducknng_tls_config **new_configs;
+    size_t new_cap;
+    if (!rt || !cfg) return -1;
+    ducknng_mutex_lock(&rt->mu);
+    if (rt->tls_config_count == rt->tls_config_cap) {
+        new_cap = rt->tls_config_cap ? rt->tls_config_cap * 2 : 4;
+        new_configs = (ducknng_tls_config **)duckdb_malloc(sizeof(*new_configs) * new_cap);
+        if (!new_configs) {
+            ducknng_mutex_unlock(&rt->mu);
+            if (errmsg) *errmsg = ducknng_strdup("out of memory");
+            return -1;
+        }
+        memset(new_configs, 0, sizeof(*new_configs) * new_cap);
+        if (rt->tls_configs && rt->tls_config_count) {
+            memcpy(new_configs, rt->tls_configs, sizeof(*new_configs) * rt->tls_config_count);
+        }
+        if (rt->tls_configs) duckdb_free(rt->tls_configs);
+        rt->tls_configs = new_configs;
+        rt->tls_config_cap = new_cap;
+    }
+    cfg->tls_config_id = rt->next_tls_config_id++;
+    rt->tls_configs[rt->tls_config_count++] = cfg;
+    ducknng_mutex_unlock(&rt->mu);
+    return 0;
+}
+
+ducknng_tls_config *ducknng_runtime_remove_tls_config(ducknng_runtime *rt, uint64_t tls_config_id) {
+    size_t i;
+    ducknng_tls_config *cfg = NULL;
+    if (!rt || tls_config_id == 0) return NULL;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->tls_config_count; i++) {
+        if (rt->tls_configs[i] && rt->tls_configs[i]->tls_config_id == tls_config_id) {
+            cfg = rt->tls_configs[i];
+            for (; i + 1 < rt->tls_config_count; i++) rt->tls_configs[i] = rt->tls_configs[i + 1];
+            rt->tls_config_count--;
+            break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    return cfg;
 }

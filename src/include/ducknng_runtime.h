@@ -23,6 +23,12 @@ typedef struct ducknng_client_socket {
     size_t pending_reply_len;
 } ducknng_client_socket;
 
+typedef struct ducknng_tls_config {
+    uint64_t tls_config_id;
+    char *source;
+    ducknng_tls_opts opts;
+} ducknng_tls_config;
+
 typedef struct ducknng_runtime {
     duckdb_database *db;
     duckdb_connection init_con;
@@ -33,8 +39,12 @@ typedef struct ducknng_runtime {
     ducknng_client_socket **client_sockets;
     size_t client_socket_count;
     size_t client_socket_cap;
+    ducknng_tls_config **tls_configs;
+    size_t tls_config_count;
+    size_t tls_config_cap;
     uint64_t next_service_id;
     uint64_t next_client_socket_id;
+    uint64_t next_tls_config_id;
     int shutting_down;
     ducknng_method_registry registry;
 } ducknng_runtime;
@@ -48,3 +58,6 @@ ducknng_service *ducknng_runtime_remove_service(ducknng_runtime *rt, const char 
 ducknng_client_socket *ducknng_runtime_find_client_socket(ducknng_runtime *rt, uint64_t socket_id);
 int ducknng_runtime_add_client_socket(ducknng_runtime *rt, ducknng_client_socket *sock, char **errmsg);
 ducknng_client_socket *ducknng_runtime_remove_client_socket(ducknng_runtime *rt, uint64_t socket_id);
+ducknng_tls_config *ducknng_runtime_find_tls_config(ducknng_runtime *rt, uint64_t tls_config_id);
+int ducknng_runtime_add_tls_config(ducknng_runtime *rt, ducknng_tls_config *cfg, char **errmsg);
+ducknng_tls_config *ducknng_runtime_remove_tls_config(ducknng_runtime *rt, uint64_t tls_config_id);

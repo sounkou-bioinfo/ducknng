@@ -38,6 +38,27 @@ SELECT ducknng_start_server('bad_tls', 'ipc:///tmp/ducknng_bad_tls.ipc', 1, 1342
 ducknng: TLS listener options are not implemented; refusing to start listener
 
 query I
+SELECT ducknng_tls_config_from_pem('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n', '-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n', '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n', NULL, 1) > 0
+----
+1
+
+query ITIIIIIII
+SELECT tls_config_id > 0, source, enabled, has_cert_key_file, has_ca_file, has_cert_pem, has_key_pem, has_ca_pem, auth_mode
+FROM ducknng_list_tls_configs()
+----
+1	pem	true	false	false	true	true	true	1
+
+statement error
+SELECT ducknng_start_server('bad_tls_cfg', 'ipc:///tmp/ducknng_bad_tls_cfg.ipc', 1, 134217728, 300000, 1)
+----
+ducknng: TLS listener options are not implemented; refusing to start listener
+
+query I
+SELECT ducknng_drop_tls_config(1)
+----
+1
+
+query I
 SELECT CASE
   WHEN ducknng_start_server('sql0', 'ipc:///tmp/ducknng_phase1_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
   THEN 1 ELSE 0 END
