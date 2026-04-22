@@ -52,12 +52,12 @@ server_job <- parallel::mcparallel({
   con <- DBI::dbConnect(drv, dbdir = ":memory:")
   DBI::dbExecute(con, sprintf("LOAD '%s'", ext_path))
   DBI::dbGetQuery(con, sprintf(
-    "SELECT ducknng_server_start('smoke', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
+    "SELECT ducknng_start_server('smoke', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
     ipc_url
   ))
   Sys.sleep(4)
   rows <- tryCatch(DBI::dbGetQuery(con, "SELECT * FROM smoke_table ORDER BY x"), error = function(e) data.frame())
-  DBI::dbGetQuery(con, "SELECT ducknng_server_stop('smoke')")
+  DBI::dbGetQuery(con, "SELECT ducknng_stop_server('smoke')")
   DBI::dbDisconnect(con, shutdown = TRUE)
   rows
 })

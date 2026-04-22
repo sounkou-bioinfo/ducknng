@@ -124,7 +124,7 @@ SELECT * FROM ducknng_list_sockets();
 SELECT * FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
 SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);
 
--- Raw compatibility helpers remain available when only the payload bytes are wanted.
+-- Raw scalar forms remain available when only the payload bytes are wanted.
 SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
 SELECT position('"name":"exec"' IN ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc')) > 0;
 SELECT ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');

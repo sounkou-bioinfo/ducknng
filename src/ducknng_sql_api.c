@@ -57,12 +57,12 @@ typedef struct {
     struct ArrowSchema schema;
     struct ArrowArray array;
     idx_t row_count;
-} ducknng_remote_bind_data;
+} ducknng_query_rpc_bind_data;
 
 typedef struct {
-    ducknng_remote_bind_data *bind;
+    ducknng_query_rpc_bind_data *bind;
     idx_t offset;
-} ducknng_remote_init_data;
+} ducknng_query_rpc_init_data;
 
 typedef struct {
     bool ok;
@@ -83,7 +83,7 @@ typedef struct {
     char *error;
     uint8_t *payload;
     idx_t payload_len;
-} ducknng_request_result_bind_data;
+} ducknng_request_bind_data;
 
 typedef struct {
     idx_t emitted;
@@ -176,16 +176,16 @@ static void destroy_sockets_init_data(void *ptr) {
     if (data) duckdb_free(data);
 }
 
-static void destroy_remote_bind_data(void *ptr) {
-    ducknng_remote_bind_data *data = (ducknng_remote_bind_data *)ptr;
+static void destroy_query_rpc_bind_data(void *ptr) {
+    ducknng_query_rpc_bind_data *data = (ducknng_query_rpc_bind_data *)ptr;
     if (!data) return;
     if (data->array.release) ArrowArrayRelease(&data->array);
     if (data->schema.release) ArrowSchemaRelease(&data->schema);
     duckdb_free(data);
 }
 
-static void destroy_remote_init_data(void *ptr) {
-    ducknng_remote_init_data *data = (ducknng_remote_init_data *)ptr;
+static void destroy_query_rpc_init_data(void *ptr) {
+    ducknng_query_rpc_init_data *data = (ducknng_query_rpc_init_data *)ptr;
     if (data) duckdb_free(data);
 }
 
@@ -204,8 +204,8 @@ static void destroy_exec_result_bind_data(void *ptr) {
     duckdb_free(data);
 }
 
-static void destroy_request_result_bind_data(void *ptr) {
-    ducknng_request_result_bind_data *data = (ducknng_request_result_bind_data *)ptr;
+static void destroy_request_bind_data(void *ptr) {
+    ducknng_request_bind_data *data = (ducknng_request_bind_data *)ptr;
     if (!data) return;
     if (data->error) duckdb_free(data->error);
     if (data->payload) duckdb_free(data->payload);
@@ -409,7 +409,7 @@ static nng_msg *ducknng_client_roundtrip_raw(const char *url, const uint8_t *pay
     return ducknng_client_roundtrip(url, req, timeout_ms, errmsg);
 }
 
-static void ducknng_remote_manifest_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+static void ducknng_get_rpc_manifest_raw_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     for (row = 0; row < count; row++) {
@@ -450,7 +450,7 @@ static void ducknng_remote_manifest_scalar(duckdb_function_info info, duckdb_dat
     }
 }
 
-static void ducknng_remote_exec_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+static void ducknng_run_rpc_raw_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
@@ -861,7 +861,7 @@ static int ducknng_arrow_schema_to_logical_type(const struct ArrowSchema *schema
     }
 }
 
-static int ducknng_remote_assign_column(duckdb_vector vec, struct ArrowArrayView *col_view,
+static int ducknng_query_rpc_assign_column(duckdb_vector vec, struct ArrowArrayView *col_view,
     const struct ArrowSchema *col_schema, idx_t src_offset, idx_t count, char **errmsg) {
     struct ArrowSchemaView schema_view;
     struct ArrowError error;
@@ -989,8 +989,8 @@ static int ducknng_remote_assign_column(duckdb_vector vec, struct ArrowArrayView
     }
 }
 
-static void ducknng_remote_bind(duckdb_bind_info info) {
-    ducknng_remote_bind_data *bind;
+static void ducknng_query_rpc_bind(duckdb_bind_info info) {
+    ducknng_query_rpc_bind_data *bind;
     duckdb_value url_val;
     duckdb_value sql_val;
     char *url;
@@ -1041,7 +1041,7 @@ static void ducknng_remote_bind(duckdb_bind_info info) {
         duckdb_bind_set_error(info, "ducknng: remote query did not return row payloads");
         return;
     }
-    bind = (ducknng_remote_bind_data *)duckdb_malloc(sizeof(*bind));
+    bind = (ducknng_query_rpc_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         nng_msg_free(resp_msg);
         duckdb_bind_set_error(info, "ducknng: out of memory");
@@ -1058,7 +1058,7 @@ static void ducknng_remote_bind(duckdb_bind_info info) {
     nng_msg_free(resp_msg);
     bind->row_count = (idx_t)bind->array.length;
     if (bind->schema.n_children < 0 || bind->schema.n_children != bind->array.n_children) {
-        destroy_remote_bind_data(bind);
+        destroy_query_rpc_bind_data(bind);
         duckdb_bind_set_error(info, "ducknng: invalid remote Arrow row schema");
         return;
     }
@@ -1066,7 +1066,7 @@ static void ducknng_remote_bind(duckdb_bind_info info) {
         duckdb_logical_type type;
         const char *name = bind->schema.children[col] && bind->schema.children[col]->name ? bind->schema.children[col]->name : "";
         if (ducknng_arrow_schema_to_logical_type(bind->schema.children[col], &type, &errmsg) != 0) {
-            destroy_remote_bind_data(bind);
+            destroy_query_rpc_bind_data(bind);
             duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: unsupported remote Arrow type");
             if (errmsg) duckdb_free(errmsg);
             return;
@@ -1074,13 +1074,13 @@ static void ducknng_remote_bind(duckdb_bind_info info) {
         duckdb_bind_add_result_column(info, name, type);
         duckdb_destroy_logical_type(&type);
     }
-    duckdb_bind_set_bind_data(info, bind, destroy_remote_bind_data);
+    duckdb_bind_set_bind_data(info, bind, destroy_query_rpc_bind_data);
     duckdb_bind_set_cardinality(info, bind->row_count, true);
 }
 
-static void ducknng_remote_init(duckdb_init_info info) {
-    ducknng_remote_bind_data *bind = (ducknng_remote_bind_data *)duckdb_init_get_bind_data(info);
-    ducknng_remote_init_data *init = (ducknng_remote_init_data *)duckdb_malloc(sizeof(*init));
+static void ducknng_query_rpc_init(duckdb_init_info info) {
+    ducknng_query_rpc_bind_data *bind = (ducknng_query_rpc_bind_data *)duckdb_init_get_bind_data(info);
+    ducknng_query_rpc_init_data *init = (ducknng_query_rpc_init_data *)duckdb_malloc(sizeof(*init));
     if (!init) {
         duckdb_init_set_error(info, "ducknng: out of memory");
         return;
@@ -1088,12 +1088,12 @@ static void ducknng_remote_init(duckdb_init_info info) {
     init->bind = bind;
     init->offset = 0;
     duckdb_init_set_max_threads(info, 1);
-    duckdb_init_set_init_data(info, init, destroy_remote_init_data);
+    duckdb_init_set_init_data(info, init, destroy_query_rpc_init_data);
 }
 
-static void ducknng_remote_scan(duckdb_function_info info, duckdb_data_chunk output) {
-    ducknng_remote_init_data *init = (ducknng_remote_init_data *)duckdb_function_get_init_data(info);
-    ducknng_remote_bind_data *bind;
+static void ducknng_query_rpc_scan(duckdb_function_info info, duckdb_data_chunk output) {
+    ducknng_query_rpc_init_data *init = (ducknng_query_rpc_init_data *)duckdb_function_get_init_data(info);
+    ducknng_query_rpc_bind_data *bind;
     struct ArrowArrayView view;
     struct ArrowError error;
     idx_t remaining;
@@ -1116,7 +1116,7 @@ static void ducknng_remote_scan(duckdb_function_info info, duckdb_data_chunk out
     chunk_size = remaining > duckdb_vector_size() ? duckdb_vector_size() : remaining;
     for (col = 0; col < (idx_t)bind->schema.n_children; col++) {
         duckdb_vector vec = duckdb_data_chunk_get_vector(output, col);
-        if (ducknng_remote_assign_column(vec, view.children[col], bind->schema.children[col], init->offset, chunk_size, NULL) != 0) {
+        if (ducknng_query_rpc_assign_column(vec, view.children[col], bind->schema.children[col], init->offset, chunk_size, NULL) != 0) {
             duckdb_function_set_error(info, "ducknng: failed to decode remote Arrow row payload");
             ArrowArrayViewReset(&view);
             return;
@@ -1138,7 +1138,7 @@ static void ducknng_single_row_init(duckdb_init_info info) {
     duckdb_init_set_init_data(info, init, destroy_single_row_init_data);
 }
 
-static void ducknng_remote_manifest_result_bind(duckdb_bind_info info) {
+static void ducknng_get_rpc_manifest_bind(duckdb_bind_info info) {
     ducknng_manifest_result_bind_data *bind;
     duckdb_logical_type type;
     duckdb_value url_val;
@@ -1198,7 +1198,7 @@ static void ducknng_remote_manifest_result_bind(duckdb_bind_info info) {
     duckdb_bind_set_cardinality(info, 1, true);
 }
 
-static void ducknng_remote_manifest_result_scan(duckdb_function_info info, duckdb_data_chunk output) {
+static void ducknng_get_rpc_manifest_scan(duckdb_function_info info, duckdb_data_chunk output) {
     ducknng_single_row_init_data *init = (ducknng_single_row_init_data *)duckdb_function_get_init_data(info);
     ducknng_manifest_result_bind_data *bind = (ducknng_manifest_result_bind_data *)duckdb_function_get_bind_data(info);
     bool *ok_data;
@@ -1216,7 +1216,7 @@ static void ducknng_remote_manifest_result_scan(duckdb_function_info info, duckd
     init->emitted = 1;
 }
 
-static void ducknng_remote_exec_result_bind(duckdb_bind_info info) {
+static void ducknng_run_rpc_bind(duckdb_bind_info info) {
     ducknng_exec_result_bind_data *bind;
     duckdb_logical_type type;
     duckdb_value url_val;
@@ -1285,7 +1285,7 @@ static void ducknng_remote_exec_result_bind(duckdb_bind_info info) {
     duckdb_bind_set_cardinality(info, 1, true);
 }
 
-static void ducknng_remote_exec_result_scan(duckdb_function_info info, duckdb_data_chunk output) {
+static void ducknng_run_rpc_scan(duckdb_function_info info, duckdb_data_chunk output) {
     ducknng_single_row_init_data *init = (ducknng_single_row_init_data *)duckdb_function_get_init_data(info);
     ducknng_exec_result_bind_data *bind = (ducknng_exec_result_bind_data *)duckdb_function_get_bind_data(info);
     bool *ok_data;
@@ -1310,7 +1310,7 @@ static void ducknng_remote_exec_result_scan(duckdb_function_info info, duckdb_da
     init->emitted = 1;
 }
 
-static void ducknng_request_result_bind_common(ducknng_request_result_bind_data *bind, const char *url,
+static void ducknng_request_bind_common(ducknng_request_bind_data *bind, const char *url,
     const uint8_t *payload, size_t payload_len, int32_t timeout_ms) {
     char *errmsg = NULL;
     nng_msg *resp_msg = NULL;
@@ -1338,8 +1338,8 @@ static void ducknng_request_result_bind_common(ducknng_request_result_bind_data 
     nng_msg_free(resp_msg);
 }
 
-static void ducknng_request_result_bind(duckdb_bind_info info) {
-    ducknng_request_result_bind_data *bind;
+static void ducknng_request_bind(duckdb_bind_info info) {
+    ducknng_request_bind_data *bind;
     duckdb_logical_type type;
     duckdb_value url_val;
     duckdb_value payload_val;
@@ -1347,7 +1347,7 @@ static void ducknng_request_result_bind(duckdb_bind_info info) {
     duckdb_blob blob;
     char *url;
     int32_t timeout_ms;
-    bind = (ducknng_request_result_bind_data *)duckdb_malloc(sizeof(*bind));
+    bind = (ducknng_request_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
@@ -1362,7 +1362,7 @@ static void ducknng_request_result_bind(duckdb_bind_info info) {
     duckdb_destroy_value(&url_val);
     duckdb_destroy_value(&payload_val);
     duckdb_destroy_value(&timeout_val);
-    ducknng_request_result_bind_common(bind, url, (const uint8_t *)blob.data, (size_t)blob.size, timeout_ms);
+    ducknng_request_bind_common(bind, url, (const uint8_t *)blob.data, (size_t)blob.size, timeout_ms);
     if (url) duckdb_free(url);
     if (blob.data) duckdb_free(blob.data);
     type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
@@ -1374,13 +1374,13 @@ static void ducknng_request_result_bind(duckdb_bind_info info) {
     type = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
     duckdb_bind_add_result_column(info, "payload", type);
     duckdb_destroy_logical_type(&type);
-    duckdb_bind_set_bind_data(info, bind, destroy_request_result_bind_data);
+    duckdb_bind_set_bind_data(info, bind, destroy_request_bind_data);
     duckdb_bind_set_cardinality(info, 1, true);
 }
 
-static void ducknng_request_socket_result_bind(duckdb_bind_info info) {
+static void ducknng_request_socket_bind(duckdb_bind_info info) {
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
-    ducknng_request_result_bind_data *bind;
+    ducknng_request_bind_data *bind;
     duckdb_logical_type type;
     duckdb_value socket_val;
     duckdb_value payload_val;
@@ -1389,7 +1389,7 @@ static void ducknng_request_socket_result_bind(duckdb_bind_info info) {
     uint64_t socket_id;
     int32_t timeout_ms;
     ducknng_client_socket *sock;
-    bind = (ducknng_request_result_bind_data *)duckdb_malloc(sizeof(*bind));
+    bind = (ducknng_request_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
@@ -1409,7 +1409,7 @@ static void ducknng_request_socket_result_bind(duckdb_bind_info info) {
         bind->ok = false;
         bind->error = ducknng_strdup("ducknng: connected client socket not found");
     } else {
-        ducknng_request_result_bind_common(bind, sock->url, (const uint8_t *)blob.data, (size_t)blob.size, timeout_ms);
+        ducknng_request_bind_common(bind, sock->url, (const uint8_t *)blob.data, (size_t)blob.size, timeout_ms);
     }
     if (blob.data) duckdb_free(blob.data);
     type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
@@ -1421,13 +1421,13 @@ static void ducknng_request_socket_result_bind(duckdb_bind_info info) {
     type = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
     duckdb_bind_add_result_column(info, "payload", type);
     duckdb_destroy_logical_type(&type);
-    duckdb_bind_set_bind_data(info, bind, destroy_request_result_bind_data);
+    duckdb_bind_set_bind_data(info, bind, destroy_request_bind_data);
     duckdb_bind_set_cardinality(info, 1, true);
 }
 
-static void ducknng_request_result_scan(duckdb_function_info info, duckdb_data_chunk output) {
+static void ducknng_request_scan(duckdb_function_info info, duckdb_data_chunk output) {
     ducknng_single_row_init_data *init = (ducknng_single_row_init_data *)duckdb_function_get_init_data(info);
-    ducknng_request_result_bind_data *bind = (ducknng_request_result_bind_data *)duckdb_function_get_bind_data(info);
+    ducknng_request_bind_data *bind = (ducknng_request_bind_data *)duckdb_function_get_bind_data(info);
     bool *ok_data;
     if (!init || !bind || init->emitted) {
         duckdb_data_chunk_set_size(output, 0);
@@ -1762,9 +1762,9 @@ static int register_remote_table_named(duckdb_connection con, ducknng_sql_contex
     duckdb_table_function_add_parameter(tf, type);
     duckdb_destroy_logical_type(&type);
     duckdb_table_function_set_extra_info(tf, ctx, NULL);
-    duckdb_table_function_set_bind(tf, ducknng_remote_bind);
-    duckdb_table_function_set_init(tf, ducknng_remote_init);
-    duckdb_table_function_set_function(tf, ducknng_remote_scan);
+    duckdb_table_function_set_bind(tf, ducknng_query_rpc_bind);
+    duckdb_table_function_set_init(tf, ducknng_query_rpc_init);
+    duckdb_table_function_set_function(tf, ducknng_query_rpc_scan);
     if (duckdb_register_table_function(con, tf) == DuckDBError) {
         duckdb_destroy_table_function(&tf);
         return 0;
@@ -1784,9 +1784,9 @@ static int register_manifest_result_table_named(duckdb_connection con, ducknng_s
     duckdb_table_function_add_parameter(tf, type);
     duckdb_destroy_logical_type(&type);
     duckdb_table_function_set_extra_info(tf, ctx, NULL);
-    duckdb_table_function_set_bind(tf, ducknng_remote_manifest_result_bind);
+    duckdb_table_function_set_bind(tf, ducknng_get_rpc_manifest_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
-    duckdb_table_function_set_function(tf, ducknng_remote_manifest_result_scan);
+    duckdb_table_function_set_function(tf, ducknng_get_rpc_manifest_scan);
     if (duckdb_register_table_function(con, tf) == DuckDBError) {
         duckdb_destroy_table_function(&tf);
         return 0;
@@ -1807,9 +1807,9 @@ static int register_exec_result_table_named(duckdb_connection con, ducknng_sql_c
     duckdb_table_function_add_parameter(tf, type);
     duckdb_destroy_logical_type(&type);
     duckdb_table_function_set_extra_info(tf, ctx, NULL);
-    duckdb_table_function_set_bind(tf, ducknng_remote_exec_result_bind);
+    duckdb_table_function_set_bind(tf, ducknng_run_rpc_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
-    duckdb_table_function_set_function(tf, ducknng_remote_exec_result_scan);
+    duckdb_table_function_set_function(tf, ducknng_run_rpc_scan);
     if (duckdb_register_table_function(con, tf) == DuckDBError) {
         duckdb_destroy_table_function(&tf);
         return 0;
@@ -1837,9 +1837,9 @@ static int register_request_result_table_named(duckdb_connection con, ducknng_sq
     duckdb_destroy_logical_type(&type_blob);
     duckdb_destroy_logical_type(&type_int);
     duckdb_table_function_set_extra_info(tf, ctx, NULL);
-    duckdb_table_function_set_bind(tf, ducknng_request_result_bind);
+    duckdb_table_function_set_bind(tf, ducknng_request_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
-    duckdb_table_function_set_function(tf, ducknng_request_result_scan);
+    duckdb_table_function_set_function(tf, ducknng_request_scan);
     if (duckdb_register_table_function(con, tf) == DuckDBError) {
         duckdb_destroy_table_function(&tf);
         return 0;
@@ -1867,9 +1867,9 @@ static int register_request_socket_result_table_named(duckdb_connection con, duc
     duckdb_destroy_logical_type(&type_blob);
     duckdb_destroy_logical_type(&type_int);
     duckdb_table_function_set_extra_info(tf, ctx, NULL);
-    duckdb_table_function_set_bind(tf, ducknng_request_socket_result_bind);
+    duckdb_table_function_set_bind(tf, ducknng_request_socket_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
-    duckdb_table_function_set_function(tf, ducknng_request_result_scan);
+    duckdb_table_function_set_function(tf, ducknng_request_scan);
     if (duckdb_register_table_function(con, tf) == DuckDBError) {
         duckdb_destroy_table_function(&tf);
         return 0;
@@ -1893,8 +1893,8 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     ctx.rt = rt;
     if (!register_scalar(connection, "ducknng_start_server", 8, ducknng_server_start_scalar, &ctx, start_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_stop_server", 1, ducknng_server_stop_scalar, &ctx, stop_types, DUCKDB_TYPE_BOOLEAN)) return 0;
-    if (!register_scalar(connection, "ducknng_run_rpc_raw", 2, ducknng_remote_exec_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_UBIGINT)) return 0;
-    if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 1, ducknng_remote_manifest_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_VARCHAR)) return 0;
+    if (!register_scalar(connection, "ducknng_run_rpc_raw", 2, ducknng_run_rpc_raw_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 1, ducknng_get_rpc_manifest_raw_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_VARCHAR)) return 0;
     if (!register_scalar(connection, "ducknng_open_socket", 1, ducknng_socket_scalar, &ctx, socket_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_dial_socket", 3, ducknng_dial_scalar, &ctx, dial_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_close_socket", 1, ducknng_close_scalar, &ctx, close_types, DUCKDB_TYPE_BOOLEAN)) return 0;
