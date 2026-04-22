@@ -23,11 +23,11 @@ SQL-visible server lifecycle control and runtime introspection through
 `ducknng_list_servers()`. That transport surface is operation-oriented
 rather than transport-specific: transport is autodetected from the URL
 scheme in the same general style as `nanonext`, so the same API can work
-with `inproc://`, `ipc://`, `tcp://`, and later `tls+tcp://` without
-spawning a separate helper family for each scheme. On the server side it
-runs one REP socket with one or more REP contexts, and on top of that
-transport it already supports a working RPC request/reply path with
-manifest discovery, metadata-oriented execution, and unary row-returning
+with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning
+a separate helper family for each scheme. On the server side it runs one
+REP socket with one or more REP contexts, and on top of that transport
+it already supports a working RPC request/reply path with manifest
+discovery, metadata-oriented execution, and unary row-returning
 execution over the current raw wire and Arrow IPC model.
 
 The next documented protocol slice is the session query family:
@@ -40,14 +40,17 @@ a real owner-identity model is implemented, that family should still be
 treated as development scaffolding rather than as a production-safe
 multi-client surface.
 
-The transport-security utility layer now also has a first runtime model
-for TLS configuration handles. Those handles can be assembled from
-file-backed certificate material, from in-memory PEM strings, or from
-self-signed development certificates generated on demand. The actual
-`tls+tcp://` transport wiring is still intentionally isolated behind
-`ducknng_nng_compat.c` and is not enabled yet, but the handle model is
-now in place so the public API does not need to be reinvented when that
-transport path is turned on.
+The transport-security utility layer now has a runtime model for TLS
+configuration handles. Those handles can be assembled from file-backed
+certificate material, from in-memory PEM strings, or from self-signed
+development certificates generated on demand. The actual `tls+tcp://`
+transport wiring remains isolated behind `ducknng_nng_compat.c`, but it
+is now enabled for real loopback listener and one-shot client-request
+paths so the public API no longer needs a separate transport-specific
+helper family. This follows the same broad direction as `nanonext`,
+which exposes TLS helper facilities backed by mbedTLS rather than
+forcing every client to hand-roll certificate setup outside the
+transport layer.
 
 ## Functions
 
@@ -64,24 +67,33 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Introspection
 
-| name                   | kind  | arguments                                                                                                           | returns                           | description |
-|------------------------|-------|---------------------------------------------------------------------------------------------------------------------|-----------------------------------|-------------|
-| `ducknng_list_servers` | table | \``|`TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)\` | List registered ducknng services. |             |
+| name                   | kind  | arguments | returns                                                                                                        | description                       |
+|------------------------|-------|-----------|----------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)` | List registered ducknng services. |
 
 ## Primitive Transport
 
-| name                   | kind   | arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | returns                                                                        | description                                           |
-|------------------------|--------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|-------------------------------------------------------|
-| `ducknng_open_socket`  | scalar | `protocol`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `UBIGINT`                                                                      | Open a client socket handle for a supported protocol. |
-| `ducknng_dial_socket`  | scalar | `socket_id, url, timeout_ms`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `BOOLEAN`                                                                      | Dial a URL using an opened socket handle.             |
-| `ducknng_close_socket` | scalar | `socket_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `BOOLEAN`                                                                      | Close a client socket handle.                         |
-| `ducknng_list_sockets` | table  | \``|`TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)`| List client socket handles in the runtime. | |`ducknng_request`| table |`url, payload, timeout_ms`|`TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`| Perform a one-shot raw request and return a structured result row. | |`ducknng_request_socket`| table |`socket_id, payload, timeout_ms`|`TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`| Perform a raw request through a previously dialed socket handle and return a structured result row. | |`ducknng_request_raw`| scalar |`url, payload, timeout_ms`|`BLOB`| Perform a one-shot raw request and return the raw reply frame bytes. | |`ducknng_request_socket_raw`| scalar |`socket_id, payload, timeout_ms`|`BLOB`| Perform a raw request through a dialed socket handle and return the raw reply frame bytes. | |`ducknng_decode_frame`| table |`frame`|`TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)\` | Decode a raw ducknng frame into envelope fields and extracted payload columns. |                                                       |
+| name                         | kind   | arguments                        | returns                                                                                                                                                  | description                                                                                         |
+|------------------------------|--------|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `ducknng_open_socket`        | scalar | `protocol`                       | `UBIGINT`                                                                                                                                                | Open a client socket handle for a supported protocol.                                               |
+| `ducknng_dial_socket`        | scalar | `socket_id, url, timeout_ms`     | `BOOLEAN`                                                                                                                                                | Dial a URL using an opened socket handle.                                                           |
+| `ducknng_close_socket`       | scalar | `socket_id`                      | `BOOLEAN`                                                                                                                                                | Close a client socket handle.                                                                       |
+| `ducknng_list_sockets`       | table  |                                  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)`             | List client socket handles in the runtime.                                                          |
+| `ducknng_request`            | table  | `url, payload, timeout_ms`       | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a one-shot raw request and return a structured result row.                                  |
+| `ducknng_request_socket`     | table  | `socket_id, payload, timeout_ms` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a raw request through a previously dialed socket handle and return a structured result row. |
+| `ducknng_request_raw`        | scalar | `url, payload, timeout_ms`       | `BLOB`                                                                                                                                                   | Perform a one-shot raw request and return the raw reply frame bytes.                                |
+| `ducknng_request_socket_raw` | scalar | `socket_id, payload, timeout_ms` | `BLOB`                                                                                                                                                   | Perform a raw request through a dialed socket handle and return the raw reply frame bytes.          |
+| `ducknng_decode_frame`       | table  | `frame`                          | `TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)` | Decode a raw ducknng frame into envelope fields and extracted payload columns.                      |
 
 ## Transport Security
 
-| name                       | kind  | arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | returns                                                             | description |
-|----------------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|-------------|
-| `ducknng_list_tls_configs` | table | \``|`TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)`| List registered TLS config handles and the kinds of material they contain. | |`ducknng_drop_tls_config`| scalar |`tls_config_id`|`BOOLEAN`| Remove a registered TLS config handle from the runtime. | |`ducknng_self_signed_tls_config`| scalar |`common_name, valid_days, auth_mode`|`UBIGINT`| Generate a self-signed development certificate and register it as a TLS config handle. | |`ducknng_tls_config_from_pem`| scalar |`cert_pem, key_pem, ca_pem, password, auth_mode`|`UBIGINT`| Register a TLS config handle from in-memory PEM material. | |`ducknng_tls_config_from_files`| scalar |`cert_key_file, ca_file, password, auth_mode`|`UBIGINT\` | Register a TLS config handle from file-backed certificate material. |             |
+| name                             | kind   | arguments                                        | returns                                                                                                                                                                                                                 | description                                                                            |
+|----------------------------------|--------|--------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
+| `ducknng_list_tls_configs`       | table  |                                                  | `TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)` | List registered TLS config handles and the kinds of material they contain.             |
+| `ducknng_drop_tls_config`        | scalar | `tls_config_id`                                  | `BOOLEAN`                                                                                                                                                                                                               | Remove a registered TLS config handle from the runtime.                                |
+| `ducknng_self_signed_tls_config` | scalar | `common_name, valid_days, auth_mode`             | `UBIGINT`                                                                                                                                                                                                               | Generate a self-signed development certificate and register it as a TLS config handle. |
+| `ducknng_tls_config_from_pem`    | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from in-memory PEM material.                              |
+| `ducknng_tls_config_from_files`  | scalar | `cert_key_file, ca_file, password, auth_mode`    | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from file-backed certificate material.                    |
 
 ## RPC Helper
 
@@ -104,10 +116,10 @@ See also `NEWS.md` for the current implementation status and planned
 next steps, and `docs/protocol.md`, `docs/manifest.md`,
 `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the
 binding transport, TLS, and session/query-family contract. Those design
-docs also define the intended TLS direction: certificate and key
-material should be accepted either from files or from in-memory PEM
-content, with helper utilities for development certificate generation
-and client/server TLS configuration rather than a file-only setup path.
+docs also define the current TLS direction: certificate and key material
+can be accepted either from files or from in-memory PEM content, with
+helper utilities for development certificate generation and
+client/server TLS configuration rather than a file-only setup path.
 
 ## Examples
 
@@ -347,6 +359,139 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├────────────────────────────────────────┤
     │ true                                   │
     └────────────────────────────────────────┘
+
+### `tls+tcp://` with a self-signed development TLS config
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Generate a self-signed loopback certificate and keep it as a runtime TLS handle.
+SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 0);
+
+-- Start a TLS listener using the generated config handle.
+SELECT ducknng_start_server(
+  'tls_demo_self',
+  'tls+tcp://127.0.0.1:45453',
+  1,
+  134217728,
+  300000,
+  1
+);
+
+-- Send a raw manifest request over TLS and decode the reply frame.
+SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'tls+tcp://127.0.0.1:45453',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    1
+  )
+);
+
+-- Clean up the TLS demo server and config handle.
+SELECT ducknng_stop_server('tls_demo_self');
+SELECT ducknng_drop_tls_config(1);
+```
+
+    ┌─────────────────────────────────────────────────────┐
+    │ ducknng_self_signed_tls_config('127.0.0.1', 365, 0) │
+    │                       uint64                        │
+    ├─────────────────────────────────────────────────────┤
+    │                                                   1 │
+    └─────────────────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_server('tls_demo_self', 'tls+tcp://127.0.0.1:45453', 1, 134217728, 300000, 1) │
+    │                                           boolean                                           │
+    ├─────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                        │
+    └─────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
+    │   ok    │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
+    │ boolean │  varchar  │ varchar  │                       boolean                        │
+    ├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
+    │ true    │ result    │ manifest │ true                                                 │
+    └─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────┐
+    │ ducknng_stop_server('tls_demo_self') │
+    │               boolean                │
+    ├──────────────────────────────────────┤
+    │ true                                 │
+    └──────────────────────────────────────┘
+    ┌────────────────────────────┐
+    │ ducknng_drop_tls_config(1) │
+    │          boolean           │
+    ├────────────────────────────┤
+    │ true                       │
+    └────────────────────────────┘
+
+### `tls+tcp://` from file-backed certificate material
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Register a file-backed TLS config using committed loopback test certificates.
+SELECT ducknng_tls_config_from_files(
+  'test/certs/loopback-cert-key.pem',
+  'test/certs/loopback-ca.pem',
+  NULL,
+  0
+);
+
+-- Start a TLS listener with that file-backed config.
+SELECT ducknng_start_server(
+  'tls_demo_files',
+  'tls+tcp://127.0.0.1:45454',
+  1,
+  134217728,
+  300000,
+  1
+);
+
+-- Inspect the manifest reply over TLS using the same config handle on the client side.
+SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'tls+tcp://127.0.0.1:45454',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    1
+  )
+);
+
+-- Clean up the file-backed TLS demo server and config handle.
+SELECT ducknng_stop_server('tls_demo_files');
+SELECT ducknng_drop_tls_config(1);
+```
+
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_tls_config_from_files('test/certs/loopback-cert-key.pem', 'test/certs/loopback-ca.pem', NULL, 0) │
+    │                                                  uint64                                                  │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                                        1 │
+    └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_server('tls_demo_files', 'tls+tcp://127.0.0.1:45454', 1, 134217728, 300000, 1) │
+    │                                           boolean                                            │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                         │
+    └──────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
+    │   ok    │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
+    │ boolean │  varchar  │ varchar  │                       boolean                        │
+    ├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
+    │ true    │ result    │ manifest │ true                                                 │
+    └─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
+    ┌───────────────────────────────────────┐
+    │ ducknng_stop_server('tls_demo_files') │
+    │                boolean                │
+    ├───────────────────────────────────────┤
+    │ true                                  │
+    └───────────────────────────────────────┘
+    ┌────────────────────────────┐
+    │ ducknng_drop_tls_config(1) │
+    │          boolean           │
+    ├────────────────────────────┤
+    │ true                       │
+    └────────────────────────────┘
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example
 

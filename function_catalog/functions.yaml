@@ -162,7 +162,7 @@
       "description": "Register a TLS config handle from in-memory PEM material.",
       "notes": [
         "Stores PEM material in the runtime and returns a reusable config id.",
-        "Actual tls+tcp transport startup remains unavailable until TLS wiring is implemented in the NNG compatibility layer."
+        "Can be used with tls+tcp listeners and the one-shot raw request path."
       ],
       "examples": [
         "SELECT ducknng_tls_config_from_pem('-----BEGIN CERTIFICATE-----\n...','-----BEGIN PRIVATE KEY-----\n...', '-----BEGIN CERTIFICATE-----\n...', NULL, 1);"
@@ -179,7 +179,7 @@
       "description": "Register a TLS config handle from file-backed certificate material.",
       "notes": [
         "Stores TLS material references in the runtime and returns a reusable config id.",
-        "Actual tls+tcp transport startup remains unavailable until TLS wiring is implemented in the NNG compatibility layer."
+        "Can be used with tls+tcp listeners and the one-shot raw request path."
       ],
       "examples": [
         "SELECT ducknng_tls_config_from_files('/tmp/server.pem', '/tmp/ca.pem', NULL, 1);"

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <nng/transport/tls/tls.h>
 
 DUCKDB_EXTENSION_EXTERN
 
@@ -71,6 +72,58 @@ static int ducknng_tls_requested(const ducknng_tls_opts *opts) {
         opts->auth_mode != 0);
 }
 
+static int ducknng_tls_auth_mode_map(int auth_mode, nng_tls_auth_mode *out) {
+    if (!out) return NNG_EINVAL;
+    switch (auth_mode) {
+    case 0: *out = NNG_TLS_AUTH_MODE_NONE; return 0;
+    case 1: *out = NNG_TLS_AUTH_MODE_OPTIONAL; return 0;
+    case 2: *out = NNG_TLS_AUTH_MODE_REQUIRED; return 0;
+    default: return NNG_EINVAL;
+    }
+}
+
+static int ducknng_tls_config_build(nng_tls_config **out, nng_tls_mode mode, const char *url,
+    const ducknng_tls_opts *opts) {
+    nng_tls_config *cfg = NULL;
+    nng_tls_auth_mode auth_mode;
+    int rv;
+    nng_url *up = NULL;
+    if (!out) return NNG_EINVAL;
+    *out = NULL;
+    if (!opts || !ducknng_tls_requested(opts)) return 0;
+    rv = nng_tls_config_alloc(&cfg, mode);
+    if (rv != 0) return rv;
+    rv = ducknng_tls_auth_mode_map(opts->auth_mode, &auth_mode);
+    if (rv != 0) goto fail;
+    rv = nng_tls_config_auth_mode(cfg, auth_mode);
+    if (rv != 0) goto fail;
+    if (opts->ca_file && opts->ca_file[0]) {
+        rv = nng_tls_config_ca_file(cfg, opts->ca_file);
+        if (rv != 0) goto fail;
+    } else if (opts->ca_pem && opts->ca_pem[0]) {
+        rv = nng_tls_config_ca_chain(cfg, opts->ca_pem, NULL);
+        if (rv != 0) goto fail;
+    }
+    if (opts->cert_key_file && opts->cert_key_file[0]) {
+        rv = nng_tls_config_cert_key_file(cfg, opts->cert_key_file, opts->password);
+        if (rv != 0) goto fail;
+    } else if (opts->cert_pem && opts->cert_pem[0] && opts->key_pem && opts->key_pem[0]) {
+        rv = nng_tls_config_own_cert(cfg, opts->cert_pem, opts->key_pem, opts->password);
+        if (rv != 0) goto fail;
+    }
+    if (mode == NNG_TLS_MODE_CLIENT && url && nng_url_parse(&up, url) == 0 && up && up->u_hostname && up->u_hostname[0]) {
+        rv = nng_tls_config_server_name(cfg, up->u_hostname);
+        if (rv != 0) goto fail;
+    }
+    if (up) nng_url_free(up);
+    *out = cfg;
+    return 0;
+fail:
+    if (up) nng_url_free(up);
+    if (cfg) nng_tls_config_free(cfg);
+    return rv;
+}
+
 int ducknng_rep_socket_open(nng_socket *out) { return nng_rep0_open(out); }
 int ducknng_req_socket_open(nng_socket *out) { return nng_req0_open(out); }
 int ducknng_socket_set_timeout_ms(nng_socket sock, int send_timeout_ms, int recv_timeout_ms) {
@@ -95,6 +148,15 @@ int ducknng_req_dial(nng_socket sock, const char *url, int timeout_ms) {
     if (rv != 0) return rv;
     return ducknng_socket_dial(sock, url);
 }
+int ducknng_socket_apply_tls(nng_socket sock, const char *url, const ducknng_tls_opts *opts) {
+    nng_tls_config *cfg = NULL;
+    int rv = ducknng_tls_config_build(&cfg, NNG_TLS_MODE_CLIENT, url, opts);
+    if (rv != 0) return rv;
+    if (!cfg) return 0;
+    rv = nng_socket_set_ptr(sock, NNG_OPT_TLS_CONFIG, cfg);
+    nng_tls_config_free(cfg);
+    return rv;
+}
 int ducknng_req_transact(nng_socket sock, nng_msg *req, nng_msg **resp) {
     int rv;
     rv = ducknng_socket_send(sock, req);
@@ -116,16 +178,13 @@ int ducknng_listener_validate_startup_url(const char *url, const ducknng_tls_opt
         goto done;
     }
     if (strcmp(up->u_scheme, "tls+tcp") == 0) {
-        if (tls_requested) {
-            if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS listener options are not implemented; refusing tls+tcp startup");
-        } else if (errmsg) {
-            *errmsg = ducknng_strdup("ducknng: tls+tcp listeners require TLS support, which is not implemented");
+        if (!tls_requested) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: tls+tcp listeners require TLS configuration");
+            rc = -1;
+            goto done;
         }
-        rc = -1;
-        goto done;
-    }
-    if (tls_requested) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS listener options are not implemented; refusing to start listener");
+    } else if (tls_requested) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS configuration requires a tls+tcp:// listen URL");
         rc = -1;
         goto done;
     }
@@ -136,9 +195,13 @@ done:
 }
 int ducknng_listener_set_recvmaxsz(nng_listener lst, size_t bytes) { return nng_listener_set_size(lst, NNG_OPT_RECVMAXSZ, bytes); }
 int ducknng_listener_apply_tls(nng_listener lst, const ducknng_tls_opts *opts) {
-    (void)lst;
-    if (ducknng_tls_requested(opts)) return NNG_ENOTSUP;
-    return 0;
+    nng_tls_config *cfg = NULL;
+    int rv = ducknng_tls_config_build(&cfg, NNG_TLS_MODE_SERVER, NULL, opts);
+    if (rv != 0) return rv;
+    if (!cfg) return 0;
+    rv = nng_listener_set_ptr(lst, NNG_OPT_TLS_CONFIG, cfg);
+    nng_tls_config_free(cfg);
+    return rv;
 }
 int ducknng_listener_start(nng_listener lst) { return nng_listener_start(lst, 0); }
 int ducknng_listener_close(nng_listener lst) { return nng_listener_close(lst); }

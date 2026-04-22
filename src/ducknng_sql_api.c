@@ -748,7 +748,7 @@ static char *ducknng_frame_error_detail(const ducknng_frame *frame, const char *
     return detail;
 }
 
-static int ducknng_client_open_req_socket(const char *url, int timeout_ms, nng_socket *out, char **errmsg) {
+static int ducknng_client_open_req_socket_tls(const char *url, int timeout_ms, const ducknng_tls_opts *tls_opts, nng_socket *out, char **errmsg) {
     int rv;
     if (!url || !url[0] || !out) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: client URL is required");
@@ -765,6 +765,12 @@ static int ducknng_client_open_req_socket(const char *url, int timeout_ms, nng_s
         ducknng_socket_close(*out);
         return -1;
     }
+    rv = ducknng_socket_apply_tls(*out, url, tls_opts);
+    if (rv != 0) {
+        if (errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));
+        ducknng_socket_close(*out);
+        return -1;
+    }
     rv = ducknng_socket_dial(*out, url);
     if (rv != 0) {
         if (errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));
@@ -774,7 +780,11 @@ static int ducknng_client_open_req_socket(const char *url, int timeout_ms, nng_s
     return 0;
 }
 
-static nng_msg *ducknng_client_roundtrip(const char *url, nng_msg *req, int timeout_ms, char **errmsg) {
+static int ducknng_client_open_req_socket(const char *url, int timeout_ms, nng_socket *out, char **errmsg) {
+    return ducknng_client_open_req_socket_tls(url, timeout_ms, NULL, out, errmsg);
+}
+
+static nng_msg *ducknng_client_roundtrip_tls(const char *url, nng_msg *req, int timeout_ms, const ducknng_tls_opts *tls_opts, char **errmsg) {
     nng_socket sock;
     nng_msg *resp = NULL;
     int rv;
@@ -783,7 +793,7 @@ static nng_msg *ducknng_client_roundtrip(const char *url, nng_msg *req, int time
         if (errmsg) *errmsg = ducknng_strdup("ducknng: request message is required");
         return NULL;
     }
-    if (ducknng_client_open_req_socket(url, timeout_ms, &sock, errmsg) != 0) {
+    if (ducknng_client_open_req_socket_tls(url, timeout_ms, tls_opts, &sock, errmsg) != 0) {
         nng_msg_free(req);
         return NULL;
     }
@@ -794,6 +804,22 @@ static nng_msg *ducknng_client_roundtrip(const char *url, nng_msg *req, int time
         return NULL;
     }
     return resp;
+}
+
+static nng_msg *ducknng_client_roundtrip(const char *url, nng_msg *req, int timeout_ms, char **errmsg) {
+    return ducknng_client_roundtrip_tls(url, req, timeout_ms, NULL, errmsg);
+}
+
+static nng_msg *ducknng_client_roundtrip_raw_tls(const char *url, const uint8_t *payload, size_t payload_len,
+    int timeout_ms, const ducknng_tls_opts *tls_opts, char **errmsg) {
+    nng_msg *req = NULL;
+    int rv = nng_msg_alloc(&req, payload_len);
+    if (rv != 0) {
+        if (errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));
+        return NULL;
+    }
+    if (payload_len) memcpy(nng_msg_body(req), payload, payload_len);
+    return ducknng_client_roundtrip_tls(url, req, timeout_ms, tls_opts, errmsg);
 }
 
 static nng_msg *ducknng_client_roundtrip_raw(const char *url, const uint8_t *payload, size_t payload_len,
@@ -1111,6 +1137,38 @@ static void ducknng_request_scalar(duckdb_function_info info, duckdb_data_chunk 
             continue;
         }
         resp = ducknng_client_roundtrip_raw(url, payload, (size_t)payload_len, timeout_ms, &errmsg);
+        duckdb_free(url);
+        if (payload) duckdb_free(payload);
+        if (!resp) {
+            if (errmsg) duckdb_free(errmsg);
+            set_null(output, row);
+            continue;
+        }
+        assign_blob(output, row, (const uint8_t *)nng_msg_body(resp), (idx_t)nng_msg_len(resp));
+        nng_msg_free(resp);
+    }
+}
+
+static void ducknng_request_tls_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    for (row = 0; row < count; row++) {
+        char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        idx_t payload_len = 0;
+        uint8_t *payload = arg_blob_dup(duckdb_data_chunk_get_vector(input, 1), row, &payload_len);
+        int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 5000);
+        uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 3), row, 0);
+        ducknng_tls_config *cfg = ctx && ctx->rt ? ducknng_runtime_find_tls_config(ctx->rt, tls_config_id) : NULL;
+        nng_msg *resp = NULL;
+        char *errmsg = NULL;
+        if (!url || (!payload && payload_len > 0) || !cfg) {
+            if (url) duckdb_free(url);
+            if (payload) duckdb_free(payload);
+            set_null(output, row);
+            continue;
+        }
+        resp = ducknng_client_roundtrip_raw_tls(url, payload, (size_t)payload_len, timeout_ms, &cfg->opts, &errmsg);
         duckdb_free(url);
         if (payload) duckdb_free(payload);
         if (!resp) {
@@ -2521,6 +2579,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type close_types[1] = {DUCKDB_TYPE_UBIGINT};
     duckdb_type request_socket_types[3] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER};
     duckdb_type request_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER};
+    duckdb_type request_tls_types[4] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT};
     duckdb_type tls_files_types[4] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
     duckdb_type tls_pem_types[5] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
     duckdb_type tls_self_signed_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_INTEGER};
@@ -2540,6 +2599,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_close_socket", 1, ducknng_close_scalar, &ctx, close_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_request_socket_raw", 3, ducknng_request_socket_scalar, &ctx, request_socket_types, DUCKDB_TYPE_BLOB)) return 0;
     if (!register_scalar(connection, "ducknng_request_raw", 3, ducknng_request_scalar, &ctx, request_types, DUCKDB_TYPE_BLOB)) return 0;
+    if (!register_scalar(connection, "ducknng_request_raw", 4, ducknng_request_tls_scalar, &ctx, request_tls_types, DUCKDB_TYPE_BLOB)) return 0;
     if (!register_named_servers_table(connection, &ctx, "ducknng_list_servers")) return 0;
     if (!register_named_sockets_table(connection, &ctx, "ducknng_list_sockets")) return 0;
     if (!register_named_tls_configs_table(connection, &ctx, "ducknng_list_tls_configs")) return 0;

@@ -625,12 +625,12 @@ operation-oriented rather than transport-specific: transport is
 autodetected from the URL scheme in the same general style as
 <code>nanonext</code>, so the same API can work with
 <code>inproc://</code>, <code>ipc://</code>, <code>tcp://</code>, and
-later <code>tls+tcp://</code> without spawning a separate helper family
-for each scheme. On the server side it runs one REP socket with one or
-more REP contexts, and on top of that transport it already supports a
-working RPC request/reply path with manifest discovery,
-metadata-oriented execution, and unary row-returning execution over the
-current raw wire and Arrow IPC model.</p>
+<code>tls+tcp://</code> without spawning a separate helper family for
+each scheme. On the server side it runs one REP socket with one or more
+REP contexts, and on top of that transport it already supports a working
+RPC request/reply path with manifest discovery, metadata-oriented
+execution, and unary row-returning execution over the current raw wire
+and Arrow IPC model.</p>
 <p>The next documented protocol slice is the session query family:
 <code>query_open</code>, <code>fetch</code>, <code>close</code>, and
 <code>cancel</code>. In the current contract, <code>query_open</code>
@@ -641,14 +641,17 @@ batches, <code>close</code> is the normal explicit cleanup path, and
 interruption. Until a real owner-identity model is implemented, that
 family should still be treated as development scaffolding rather than as
 a production-safe multi-client surface.</p>
-<p>The transport-security utility layer now also has a first runtime
-model for TLS configuration handles. Those handles can be assembled from
-file-backed certificate material, from in-memory PEM strings, or from
-self-signed development certificates generated on demand. The actual
-<code>tls+tcp://</code> transport wiring is still intentionally isolated
-behind <code>ducknng_nng_compat.c</code> and is not enabled yet, but the
-handle model is now in place so the public API does not need to be
-reinvented when that transport path is turned on.</p>
+<p>The transport-security utility layer now has a runtime model for TLS
+configuration handles. Those handles can be assembled from file-backed
+certificate material, from in-memory PEM strings, or from self-signed
+development certificates generated on demand. The actual
+<code>tls+tcp://</code> transport wiring remains isolated behind
+<code>ducknng_nng_compat.c</code>, but it is now enabled for real
+loopback listener and one-shot client-request paths so the public API no
+longer needs a separate transport-specific helper family. This follows
+the same broad direction as <code>nanonext</code>, which exposes TLS
+helper facilities backed by mbedTLS rather than forcing every client to
+hand-roll certificate setup outside the transport layer.</p>
 <h2 id="functions">Functions</h2>
 <h1 id="function-catalog">Function Catalog</h1>
 <p>This file is generated from
@@ -696,8 +699,8 @@ reinvented when that transport path is turned on.</p>
 <tr class="odd">
 <td><code>ducknng_list_servers</code></td>
 <td>table</td>
-<td>``</td>
-<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)\</code></td>
+<td></td>
+<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)</code></td>
 <td>List registered ducknng services.</td>
 </tr>
 </tbody>
@@ -738,9 +741,49 @@ reinvented when that transport path is turned on.</p>
 <tr class="even">
 <td><code>ducknng_list_sockets</code></td>
 <td>table</td>
-<td>``</td>
+<td></td>
 <td><code>TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)</code></td>
 <td>List client socket handles in the runtime.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_request</code></td>
+<td>table</td>
+<td><code>url, payload, timeout_ms</code></td>
+<td><code>TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)</code></td>
+<td>Perform a one-shot raw request and return a structured result
+row.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_request_socket</code></td>
+<td>table</td>
+<td><code>socket_id, payload, timeout_ms</code></td>
+<td><code>TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)</code></td>
+<td>Perform a raw request through a previously dialed socket handle and
+return a structured result row.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_request_raw</code></td>
+<td>scalar</td>
+<td><code>url, payload, timeout_ms</code></td>
+<td><code>BLOB</code></td>
+<td>Perform a one-shot raw request and return the raw reply frame
+bytes.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_request_socket_raw</code></td>
+<td>scalar</td>
+<td><code>socket_id, payload, timeout_ms</code></td>
+<td><code>BLOB</code></td>
+<td>Perform a raw request through a dialed socket handle and return the
+raw reply frame bytes.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_decode_frame</code></td>
+<td>table</td>
+<td><code>frame</code></td>
+<td><code>TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)</code></td>
+<td>Decode a raw ducknng frame into envelope fields and extracted
+payload columns.</td>
 </tr>
 </tbody>
 </table>
@@ -759,10 +802,40 @@ reinvented when that transport path is turned on.</p>
 <tr class="odd">
 <td><code>ducknng_list_tls_configs</code></td>
 <td>table</td>
-<td>``</td>
+<td></td>
 <td><code>TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)</code></td>
 <td>List registered TLS config handles and the kinds of material they
 contain.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_drop_tls_config</code></td>
+<td>scalar</td>
+<td><code>tls_config_id</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Remove a registered TLS config handle from the runtime.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_self_signed_tls_config</code></td>
+<td>scalar</td>
+<td><code>common_name, valid_days, auth_mode</code></td>
+<td><code>UBIGINT</code></td>
+<td>Generate a self-signed development certificate and register it as a
+TLS config handle.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_tls_config_from_pem</code></td>
+<td>scalar</td>
+<td><code>cert_pem, key_pem, ca_pem, password, auth_mode</code></td>
+<td><code>UBIGINT</code></td>
+<td>Register a TLS config handle from in-memory PEM material.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_tls_config_from_files</code></td>
+<td>scalar</td>
+<td><code>cert_key_file, ca_file, password, auth_mode</code></td>
+<td><code>UBIGINT</code></td>
+<td>Register a TLS config handle from file-backed certificate
+material.</td>
 </tr>
 </tbody>
 </table>
@@ -826,11 +899,10 @@ and planned next steps, and <code>docs/protocol.md</code>,
 <code>docs/manifest.md</code>, <code>docs/security.md</code>,
 <code>docs/registry.md</code>, and <code>docs/types.md</code> for the
 binding transport, TLS, and session/query-family contract. Those design
-docs also define the intended TLS direction: certificate and key
-material should be accepted either from files or from in-memory PEM
-content, with helper utilities for development certificate generation
-and client/server TLS configuration rather than a file-only setup
-path.</p>
+docs also define the current TLS direction: certificate and key material
+can be accepted either from files or from in-memory PEM content, with
+helper utilities for development certificate generation and
+client/server TLS configuration rather than a file-only setup path.</p>
 <h2 id="examples">Examples</h2>
 <h3 id="start-an-ipc-listener-and-inspect-the-registry">Start an IPC
 listener and inspect the registry</h3>
@@ -1057,131 +1129,256 @@ client</h3>
 ├────────────────────────────────────────┤
 │ true                                   │
 └────────────────────────────────────────┘</code></pre>
+<h3 id="tlstcp-with-a-self-signed-development-tls-config"><code>tls+tcp://</code>
+with a self-signed development TLS config</h3>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>LOAD <span class="st">&#39;/root/ducknng/build/release/ducknng.duckdb_extension&#39;</span>;</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="co">-- Generate a self-signed loopback certificate and keep it as a runtime TLS handle.</span></span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_self_signed_tls_config(<span class="st">&#39;127.0.0.1&#39;</span>, <span class="dv">365</span>, <span class="dv">0</span>);</span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="co">-- Start a TLS listener using the generated config handle.</span></span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_server(</span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>  <span class="st">&#39;tls_demo_self&#39;</span>,</span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>  <span class="st">&#39;tls+tcp://127.0.0.1:45453&#39;</span>,</span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>  <span class="dv">1</span>,</span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>  <span class="dv">134217728</span>,</span>
+<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a>  <span class="dv">300000</span>,</span>
+<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a>  <span class="dv">1</span></span>
+<span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a>);</span>
+<span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a></span>
+<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="co">-- Send a raw manifest request over TLS and decode the reply frame.</span></span>
+<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a><span class="kw">SELECT</span> ok, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
+<span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a>  ducknng_request_raw(</span>
+<span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a>    <span class="st">&#39;tls+tcp://127.0.0.1:45453&#39;</span>,</span>
+<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a>    from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>),</span>
+<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a>    <span class="dv">1000</span>,</span>
+<span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a>    <span class="dv">1</span></span>
+<span id="cb8-23"><a href="#cb8-23" tabindex="-1"></a>  )</span>
+<span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a>);</span>
+<span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a></span>
+<span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a><span class="co">-- Clean up the TLS demo server and config handle.</span></span>
+<span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;tls_demo_self&#39;</span>);</span>
+<span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_drop_tls_config(<span class="dv">1</span>);</span></code></pre></div>
+<pre><code>┌─────────────────────────────────────────────────────┐
+│ ducknng_self_signed_tls_config(&#39;127.0.0.1&#39;, 365, 0) │
+│                       uint64                        │
+├─────────────────────────────────────────────────────┤
+│                                                   1 │
+└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ducknng_start_server(&#39;tls_demo_self&#39;, &#39;tls+tcp://127.0.0.1:45453&#39;, 1, 134217728, 300000, 1) │
+│                                           boolean                                           │
+├─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ true                                                                                        │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
+│   ok    │ type_name │   name   │ (main.&quot;position&quot;(payload_text, &#39;&quot;name&quot;:&quot;exec&quot;&#39;) &gt; 0) │
+│ boolean │  varchar  │ varchar  │                       boolean                        │
+├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
+│ true    │ result    │ manifest │ true                                                 │
+└─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────┐
+│ ducknng_stop_server(&#39;tls_demo_self&#39;) │
+│               boolean                │
+├──────────────────────────────────────┤
+│ true                                 │
+└──────────────────────────────────────┘
+┌────────────────────────────┐
+│ ducknng_drop_tls_config(1) │
+│          boolean           │
+├────────────────────────────┤
+│ true                       │
+└────────────────────────────┘</code></pre>
+<h3 id="tlstcp-from-file-backed-certificate-material"><code>tls+tcp://</code>
+from file-backed certificate material</h3>
+<div class="sourceCode" id="cb10"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>LOAD <span class="st">&#39;/root/ducknng/build/release/ducknng.duckdb_extension&#39;</span>;</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="co">-- Register a file-backed TLS config using committed loopback test certificates.</span></span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_tls_config_from_files(</span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="st">&#39;test/certs/loopback-cert-key.pem&#39;</span>,</span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>  <span class="st">&#39;test/certs/loopback-ca.pem&#39;</span>,</span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>  <span class="kw">NULL</span>,</span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a>  <span class="dv">0</span></span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>);</span>
+<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a></span>
+<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a><span class="co">-- Start a TLS listener with that file-backed config.</span></span>
+<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_server(</span>
+<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a>  <span class="st">&#39;tls_demo_files&#39;</span>,</span>
+<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>  <span class="st">&#39;tls+tcp://127.0.0.1:45454&#39;</span>,</span>
+<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a>  <span class="dv">1</span>,</span>
+<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>  <span class="dv">134217728</span>,</span>
+<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a>  <span class="dv">300000</span>,</span>
+<span id="cb10-17"><a href="#cb10-17" tabindex="-1"></a>  <span class="dv">1</span></span>
+<span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a>);</span>
+<span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a></span>
+<span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a><span class="co">-- Inspect the manifest reply over TLS using the same config handle on the client side.</span></span>
+<span id="cb10-21"><a href="#cb10-21" tabindex="-1"></a><span class="kw">SELECT</span> ok, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb10-22"><a href="#cb10-22" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
+<span id="cb10-23"><a href="#cb10-23" tabindex="-1"></a>  ducknng_request_raw(</span>
+<span id="cb10-24"><a href="#cb10-24" tabindex="-1"></a>    <span class="st">&#39;tls+tcp://127.0.0.1:45454&#39;</span>,</span>
+<span id="cb10-25"><a href="#cb10-25" tabindex="-1"></a>    from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>),</span>
+<span id="cb10-26"><a href="#cb10-26" tabindex="-1"></a>    <span class="dv">1000</span>,</span>
+<span id="cb10-27"><a href="#cb10-27" tabindex="-1"></a>    <span class="dv">1</span></span>
+<span id="cb10-28"><a href="#cb10-28" tabindex="-1"></a>  )</span>
+<span id="cb10-29"><a href="#cb10-29" tabindex="-1"></a>);</span>
+<span id="cb10-30"><a href="#cb10-30" tabindex="-1"></a></span>
+<span id="cb10-31"><a href="#cb10-31" tabindex="-1"></a><span class="co">-- Clean up the file-backed TLS demo server and config handle.</span></span>
+<span id="cb10-32"><a href="#cb10-32" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;tls_demo_files&#39;</span>);</span>
+<span id="cb10-33"><a href="#cb10-33" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_drop_tls_config(<span class="dv">1</span>);</span></code></pre></div>
+<pre><code>┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ducknng_tls_config_from_files(&#39;test/certs/loopback-cert-key.pem&#39;, &#39;test/certs/loopback-ca.pem&#39;, NULL, 0) │
+│                                                  uint64                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                                        1 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ducknng_start_server(&#39;tls_demo_files&#39;, &#39;tls+tcp://127.0.0.1:45454&#39;, 1, 134217728, 300000, 1) │
+│                                           boolean                                            │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ true                                                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
+│   ok    │ type_name │   name   │ (main.&quot;position&quot;(payload_text, &#39;&quot;name&quot;:&quot;exec&quot;&#39;) &gt; 0) │
+│ boolean │  varchar  │ varchar  │                       boolean                        │
+├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
+│ true    │ result    │ manifest │ true                                                 │
+└─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
+┌───────────────────────────────────────┐
+│ ducknng_stop_server(&#39;tls_demo_files&#39;) │
+│                boolean                │
+├───────────────────────────────────────┤
+│ true                                  │
+└───────────────────────────────────────┘
+┌────────────────────────────┐
+│ ducknng_drop_tls_config(1) │
+│          boolean           │
+├────────────────────────────┤
+│ true                       │
+└────────────────────────────┘</code></pre>
 <h3 id="reqrep-exec-via-nanonext-as-an-interop-example">REQ/REP
 <code>EXEC</code> via <code>nanonext</code> as an interop example</h3>
-<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="fu">suppressWarnings</span>(<span class="fu">suppressPackageStartupMessages</span>({</span>
-<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>  <span class="fu">library</span>(DBI)</span>
-<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>  <span class="fu">library</span>(duckdb)</span>
-<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>  <span class="fu">library</span>(nanonext)</span>
-<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>  <span class="fu">library</span>(nanoarrow)</span>
-<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a>}))</span>
-<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a></span>
-<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a><span class="co"># Little-endian integer encoders for the versioned ducknng RPC envelope.</span></span>
-<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>u32le <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">writeBin</span>(<span class="fu">as.integer</span>(x), <span class="fu">raw</span>(), <span class="at">size =</span> <span class="dv">4</span><span class="dt">L</span>, <span class="at">endian =</span> <span class="st">&quot;little&quot;</span>)</span>
-<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>u64le <span class="ot">&lt;-</span> <span class="cf">function</span>(x) {</span>
-<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a>  x <span class="ot">&lt;-</span> <span class="fu">as.double</span>(x)</span>
-<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a>  <span class="fu">c</span>(<span class="fu">u32le</span>(x <span class="sc">%%</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span>), <span class="fu">u32le</span>(<span class="fu">floor</span>(x <span class="sc">/</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span>)))</span>
-<span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a>}</span>
-<span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a>le_u32_from_raw <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">sum</span>(<span class="fu">as.double</span>(<span class="fu">as.integer</span>(x)) <span class="sc">*</span> <span class="dv">256</span><span class="sc">^</span>(<span class="dv">0</span><span class="sc">:</span><span class="dv">3</span>))</span>
-<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a>le_u64_from_raw <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">le_u32_from_raw</span>(x[<span class="dv">1</span><span class="sc">:</span><span class="dv">4</span>]) <span class="sc">+</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span> <span class="sc">*</span> <span class="fu">le_u32_from_raw</span>(x[<span class="dv">5</span><span class="sc">:</span><span class="dv">8</span>])</span>
-<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a>read_u32le <span class="ot">&lt;-</span> <span class="cf">function</span>(buf, offset) <span class="fu">le_u32_from_raw</span>(buf[offset <span class="sc">+</span> <span class="dv">0</span><span class="sc">:</span><span class="dv">3</span>])</span>
-<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a>read_u64le <span class="ot">&lt;-</span> <span class="cf">function</span>(buf, offset) <span class="fu">le_u64_from_raw</span>(buf[offset <span class="sc">+</span> <span class="dv">0</span><span class="sc">:</span><span class="dv">7</span>])</span>
-<span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a></span>
-<span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a><span class="co"># Serialize a one-row exec request as Arrow IPC using nanoarrow.</span></span>
-<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a>encode_ducknng_exec_request <span class="ot">&lt;-</span> <span class="cf">function</span>(sql, <span class="at">want_result =</span> <span class="cn">FALSE</span>) {</span>
-<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a>  con <span class="ot">&lt;-</span> <span class="fu">rawConnection</span>(<span class="fu">raw</span>(), <span class="at">open =</span> <span class="st">&quot;r+&quot;</span>)</span>
-<span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a>  <span class="fu">on.exit</span>(<span class="fu">close</span>(con))</span>
-<span id="cb8-23"><a href="#cb8-23" tabindex="-1"></a>  nanoarrow<span class="sc">::</span><span class="fu">write_nanoarrow</span>(</span>
-<span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a>    <span class="fu">data.frame</span>(<span class="at">sql =</span> sql, <span class="at">want_result =</span> want_result),</span>
-<span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a>    con</span>
-<span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a>  )</span>
-<span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a>  payload <span class="ot">&lt;-</span> <span class="fu">rawConnectionValue</span>(con)</span>
-<span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a>  name <span class="ot">&lt;-</span> <span class="fu">charToRaw</span>(<span class="st">&quot;exec&quot;</span>)</span>
-<span id="cb8-29"><a href="#cb8-29" tabindex="-1"></a>  <span class="fu">c</span>(</span>
-<span id="cb8-30"><a href="#cb8-30" tabindex="-1"></a>    <span class="fu">as.raw</span>(<span class="dv">1</span><span class="dt">L</span>),                  <span class="co"># envelope version</span></span>
-<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a>    <span class="fu">as.raw</span>(<span class="dv">1</span><span class="dt">L</span>),                  <span class="co"># message type: call</span></span>
-<span id="cb8-32"><a href="#cb8-32" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="dv">0</span>),                    <span class="co"># flags</span></span>
-<span id="cb8-33"><a href="#cb8-33" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="fu">length</span>(name)),         <span class="co"># method-name length</span></span>
-<span id="cb8-34"><a href="#cb8-34" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="dv">0</span>),                    <span class="co"># error-string length on requests</span></span>
-<span id="cb8-35"><a href="#cb8-35" tabindex="-1"></a>    <span class="fu">u64le</span>(<span class="fu">length</span>(payload)),      <span class="co"># payload length</span></span>
-<span id="cb8-36"><a href="#cb8-36" tabindex="-1"></a>    name,</span>
-<span id="cb8-37"><a href="#cb8-37" tabindex="-1"></a>    payload</span>
-<span id="cb8-38"><a href="#cb8-38" tabindex="-1"></a>  )</span>
-<span id="cb8-39"><a href="#cb8-39" tabindex="-1"></a>}</span>
-<span id="cb8-40"><a href="#cb8-40" tabindex="-1"></a></span>
-<span id="cb8-41"><a href="#cb8-41" tabindex="-1"></a><span class="co"># Decode a reply envelope and, when present, parse the Arrow IPC payload.</span></span>
-<span id="cb8-42"><a href="#cb8-42" tabindex="-1"></a>decode_ducknng_exec_reply <span class="ot">&lt;-</span> <span class="cf">function</span>(buf) {</span>
-<span id="cb8-43"><a href="#cb8-43" tabindex="-1"></a>  name_len <span class="ot">&lt;-</span> <span class="fu">read_u32le</span>(buf, <span class="dv">7</span>)</span>
-<span id="cb8-44"><a href="#cb8-44" tabindex="-1"></a>  error_len <span class="ot">&lt;-</span> <span class="fu">read_u32le</span>(buf, <span class="dv">11</span>)</span>
-<span id="cb8-45"><a href="#cb8-45" tabindex="-1"></a>  payload_len <span class="ot">&lt;-</span> <span class="fu">read_u64le</span>(buf, <span class="dv">15</span>)</span>
-<span id="cb8-46"><a href="#cb8-46" tabindex="-1"></a>  name_start <span class="ot">&lt;-</span> <span class="dv">23</span><span class="dt">L</span></span>
-<span id="cb8-47"><a href="#cb8-47" tabindex="-1"></a>  error_start <span class="ot">&lt;-</span> name_start <span class="sc">+</span> name_len</span>
-<span id="cb8-48"><a href="#cb8-48" tabindex="-1"></a>  payload_start <span class="ot">&lt;-</span> error_start <span class="sc">+</span> error_len</span>
-<span id="cb8-49"><a href="#cb8-49" tabindex="-1"></a>  payload_end <span class="ot">&lt;-</span> payload_start <span class="sc">+</span> payload_len <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span></span>
-<span id="cb8-50"><a href="#cb8-50" tabindex="-1"></a>  payload <span class="ot">&lt;-</span> <span class="cf">if</span> (payload_len <span class="sc">&gt;</span> <span class="dv">0</span>) buf[payload_start<span class="sc">:</span>payload_end] <span class="cf">else</span> <span class="fu">raw</span>()</span>
-<span id="cb8-51"><a href="#cb8-51" tabindex="-1"></a>  <span class="fu">list</span>(</span>
-<span id="cb8-52"><a href="#cb8-52" tabindex="-1"></a>    <span class="at">version =</span> <span class="fu">as.integer</span>(buf[<span class="dv">1</span>]),</span>
-<span id="cb8-53"><a href="#cb8-53" tabindex="-1"></a>    <span class="at">type =</span> <span class="fu">as.integer</span>(buf[<span class="dv">2</span>]),</span>
-<span id="cb8-54"><a href="#cb8-54" tabindex="-1"></a>    <span class="at">flags =</span> <span class="fu">read_u32le</span>(buf, <span class="dv">3</span>),</span>
-<span id="cb8-55"><a href="#cb8-55" tabindex="-1"></a>    <span class="at">method =</span> <span class="fu">rawToChar</span>(buf[name_start<span class="sc">:</span>(error_start <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)]),</span>
-<span id="cb8-56"><a href="#cb8-56" tabindex="-1"></a>    <span class="at">error =</span> <span class="cf">if</span> (error_len <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="fu">rawToChar</span>(buf[error_start<span class="sc">:</span>(payload_start <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)]) <span class="cf">else</span> <span class="st">&quot;&quot;</span>,</span>
-<span id="cb8-57"><a href="#cb8-57" tabindex="-1"></a>    <span class="at">payload =</span> payload,</span>
-<span id="cb8-58"><a href="#cb8-58" tabindex="-1"></a>    <span class="at">data =</span> <span class="cf">if</span> (payload_len <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="fu">as.data.frame</span>(nanoarrow<span class="sc">::</span><span class="fu">read_nanoarrow</span>(payload)) <span class="cf">else</span> <span class="cn">NULL</span></span>
-<span id="cb8-59"><a href="#cb8-59" tabindex="-1"></a>  )</span>
-<span id="cb8-60"><a href="#cb8-60" tabindex="-1"></a>}</span>
-<span id="cb8-61"><a href="#cb8-61" tabindex="-1"></a></span>
-<span id="cb8-62"><a href="#cb8-62" tabindex="-1"></a><span class="co"># Use a temporary IPC path and launch a DuckDB-backed ducknng server in a child process.</span></span>
-<span id="cb8-63"><a href="#cb8-63" tabindex="-1"></a>ext_path <span class="ot">&lt;-</span> <span class="fu">normalizePath</span>(<span class="st">&quot;build/release/ducknng.duckdb_extension&quot;</span>)</span>
-<span id="cb8-64"><a href="#cb8-64" tabindex="-1"></a>ipc_path <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">pattern =</span> <span class="st">&quot;ducknng_readme_exec_&quot;</span>, <span class="at">tmpdir =</span> <span class="st">&quot;/tmp&quot;</span>, <span class="at">fileext =</span> <span class="st">&quot;.ipc&quot;</span>)</span>
-<span id="cb8-65"><a href="#cb8-65" tabindex="-1"></a>ipc_url <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;ipc://&quot;</span>, ipc_path)</span>
-<span id="cb8-66"><a href="#cb8-66" tabindex="-1"></a></span>
-<span id="cb8-67"><a href="#cb8-67" tabindex="-1"></a>server_job <span class="ot">&lt;-</span> parallel<span class="sc">::</span><span class="fu">mcparallel</span>({</span>
-<span id="cb8-68"><a href="#cb8-68" tabindex="-1"></a>  drv <span class="ot">&lt;-</span> duckdb<span class="sc">::</span><span class="fu">duckdb</span>(<span class="at">config =</span> <span class="fu">list</span>(<span class="at">allow_unsigned_extensions =</span> <span class="st">&quot;true&quot;</span>))</span>
-<span id="cb8-69"><a href="#cb8-69" tabindex="-1"></a>  con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(drv, <span class="at">dbdir =</span> <span class="st">&quot;:memory:&quot;</span>)</span>
-<span id="cb8-70"><a href="#cb8-70" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbExecute</span>(con, <span class="fu">sprintf</span>(<span class="st">&quot;LOAD &#39;%s&#39;&quot;</span>, ext_path))</span>
-<span id="cb8-71"><a href="#cb8-71" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="fu">sprintf</span>(</span>
-<span id="cb8-72"><a href="#cb8-72" tabindex="-1"></a>    <span class="st">&quot;SELECT ducknng_start_server(&#39;sql_exec&#39;, &#39;%s&#39;, 1, 134217728, 300000, NULL, NULL, NULL)&quot;</span>,</span>
-<span id="cb8-73"><a href="#cb8-73" tabindex="-1"></a>    ipc_url</span>
-<span id="cb8-74"><a href="#cb8-74" tabindex="-1"></a>  ))</span>
-<span id="cb8-75"><a href="#cb8-75" tabindex="-1"></a>  <span class="fu">Sys.sleep</span>(<span class="dv">2</span>)</span>
-<span id="cb8-76"><a href="#cb8-76" tabindex="-1"></a>  rows <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT * FROM ducknng_exec_demo ORDER BY i&quot;</span>)</span>
-<span id="cb8-77"><a href="#cb8-77" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT ducknng_stop_server(&#39;sql_exec&#39;)&quot;</span>)</span>
-<span id="cb8-78"><a href="#cb8-78" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbDisconnect</span>(con, <span class="at">shutdown =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb8-79"><a href="#cb8-79" tabindex="-1"></a>  rows</span>
-<span id="cb8-80"><a href="#cb8-80" tabindex="-1"></a>})</span>
-<span id="cb8-81"><a href="#cb8-81" tabindex="-1"></a></span>
-<span id="cb8-82"><a href="#cb8-82" tabindex="-1"></a><span class="co"># Give the listener a moment to come up, then dial it with a normal req socket.</span></span>
-<span id="cb8-83"><a href="#cb8-83" tabindex="-1"></a><span class="fu">Sys.sleep</span>(<span class="dv">1</span>)</span>
-<span id="cb8-84"><a href="#cb8-84" tabindex="-1"></a>req <span class="ot">&lt;-</span> nanonext<span class="sc">::</span><span class="fu">socket</span>(<span class="st">&quot;req&quot;</span>, <span class="at">dial =</span> ipc_url, <span class="at">autostart =</span> <span class="cn">NA</span>)</span>
-<span id="cb8-85"><a href="#cb8-85" tabindex="-1"></a></span>
-<span id="cb8-86"><a href="#cb8-86" tabindex="-1"></a><span class="co"># Create a table remotely and inspect the reply metadata.</span></span>
-<span id="cb8-87"><a href="#cb8-87" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(req, <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;CREATE TABLE ducknng_exec_demo(i INTEGER)&quot;</span>), <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>)</span>
-<span id="cb8-88"><a href="#cb8-88" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
-<span id="cb8-89"><a href="#cb8-89" tabindex="-1"></a>create_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
-<span id="cb8-90"><a href="#cb8-90" tabindex="-1"></a>create_reply<span class="sc">$</span>data</span>
-<span id="cb8-91"><a href="#cb8-91" tabindex="-1"></a><span class="co">#&gt;   rows_changed statement_type result_type</span></span>
-<span id="cb8-92"><a href="#cb8-92" tabindex="-1"></a><span class="co">#&gt; 1            0              7           2</span></span>
-<span id="cb8-93"><a href="#cb8-93" tabindex="-1"></a></span>
-<span id="cb8-94"><a href="#cb8-94" tabindex="-1"></a><span class="co"># Insert rows remotely and inspect the second reply.</span></span>
-<span id="cb8-95"><a href="#cb8-95" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(req, <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;INSERT INTO ducknng_exec_demo VALUES (42), (99)&quot;</span>), <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>)</span>
-<span id="cb8-96"><a href="#cb8-96" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
-<span id="cb8-97"><a href="#cb8-97" tabindex="-1"></a>insert_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
-<span id="cb8-98"><a href="#cb8-98" tabindex="-1"></a>insert_reply<span class="sc">$</span>data</span>
-<span id="cb8-99"><a href="#cb8-99" tabindex="-1"></a><span class="co">#&gt;   rows_changed statement_type result_type</span></span>
-<span id="cb8-100"><a href="#cb8-100" tabindex="-1"></a><span class="co">#&gt; 1            2              2           1</span></span>
-<span id="cb8-101"><a href="#cb8-101" tabindex="-1"></a></span>
-<span id="cb8-102"><a href="#cb8-102" tabindex="-1"></a><span class="co"># Request result rows directly with want_result = TRUE.</span></span>
-<span id="cb8-103"><a href="#cb8-103" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(</span>
-<span id="cb8-104"><a href="#cb8-104" tabindex="-1"></a>  req,</span>
-<span id="cb8-105"><a href="#cb8-105" tabindex="-1"></a>  <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;SELECT i, i &gt; 50 AS gt_50 FROM ducknng_exec_demo ORDER BY i&quot;</span>, <span class="at">want_result =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb8-106"><a href="#cb8-106" tabindex="-1"></a>  <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>,</span>
-<span id="cb8-107"><a href="#cb8-107" tabindex="-1"></a>  <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span></span>
-<span id="cb8-108"><a href="#cb8-108" tabindex="-1"></a>)</span>
-<span id="cb8-109"><a href="#cb8-109" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
-<span id="cb8-110"><a href="#cb8-110" tabindex="-1"></a>select_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
-<span id="cb8-111"><a href="#cb8-111" tabindex="-1"></a>select_reply<span class="sc">$</span>data</span>
-<span id="cb8-112"><a href="#cb8-112" tabindex="-1"></a><span class="co">#&gt;    i gt_50</span></span>
-<span id="cb8-113"><a href="#cb8-113" tabindex="-1"></a><span class="co">#&gt; 1 42 FALSE</span></span>
-<span id="cb8-114"><a href="#cb8-114" tabindex="-1"></a><span class="co">#&gt; 2 99  TRUE</span></span>
-<span id="cb8-115"><a href="#cb8-115" tabindex="-1"></a></span>
-<span id="cb8-116"><a href="#cb8-116" tabindex="-1"></a><span class="co"># Collect the server-side query result from the child process.</span></span>
-<span id="cb8-117"><a href="#cb8-117" tabindex="-1"></a>server_rows <span class="ot">&lt;-</span> parallel<span class="sc">::</span><span class="fu">mccollect</span>(server_job)[[<span class="dv">1</span>]]</span>
-<span id="cb8-118"><a href="#cb8-118" tabindex="-1"></a>server_rows</span>
-<span id="cb8-119"><a href="#cb8-119" tabindex="-1"></a><span class="co">#&gt;    i</span></span>
-<span id="cb8-120"><a href="#cb8-120" tabindex="-1"></a><span class="co">#&gt; 1 42</span></span>
-<span id="cb8-121"><a href="#cb8-121" tabindex="-1"></a><span class="co">#&gt; 2 99</span></span>
-<span id="cb8-122"><a href="#cb8-122" tabindex="-1"></a></span>
-<span id="cb8-123"><a href="#cb8-123" tabindex="-1"></a><span class="fu">close</span>(req)</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="fu">suppressWarnings</span>(<span class="fu">suppressPackageStartupMessages</span>({</span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a>  <span class="fu">library</span>(DBI)</span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>  <span class="fu">library</span>(duckdb)</span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>  <span class="fu">library</span>(nanonext)</span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a>  <span class="fu">library</span>(nanoarrow)</span>
+<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a>}))</span>
+<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a></span>
+<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a><span class="co"># Little-endian integer encoders for the versioned ducknng RPC envelope.</span></span>
+<span id="cb12-9"><a href="#cb12-9" tabindex="-1"></a>u32le <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">writeBin</span>(<span class="fu">as.integer</span>(x), <span class="fu">raw</span>(), <span class="at">size =</span> <span class="dv">4</span><span class="dt">L</span>, <span class="at">endian =</span> <span class="st">&quot;little&quot;</span>)</span>
+<span id="cb12-10"><a href="#cb12-10" tabindex="-1"></a>u64le <span class="ot">&lt;-</span> <span class="cf">function</span>(x) {</span>
+<span id="cb12-11"><a href="#cb12-11" tabindex="-1"></a>  x <span class="ot">&lt;-</span> <span class="fu">as.double</span>(x)</span>
+<span id="cb12-12"><a href="#cb12-12" tabindex="-1"></a>  <span class="fu">c</span>(<span class="fu">u32le</span>(x <span class="sc">%%</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span>), <span class="fu">u32le</span>(<span class="fu">floor</span>(x <span class="sc">/</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span>)))</span>
+<span id="cb12-13"><a href="#cb12-13" tabindex="-1"></a>}</span>
+<span id="cb12-14"><a href="#cb12-14" tabindex="-1"></a>le_u32_from_raw <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">sum</span>(<span class="fu">as.double</span>(<span class="fu">as.integer</span>(x)) <span class="sc">*</span> <span class="dv">256</span><span class="sc">^</span>(<span class="dv">0</span><span class="sc">:</span><span class="dv">3</span>))</span>
+<span id="cb12-15"><a href="#cb12-15" tabindex="-1"></a>le_u64_from_raw <span class="ot">&lt;-</span> <span class="cf">function</span>(x) <span class="fu">le_u32_from_raw</span>(x[<span class="dv">1</span><span class="sc">:</span><span class="dv">4</span>]) <span class="sc">+</span> <span class="dv">2</span><span class="sc">^</span><span class="dv">32</span> <span class="sc">*</span> <span class="fu">le_u32_from_raw</span>(x[<span class="dv">5</span><span class="sc">:</span><span class="dv">8</span>])</span>
+<span id="cb12-16"><a href="#cb12-16" tabindex="-1"></a>read_u32le <span class="ot">&lt;-</span> <span class="cf">function</span>(buf, offset) <span class="fu">le_u32_from_raw</span>(buf[offset <span class="sc">+</span> <span class="dv">0</span><span class="sc">:</span><span class="dv">3</span>])</span>
+<span id="cb12-17"><a href="#cb12-17" tabindex="-1"></a>read_u64le <span class="ot">&lt;-</span> <span class="cf">function</span>(buf, offset) <span class="fu">le_u64_from_raw</span>(buf[offset <span class="sc">+</span> <span class="dv">0</span><span class="sc">:</span><span class="dv">7</span>])</span>
+<span id="cb12-18"><a href="#cb12-18" tabindex="-1"></a></span>
+<span id="cb12-19"><a href="#cb12-19" tabindex="-1"></a><span class="co"># Serialize a one-row exec request as Arrow IPC using nanoarrow.</span></span>
+<span id="cb12-20"><a href="#cb12-20" tabindex="-1"></a>encode_ducknng_exec_request <span class="ot">&lt;-</span> <span class="cf">function</span>(sql, <span class="at">want_result =</span> <span class="cn">FALSE</span>) {</span>
+<span id="cb12-21"><a href="#cb12-21" tabindex="-1"></a>  con <span class="ot">&lt;-</span> <span class="fu">rawConnection</span>(<span class="fu">raw</span>(), <span class="at">open =</span> <span class="st">&quot;r+&quot;</span>)</span>
+<span id="cb12-22"><a href="#cb12-22" tabindex="-1"></a>  <span class="fu">on.exit</span>(<span class="fu">close</span>(con))</span>
+<span id="cb12-23"><a href="#cb12-23" tabindex="-1"></a>  nanoarrow<span class="sc">::</span><span class="fu">write_nanoarrow</span>(</span>
+<span id="cb12-24"><a href="#cb12-24" tabindex="-1"></a>    <span class="fu">data.frame</span>(<span class="at">sql =</span> sql, <span class="at">want_result =</span> want_result),</span>
+<span id="cb12-25"><a href="#cb12-25" tabindex="-1"></a>    con</span>
+<span id="cb12-26"><a href="#cb12-26" tabindex="-1"></a>  )</span>
+<span id="cb12-27"><a href="#cb12-27" tabindex="-1"></a>  payload <span class="ot">&lt;-</span> <span class="fu">rawConnectionValue</span>(con)</span>
+<span id="cb12-28"><a href="#cb12-28" tabindex="-1"></a>  name <span class="ot">&lt;-</span> <span class="fu">charToRaw</span>(<span class="st">&quot;exec&quot;</span>)</span>
+<span id="cb12-29"><a href="#cb12-29" tabindex="-1"></a>  <span class="fu">c</span>(</span>
+<span id="cb12-30"><a href="#cb12-30" tabindex="-1"></a>    <span class="fu">as.raw</span>(<span class="dv">1</span><span class="dt">L</span>),                  <span class="co"># envelope version</span></span>
+<span id="cb12-31"><a href="#cb12-31" tabindex="-1"></a>    <span class="fu">as.raw</span>(<span class="dv">1</span><span class="dt">L</span>),                  <span class="co"># message type: call</span></span>
+<span id="cb12-32"><a href="#cb12-32" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="dv">0</span>),                    <span class="co"># flags</span></span>
+<span id="cb12-33"><a href="#cb12-33" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="fu">length</span>(name)),         <span class="co"># method-name length</span></span>
+<span id="cb12-34"><a href="#cb12-34" tabindex="-1"></a>    <span class="fu">u32le</span>(<span class="dv">0</span>),                    <span class="co"># error-string length on requests</span></span>
+<span id="cb12-35"><a href="#cb12-35" tabindex="-1"></a>    <span class="fu">u64le</span>(<span class="fu">length</span>(payload)),      <span class="co"># payload length</span></span>
+<span id="cb12-36"><a href="#cb12-36" tabindex="-1"></a>    name,</span>
+<span id="cb12-37"><a href="#cb12-37" tabindex="-1"></a>    payload</span>
+<span id="cb12-38"><a href="#cb12-38" tabindex="-1"></a>  )</span>
+<span id="cb12-39"><a href="#cb12-39" tabindex="-1"></a>}</span>
+<span id="cb12-40"><a href="#cb12-40" tabindex="-1"></a></span>
+<span id="cb12-41"><a href="#cb12-41" tabindex="-1"></a><span class="co"># Decode a reply envelope and, when present, parse the Arrow IPC payload.</span></span>
+<span id="cb12-42"><a href="#cb12-42" tabindex="-1"></a>decode_ducknng_exec_reply <span class="ot">&lt;-</span> <span class="cf">function</span>(buf) {</span>
+<span id="cb12-43"><a href="#cb12-43" tabindex="-1"></a>  name_len <span class="ot">&lt;-</span> <span class="fu">read_u32le</span>(buf, <span class="dv">7</span>)</span>
+<span id="cb12-44"><a href="#cb12-44" tabindex="-1"></a>  error_len <span class="ot">&lt;-</span> <span class="fu">read_u32le</span>(buf, <span class="dv">11</span>)</span>
+<span id="cb12-45"><a href="#cb12-45" tabindex="-1"></a>  payload_len <span class="ot">&lt;-</span> <span class="fu">read_u64le</span>(buf, <span class="dv">15</span>)</span>
+<span id="cb12-46"><a href="#cb12-46" tabindex="-1"></a>  name_start <span class="ot">&lt;-</span> <span class="dv">23</span><span class="dt">L</span></span>
+<span id="cb12-47"><a href="#cb12-47" tabindex="-1"></a>  error_start <span class="ot">&lt;-</span> name_start <span class="sc">+</span> name_len</span>
+<span id="cb12-48"><a href="#cb12-48" tabindex="-1"></a>  payload_start <span class="ot">&lt;-</span> error_start <span class="sc">+</span> error_len</span>
+<span id="cb12-49"><a href="#cb12-49" tabindex="-1"></a>  payload_end <span class="ot">&lt;-</span> payload_start <span class="sc">+</span> payload_len <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span></span>
+<span id="cb12-50"><a href="#cb12-50" tabindex="-1"></a>  payload <span class="ot">&lt;-</span> <span class="cf">if</span> (payload_len <span class="sc">&gt;</span> <span class="dv">0</span>) buf[payload_start<span class="sc">:</span>payload_end] <span class="cf">else</span> <span class="fu">raw</span>()</span>
+<span id="cb12-51"><a href="#cb12-51" tabindex="-1"></a>  <span class="fu">list</span>(</span>
+<span id="cb12-52"><a href="#cb12-52" tabindex="-1"></a>    <span class="at">version =</span> <span class="fu">as.integer</span>(buf[<span class="dv">1</span>]),</span>
+<span id="cb12-53"><a href="#cb12-53" tabindex="-1"></a>    <span class="at">type =</span> <span class="fu">as.integer</span>(buf[<span class="dv">2</span>]),</span>
+<span id="cb12-54"><a href="#cb12-54" tabindex="-1"></a>    <span class="at">flags =</span> <span class="fu">read_u32le</span>(buf, <span class="dv">3</span>),</span>
+<span id="cb12-55"><a href="#cb12-55" tabindex="-1"></a>    <span class="at">method =</span> <span class="fu">rawToChar</span>(buf[name_start<span class="sc">:</span>(error_start <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)]),</span>
+<span id="cb12-56"><a href="#cb12-56" tabindex="-1"></a>    <span class="at">error =</span> <span class="cf">if</span> (error_len <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="fu">rawToChar</span>(buf[error_start<span class="sc">:</span>(payload_start <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)]) <span class="cf">else</span> <span class="st">&quot;&quot;</span>,</span>
+<span id="cb12-57"><a href="#cb12-57" tabindex="-1"></a>    <span class="at">payload =</span> payload,</span>
+<span id="cb12-58"><a href="#cb12-58" tabindex="-1"></a>    <span class="at">data =</span> <span class="cf">if</span> (payload_len <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="fu">as.data.frame</span>(nanoarrow<span class="sc">::</span><span class="fu">read_nanoarrow</span>(payload)) <span class="cf">else</span> <span class="cn">NULL</span></span>
+<span id="cb12-59"><a href="#cb12-59" tabindex="-1"></a>  )</span>
+<span id="cb12-60"><a href="#cb12-60" tabindex="-1"></a>}</span>
+<span id="cb12-61"><a href="#cb12-61" tabindex="-1"></a></span>
+<span id="cb12-62"><a href="#cb12-62" tabindex="-1"></a><span class="co"># Use a temporary IPC path and launch a DuckDB-backed ducknng server in a child process.</span></span>
+<span id="cb12-63"><a href="#cb12-63" tabindex="-1"></a>ext_path <span class="ot">&lt;-</span> <span class="fu">normalizePath</span>(<span class="st">&quot;build/release/ducknng.duckdb_extension&quot;</span>)</span>
+<span id="cb12-64"><a href="#cb12-64" tabindex="-1"></a>ipc_path <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">pattern =</span> <span class="st">&quot;ducknng_readme_exec_&quot;</span>, <span class="at">tmpdir =</span> <span class="st">&quot;/tmp&quot;</span>, <span class="at">fileext =</span> <span class="st">&quot;.ipc&quot;</span>)</span>
+<span id="cb12-65"><a href="#cb12-65" tabindex="-1"></a>ipc_url <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;ipc://&quot;</span>, ipc_path)</span>
+<span id="cb12-66"><a href="#cb12-66" tabindex="-1"></a></span>
+<span id="cb12-67"><a href="#cb12-67" tabindex="-1"></a>server_job <span class="ot">&lt;-</span> parallel<span class="sc">::</span><span class="fu">mcparallel</span>({</span>
+<span id="cb12-68"><a href="#cb12-68" tabindex="-1"></a>  drv <span class="ot">&lt;-</span> duckdb<span class="sc">::</span><span class="fu">duckdb</span>(<span class="at">config =</span> <span class="fu">list</span>(<span class="at">allow_unsigned_extensions =</span> <span class="st">&quot;true&quot;</span>))</span>
+<span id="cb12-69"><a href="#cb12-69" tabindex="-1"></a>  con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(drv, <span class="at">dbdir =</span> <span class="st">&quot;:memory:&quot;</span>)</span>
+<span id="cb12-70"><a href="#cb12-70" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbExecute</span>(con, <span class="fu">sprintf</span>(<span class="st">&quot;LOAD &#39;%s&#39;&quot;</span>, ext_path))</span>
+<span id="cb12-71"><a href="#cb12-71" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="fu">sprintf</span>(</span>
+<span id="cb12-72"><a href="#cb12-72" tabindex="-1"></a>    <span class="st">&quot;SELECT ducknng_start_server(&#39;sql_exec&#39;, &#39;%s&#39;, 1, 134217728, 300000, NULL, NULL, NULL)&quot;</span>,</span>
+<span id="cb12-73"><a href="#cb12-73" tabindex="-1"></a>    ipc_url</span>
+<span id="cb12-74"><a href="#cb12-74" tabindex="-1"></a>  ))</span>
+<span id="cb12-75"><a href="#cb12-75" tabindex="-1"></a>  <span class="fu">Sys.sleep</span>(<span class="dv">2</span>)</span>
+<span id="cb12-76"><a href="#cb12-76" tabindex="-1"></a>  rows <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT * FROM ducknng_exec_demo ORDER BY i&quot;</span>)</span>
+<span id="cb12-77"><a href="#cb12-77" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(con, <span class="st">&quot;SELECT ducknng_stop_server(&#39;sql_exec&#39;)&quot;</span>)</span>
+<span id="cb12-78"><a href="#cb12-78" tabindex="-1"></a>  DBI<span class="sc">::</span><span class="fu">dbDisconnect</span>(con, <span class="at">shutdown =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb12-79"><a href="#cb12-79" tabindex="-1"></a>  rows</span>
+<span id="cb12-80"><a href="#cb12-80" tabindex="-1"></a>})</span>
+<span id="cb12-81"><a href="#cb12-81" tabindex="-1"></a></span>
+<span id="cb12-82"><a href="#cb12-82" tabindex="-1"></a><span class="co"># Give the listener a moment to come up, then dial it with a normal req socket.</span></span>
+<span id="cb12-83"><a href="#cb12-83" tabindex="-1"></a><span class="fu">Sys.sleep</span>(<span class="dv">1</span>)</span>
+<span id="cb12-84"><a href="#cb12-84" tabindex="-1"></a>req <span class="ot">&lt;-</span> nanonext<span class="sc">::</span><span class="fu">socket</span>(<span class="st">&quot;req&quot;</span>, <span class="at">dial =</span> ipc_url, <span class="at">autostart =</span> <span class="cn">NA</span>)</span>
+<span id="cb12-85"><a href="#cb12-85" tabindex="-1"></a></span>
+<span id="cb12-86"><a href="#cb12-86" tabindex="-1"></a><span class="co"># Create a table remotely and inspect the reply metadata.</span></span>
+<span id="cb12-87"><a href="#cb12-87" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(req, <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;CREATE TABLE ducknng_exec_demo(i INTEGER)&quot;</span>), <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>)</span>
+<span id="cb12-88"><a href="#cb12-88" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
+<span id="cb12-89"><a href="#cb12-89" tabindex="-1"></a>create_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
+<span id="cb12-90"><a href="#cb12-90" tabindex="-1"></a>create_reply<span class="sc">$</span>data</span>
+<span id="cb12-91"><a href="#cb12-91" tabindex="-1"></a><span class="co">#&gt;   rows_changed statement_type result_type</span></span>
+<span id="cb12-92"><a href="#cb12-92" tabindex="-1"></a><span class="co">#&gt; 1            0              7           2</span></span>
+<span id="cb12-93"><a href="#cb12-93" tabindex="-1"></a></span>
+<span id="cb12-94"><a href="#cb12-94" tabindex="-1"></a><span class="co"># Insert rows remotely and inspect the second reply.</span></span>
+<span id="cb12-95"><a href="#cb12-95" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(req, <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;INSERT INTO ducknng_exec_demo VALUES (42), (99)&quot;</span>), <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>)</span>
+<span id="cb12-96"><a href="#cb12-96" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
+<span id="cb12-97"><a href="#cb12-97" tabindex="-1"></a>insert_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
+<span id="cb12-98"><a href="#cb12-98" tabindex="-1"></a>insert_reply<span class="sc">$</span>data</span>
+<span id="cb12-99"><a href="#cb12-99" tabindex="-1"></a><span class="co">#&gt;   rows_changed statement_type result_type</span></span>
+<span id="cb12-100"><a href="#cb12-100" tabindex="-1"></a><span class="co">#&gt; 1            2              2           1</span></span>
+<span id="cb12-101"><a href="#cb12-101" tabindex="-1"></a></span>
+<span id="cb12-102"><a href="#cb12-102" tabindex="-1"></a><span class="co"># Request result rows directly with want_result = TRUE.</span></span>
+<span id="cb12-103"><a href="#cb12-103" tabindex="-1"></a>nanonext<span class="sc">::</span><span class="fu">send</span>(</span>
+<span id="cb12-104"><a href="#cb12-104" tabindex="-1"></a>  req,</span>
+<span id="cb12-105"><a href="#cb12-105" tabindex="-1"></a>  <span class="fu">encode_ducknng_exec_request</span>(<span class="st">&quot;SELECT i, i &gt; 50 AS gt_50 FROM ducknng_exec_demo ORDER BY i&quot;</span>, <span class="at">want_result =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb12-106"><a href="#cb12-106" tabindex="-1"></a>  <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>,</span>
+<span id="cb12-107"><a href="#cb12-107" tabindex="-1"></a>  <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span></span>
+<span id="cb12-108"><a href="#cb12-108" tabindex="-1"></a>)</span>
+<span id="cb12-109"><a href="#cb12-109" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
+<span id="cb12-110"><a href="#cb12-110" tabindex="-1"></a>select_reply <span class="ot">&lt;-</span> <span class="fu">decode_ducknng_exec_reply</span>(nanonext<span class="sc">::</span><span class="fu">recv</span>(req, <span class="at">mode =</span> <span class="st">&quot;raw&quot;</span>, <span class="at">block =</span> <span class="dv">1000</span><span class="dt">L</span>))</span>
+<span id="cb12-111"><a href="#cb12-111" tabindex="-1"></a>select_reply<span class="sc">$</span>data</span>
+<span id="cb12-112"><a href="#cb12-112" tabindex="-1"></a><span class="co">#&gt;    i gt_50</span></span>
+<span id="cb12-113"><a href="#cb12-113" tabindex="-1"></a><span class="co">#&gt; 1 42 FALSE</span></span>
+<span id="cb12-114"><a href="#cb12-114" tabindex="-1"></a><span class="co">#&gt; 2 99  TRUE</span></span>
+<span id="cb12-115"><a href="#cb12-115" tabindex="-1"></a></span>
+<span id="cb12-116"><a href="#cb12-116" tabindex="-1"></a><span class="co"># Collect the server-side query result from the child process.</span></span>
+<span id="cb12-117"><a href="#cb12-117" tabindex="-1"></a>server_rows <span class="ot">&lt;-</span> parallel<span class="sc">::</span><span class="fu">mccollect</span>(server_job)[[<span class="dv">1</span>]]</span>
+<span id="cb12-118"><a href="#cb12-118" tabindex="-1"></a>server_rows</span>
+<span id="cb12-119"><a href="#cb12-119" tabindex="-1"></a><span class="co">#&gt;    i</span></span>
+<span id="cb12-120"><a href="#cb12-120" tabindex="-1"></a><span class="co">#&gt; 1 42</span></span>
+<span id="cb12-121"><a href="#cb12-121" tabindex="-1"></a><span class="co">#&gt; 2 99</span></span>
+<span id="cb12-122"><a href="#cb12-122" tabindex="-1"></a></span>
+<span id="cb12-123"><a href="#cb12-123" tabindex="-1"></a><span class="fu">close</span>(req)</span></code></pre></div>
 
 </body>
 </html>

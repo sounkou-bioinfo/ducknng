@@ -82,11 +82,13 @@ def render_markdown(functions: list[dict[str, object]]) -> str:
         lines.append("| name | kind | arguments | returns | description |")
         lines.append("|---|---|---|---|---|")
         for entry in entries:
+            arguments = escape_md(extract_arguments(str(entry["signature"])))
+            arguments_md = f"`{arguments}`" if arguments else ""
             lines.append(
-                "| `{name}` | {kind} | `{arguments}` | `{returns}` | {description} |".format(
+                "| `{name}` | {kind} | {arguments} | `{returns}` | {description} |".format(
                     name=escape_md(str(entry["name"])),
                     kind=escape_md(str(entry["kind"])),
-                    arguments=escape_md(extract_arguments(str(entry["signature"]))),
+                    arguments=arguments_md,
                     returns=escape_md(str(entry["returns"])),
                     description=escape_md(str(entry["description"])),
                 )

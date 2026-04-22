@@ -13,7 +13,7 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_list_servers` | table | `` | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)` | List registered ducknng services. |
+| `ducknng_list_servers` | table |  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)` | List registered ducknng services. |
 
 ## Primitive Transport
 
@@ -22,7 +22,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_open_socket` | scalar | `protocol` | `UBIGINT` | Open a client socket handle for a supported protocol. |
 | `ducknng_dial_socket` | scalar | `socket_id, url, timeout_ms` | `BOOLEAN` | Dial a URL using an opened socket handle. |
 | `ducknng_close_socket` | scalar | `socket_id` | `BOOLEAN` | Close a client socket handle. |
-| `ducknng_list_sockets` | table | `` | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | List client socket handles in the runtime. |
+| `ducknng_list_sockets` | table |  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | List client socket handles in the runtime. |
 | `ducknng_request` | table | `url, payload, timeout_ms` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)` | Perform a one-shot raw request and return a structured result row. |
 | `ducknng_request_socket` | table | `socket_id, payload, timeout_ms` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)` | Perform a raw request through a previously dialed socket handle and return a structured result row. |
 | `ducknng_request_raw` | scalar | `url, payload, timeout_ms` | `BLOB` | Perform a one-shot raw request and return the raw reply frame bytes. |
@@ -33,7 +33,7 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_list_tls_configs` | table | `` | `TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)` | List registered TLS config handles and the kinds of material they contain. |
+| `ducknng_list_tls_configs` | table |  | `TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)` | List registered TLS config handles and the kinds of material they contain. |
 | `ducknng_drop_tls_config` | scalar | `tls_config_id` | `BOOLEAN` | Remove a registered TLS config handle from the runtime. |
 | `ducknng_self_signed_tls_config` | scalar | `common_name, valid_days, auth_mode` | `UBIGINT` | Generate a self-signed development certificate and register it as a TLS config handle. |
 | `ducknng_tls_config_from_pem` | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT` | Register a TLS config handle from in-memory PEM material. |

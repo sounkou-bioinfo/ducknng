@@ -28,11 +28,11 @@ knitr::knit_engines$set(sql = function(options) {
 
 Its SQL-facing client and server interface is explicitly modeled over [`r-lib/nanonext`](https://github.com/r-lib/nanonext), taking req/rep sockets, dial/listen semantics, context-oriented NNG usage, and a practical messaging surface as the reference point for what should feel natural from DuckDB SQL. Its RPC framing and tabular payload direction are likewise informed by Arrow IPC based RPC work such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro) and related projects, where a thin envelope is kept separate from Arrow IPC request and reply payloads instead of being buried inside one-off method-specific binaries.
 
-At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. That transport surface is operation-oriented rather than transport-specific: transport is autodetected from the URL scheme in the same general style as `nanonext`, so the same API can work with `inproc://`, `ipc://`, `tcp://`, and later `tls+tcp://` without spawning a separate helper family for each scheme. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
+At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. That transport surface is operation-oriented rather than transport-specific: transport is autodetected from the URL scheme in the same general style as `nanonext`, so the same API can work with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning a separate helper family for each scheme. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
 
 The next documented protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should still be treated as development scaffolding rather than as a production-safe multi-client surface.
 
-The transport-security utility layer now also has a first runtime model for TLS configuration handles. Those handles can be assembled from file-backed certificate material, from in-memory PEM strings, or from self-signed development certificates generated on demand. The actual `tls+tcp://` transport wiring is still intentionally isolated behind `ducknng_nng_compat.c` and is not enabled yet, but the handle model is now in place so the public API does not need to be reinvented when that transport path is turned on.
+The transport-security utility layer now has a runtime model for TLS configuration handles. Those handles can be assembled from file-backed certificate material, from in-memory PEM strings, or from self-signed development certificates generated on demand. The actual `tls+tcp://` transport wiring remains isolated behind `ducknng_nng_compat.c`, but it is now enabled for real loopback listener and one-shot client-request paths so the public API no longer needs a separate transport-specific helper family. This follows the same broad direction as `nanonext`, which exposes TLS helper facilities backed by mbedTLS rather than forcing every client to hand-roll certificate setup outside the transport layer.
 
 ## Functions
 
@@ -47,7 +47,7 @@ make configure
 make release
 ```
 
-See also `NEWS.md` for the current implementation status and planned next steps, and `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the binding transport, TLS, and session/query-family contract. Those design docs also define the intended TLS direction: certificate and key material should be accepted either from files or from in-memory PEM content, with helper utilities for development certificate generation and client/server TLS configuration rather than a file-only setup path.
+See also `NEWS.md` for the current implementation status and planned next steps, and `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the binding transport, TLS, and session/query-family contract. Those design docs also define the current TLS direction: certificate and key material can be accepted either from files or from in-memory PEM content, with helper utilities for development certificate generation and client/server TLS configuration rather than a file-only setup path.
 
 ## Examples
 
@@ -147,6 +147,75 @@ FROM ducknng_decode_frame(
 -- Close the client socket handle and stop the demo server.
 SELECT ducknng_close_socket(1);
 SELECT ducknng_stop_server('sql_client_demo');
+```
+
+### `tls+tcp://` with a self-signed development TLS config
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Generate a self-signed loopback certificate and keep it as a runtime TLS handle.
+SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 0);
+
+-- Start a TLS listener using the generated config handle.
+SELECT ducknng_start_server(
+  'tls_demo_self',
+  'tls+tcp://127.0.0.1:45453',
+  1,
+  134217728,
+  300000,
+  1
+);
+
+-- Send a raw manifest request over TLS and decode the reply frame.
+SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'tls+tcp://127.0.0.1:45453',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    1
+  )
+);
+
+-- Clean up the TLS demo server and config handle.
+SELECT ducknng_stop_server('tls_demo_self');
+SELECT ducknng_drop_tls_config(1);
+```
+
+### `tls+tcp://` from file-backed certificate material
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Register a file-backed TLS config using committed loopback test certificates.
+SELECT ducknng_tls_config_from_files(
+  'test/certs/loopback-cert-key.pem',
+  'test/certs/loopback-ca.pem',
+  NULL,
+  0
+);
+
+-- Start a TLS listener with that file-backed config.
+SELECT ducknng_start_server(
+  'tls_demo_files',
+  'tls+tcp://127.0.0.1:45454',
+  1,
+  134217728,
+  300000,
+  1
+);
+
+-- Inspect the manifest reply over TLS using the same config handle on the client side.
+SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'tls+tcp://127.0.0.1:45454',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    1
+  )
+);
+
+-- Clean up the file-backed TLS demo server and config handle.
+SELECT ducknng_stop_server('tls_demo_files');
+SELECT ducknng_drop_tls_config(1);
 ```
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example
