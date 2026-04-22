@@ -11,4 +11,4 @@ ducknng_close	scalar	Client Socket	ducknng_close(socket_id)	BOOLEAN	0.1.0	True	2
 ducknng_sockets	table	Introspection	ducknng_sockets()	TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)	0.1.0	True	2	List client socket handles registered in the current DuckDB runtime.
 ducknng_request	scalar	Client Socket	ducknng_request(url, payload, timeout_ms)	BLOB	0.1.0	True	2	Perform a one-shot req-style raw request and return the raw reply bytes.
 ducknng_request_socket	scalar	Client Socket	ducknng_request_socket(socket_id, payload, timeout_ms)	BLOB	0.1.0	True	2	Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes.
-ducknng_remote	table	Client / Test Helper	ducknng_remote(url, sql, input_table := NULL)	table	0.1.0	False	3	Execute a remote query over REQ/REP and stream Arrow IPC batches back as a DuckDB table function.
+ducknng_remote	table	Client / Test Helper	ducknng_remote(url, sql)	table	0.1.0	True	3	Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function.

@@ -185,6 +185,64 @@ cleanup:
     return rc;
 }
 
+int ducknng_decode_ipc_table_payload(const uint8_t *payload, size_t payload_len,
+    struct ArrowSchema *schema, struct ArrowArray *array, char **errmsg) {
+    struct ArrowBuffer input_buf;
+    struct ArrowIpcInputStream input_stream;
+    struct ArrowArrayStream stream;
+    struct ArrowError error;
+    int rc = -1;
+    memset(&input_buf, 0, sizeof(input_buf));
+    memset(&input_stream, 0, sizeof(input_stream));
+    memset(&stream, 0, sizeof(stream));
+    memset(&error, 0, sizeof(error));
+    if (!payload || payload_len == 0 || !schema || !array) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing Arrow table payload");
+        return -1;
+    }
+    memset(schema, 0, sizeof(*schema));
+    memset(array, 0, sizeof(*array));
+    ArrowBufferInit(&input_buf);
+    if (ArrowBufferAppend(&input_buf, payload, (int64_t)payload_len) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to copy Arrow table payload");
+        goto cleanup;
+    }
+    if (ArrowIpcInputStreamInitBuffer(&input_stream, &input_buf) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize Arrow IPC input stream");
+        input_buf.data = NULL;
+        goto cleanup;
+    }
+    memset(&input_buf, 0, sizeof(input_buf));
+    if (ArrowIpcArrayStreamReaderInit(&stream, &input_stream, NULL) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize Arrow IPC reader");
+        memset(&input_stream, 0, sizeof(input_stream));
+        goto cleanup;
+    }
+    memset(&input_stream, 0, sizeof(input_stream));
+    if (ArrowArrayStreamGetSchema(&stream, schema, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (ArrowArrayStreamGetNext(&stream, array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message);
+        goto cleanup;
+    }
+    if (!array->release) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: Arrow table payload did not contain a record batch");
+        goto cleanup;
+    }
+    rc = 0;
+cleanup:
+    if (rc != 0) {
+        if (array->release) ArrowArrayRelease(array);
+        if (schema->release) ArrowSchemaRelease(schema);
+    }
+    if (stream.release) ArrowArrayStreamRelease(&stream);
+    if (input_stream.release) input_stream.release(&input_stream);
+    if (input_buf.data) ArrowBufferReset(&input_buf);
+    return rc;
+}
+
 void ducknng_exec_request_destroy(ducknng_exec_request *req) {
     if (!req) return;
     if (req->sql) duckdb_free(req->sql);

@@ -25,6 +25,12 @@ SELECT ducknng_remote_exec('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'INSERT IN
 ----
 2
 
+query II
+SELECT * FROM ducknng_remote('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i, i > 7 AS gt_7 FROM remote_t ORDER BY i')
+----
+7	false
+8	true
+
 query I
 SELECT ducknng_socket('req')
 ----

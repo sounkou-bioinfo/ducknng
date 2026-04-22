@@ -16,4 +16,4 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_sockets` | table | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | 2 | yes | List client socket handles registered in the current DuckDB runtime. |
 | `ducknng_request` | scalar | `BLOB` | 2 | yes | Perform a one-shot req-style raw request and return the raw reply bytes. |
 | `ducknng_request_socket` | scalar | `BLOB` | 2 | yes | Perform a req-style raw request using a previously dialed client socket handle and return the raw reply bytes. |
-| `ducknng_remote` | table | `table` | 3 | no | Execute a remote query over REQ/REP and stream Arrow IPC batches back as a DuckDB table function. |
+| `ducknng_remote` | table | `table` | 3 | yes | Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function. |

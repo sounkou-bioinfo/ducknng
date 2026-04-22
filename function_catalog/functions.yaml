@@ -220,15 +220,16 @@
       "name": "ducknng_remote",
       "kind": "table",
       "category": "Client / Test Helper",
-      "signature": "ducknng_remote(url, sql, input_table := NULL)",
+      "signature": "ducknng_remote(url, sql)",
       "returns": "table",
       "aliases": [],
       "since": "0.1.0",
-      "implemented": false,
+      "implemented": true,
       "phase": 3,
-      "description": "Execute a remote query over REQ/REP and stream Arrow IPC batches back as a DuckDB table function.",
+      "description": "Execute a remote row-returning query over REQ/REP and expose the unary Arrow IPC row reply as a DuckDB table function.",
       "notes": [
-        "Planned for streaming query phases."
+        "This is the current unary row-reply client path, not the future session streaming path.",
+        "It supports the same currently implemented unary row subset as server-side exec row replies: BOOLEAN, signed/unsigned integers, FLOAT/DOUBLE, VARCHAR, and BLOB."
       ],
       "examples": [
         "SELECT * FROM ducknng_remote('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer');"
