@@ -52,7 +52,7 @@ server_job <- parallel::mcparallel({
   con <- DBI::dbConnect(drv, dbdir = ":memory:")
   DBI::dbExecute(con, sprintf("LOAD '%s'", ext_path))
   DBI::dbGetQuery(con, sprintf(
-    "SELECT ducknng_start_server('smoke', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
+    "SELECT ducknng_start_server('smoke', '%s', 1, 134217728, 300000, 0)",
     ipc_url
   ))
   Sys.sleep(4)

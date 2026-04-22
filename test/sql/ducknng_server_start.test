@@ -4,13 +4,13 @@
 require ducknng
 
 statement error
-SELECT ducknng_start_server('bad_contexts', 'ipc:///tmp/ducknng_bad_contexts.ipc', 0, 134217728, 300000, NULL, NULL, NULL)
+SELECT ducknng_start_server('bad_contexts', 'ipc:///tmp/ducknng_bad_contexts.ipc', 0, 134217728, 300000, 0)
 ----
 ducknng: contexts must be >= 1
 
 query I
 SELECT CASE
-  WHEN ducknng_start_server('tcp0', 'tcp://0.0.0.0:0', 1, 134217728, 300000, NULL, NULL, NULL)
+  WHEN ducknng_start_server('tcp0', 'tcp://0.0.0.0:0', 1, 134217728, 300000, 0)
   THEN 1 ELSE 0 END
 ----
 1
@@ -22,7 +22,7 @@ SELECT CASE WHEN ducknng_stop_server('tcp0') THEN 1 ELSE 0 END
 
 query I
 SELECT CASE
-  WHEN ducknng_start_server('inproc0', 'inproc://ducknng_server_start_test', 1, 134217728, 300000, NULL, NULL, NULL)
+  WHEN ducknng_start_server('inproc0', 'inproc://ducknng_server_start_test', 1, 134217728, 300000, 0)
   THEN 1 ELSE 0 END
 ----
 1
@@ -33,9 +33,9 @@ SELECT CASE WHEN ducknng_stop_server('inproc0') THEN 1 ELSE 0 END
 1
 
 statement error
-SELECT ducknng_start_server('bad_tls', 'ipc:///tmp/ducknng_bad_tls.ipc', 1, 134217728, 300000, '/tmp/cert.pem', NULL, NULL)
+SELECT ducknng_start_server('bad_tls', 'tls+tcp://127.0.0.1:45445', 1, 134217728, 300000, 0)
 ----
-ducknng: TLS configuration requires a tls+tcp:// listen URL
+ducknng: tls+tcp listeners require TLS configuration
 
 query I
 SELECT ducknng_tls_config_from_pem('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n', '-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n', '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n', NULL, 1) > 0
@@ -60,7 +60,7 @@ SELECT ducknng_drop_tls_config(1)
 
 query I
 SELECT CASE
-  WHEN ducknng_start_server('sql0', 'ipc:///tmp/ducknng_phase1_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
+  WHEN ducknng_start_server('sql0', 'ipc:///tmp/ducknng_phase1_sql0.ipc', 1, 134217728, 300000, 0)
   THEN 1 ELSE 0 END
 ----
 1
@@ -74,8 +74,13 @@ sql0	ipc:///tmp/ducknng_phase1_sql0.ipc	1	true	0
 query TI
 SELECT name, requires_auth
 FROM ducknng_list_methods()
+ORDER BY name
 ----
+cancel	false
+close	false
+fetch	false
 manifest	false
+query_open	false
 
 query I
 SELECT ducknng_register_exec_method()
@@ -97,8 +102,13 @@ SELECT ducknng_unregister_method('exec')
 query T
 SELECT name
 FROM ducknng_list_methods()
+ORDER BY name
 ----
+cancel
+close
+fetch
 manifest
+query_open
 
 query I
 SELECT CASE WHEN ducknng_stop_server('sql0') THEN 1 ELSE 0 END

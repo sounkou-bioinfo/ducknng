@@ -16,6 +16,20 @@ and related projects, where a thin envelope is kept separate from Arrow
 IPC request and reply payloads instead of being buried inside one-off
 method-specific binaries.
 
+`ducknng` now declares itself explicitly as an unstable C API extension
+targeting a single DuckDB version line. This is deliberate and should
+not be hidden behind stable-ABI language. The DuckDB project’s own
+release-cycle documentation classifies unstable API extensions as
+version-tied extensions that are not binary-compatible across multiple
+DuckDB versions, and that is the correct model for `ducknng` while it
+reaches into unstable ABI territory for deeper Arrow/runtime work. The
+repo should therefore be read as an unstable-ABI extension that targets
+one DuckDB release line at a time, not as a stable C API extension
+promising cross-version binary compatibility. In the current local
+development/test setup that target line is DuckDB `v1.5.2`, and changing
+DuckDB versions now requires rebuilding and retargeting the extension on
+purpose.
+
 At the moment, `ducknng` already exposes a low-level transport layer
 with socket-open, dial, close, and raw request primitives, alongside
 SQL-visible server lifecycle control and runtime introspection through
@@ -24,11 +38,15 @@ SQL-visible server lifecycle control and runtime introspection through
 rather than transport-specific: transport is autodetected from the URL
 scheme in the same general style as `nanonext`, so the same API can work
 with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning
-a separate helper family for each scheme. On the server side it runs one
-REP socket with one or more REP contexts, and on top of that transport
-it already supports a working RPC request/reply path with manifest
-discovery, metadata-oriented execution, and unary row-returning
-execution over the current raw wire and Arrow IPC model.
+a separate helper family for each scheme, while TLS material is passed
+through reusable `tls_config_id` handles instead of inline
+transport-specific arguments. The current SQL client socket-handle layer
+is still honest but narrow: `ducknng_open_socket()` only implements
+`req` today. On the server side it runs one REP socket with one or more
+REP contexts, and on top of that transport it already supports a working
+RPC request/reply path with manifest discovery, metadata-oriented
+execution, and unary row-returning execution over the current raw wire
+and Arrow IPC model.
 
 The next documented protocol slice is the session query family:
 `query_open`, `fetch`, `close`, and `cancel`. In the current contract,
@@ -60,10 +78,10 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Service Control
 
-| name                   | kind   | arguments                                                                                                                                                                                                | returns   | description                         |
-|------------------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|-------------------------------------|
-| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode) or ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng REP listener. |
-| `ducknng_stop_server`  | scalar | `name`                                                                                                                                                                                                   | `BOOLEAN` | Stop a named ducknng service.       |
+| name                   | kind   | arguments                                                                | returns   | description                         |
+|------------------------|--------|--------------------------------------------------------------------------|-----------|-------------------------------------|
+| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng REP listener. |
+| `ducknng_stop_server`  | scalar | `name`                                                                   | `BOOLEAN` | Stop a named ducknng service.       |
 
 ## Introspection
 
@@ -82,17 +100,17 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Primitive Transport
 
-| name                         | kind   | arguments                        | returns                                                                                                                                                  | description                                                                                         |
-|------------------------------|--------|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
-| `ducknng_open_socket`        | scalar | `protocol`                       | `UBIGINT`                                                                                                                                                | Open a client socket handle for a supported protocol.                                               |
-| `ducknng_dial_socket`        | scalar | `socket_id, url, timeout_ms`     | `BOOLEAN`                                                                                                                                                | Dial a URL using an opened socket handle.                                                           |
-| `ducknng_close_socket`       | scalar | `socket_id`                      | `BOOLEAN`                                                                                                                                                | Close a client socket handle.                                                                       |
-| `ducknng_list_sockets`       | table  |                                  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)`             | List client socket handles in the runtime.                                                          |
-| `ducknng_request`            | table  | `url, payload, timeout_ms`       | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a one-shot raw request and return a structured result row.                                  |
-| `ducknng_request_socket`     | table  | `socket_id, payload, timeout_ms` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a raw request through a previously dialed socket handle and return a structured result row. |
-| `ducknng_request_raw`        | scalar | `url, payload, timeout_ms`       | `BLOB`                                                                                                                                                   | Perform a one-shot raw request and return the raw reply frame bytes.                                |
-| `ducknng_request_socket_raw` | scalar | `socket_id, payload, timeout_ms` | `BLOB`                                                                                                                                                   | Perform a raw request through a dialed socket handle and return the raw reply frame bytes.          |
-| `ducknng_decode_frame`       | table  | `frame`                          | `TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)` | Decode a raw ducknng frame into envelope fields and extracted payload columns.                      |
+| name                         | kind   | arguments                                 | returns                                                                                                                                                  | description                                                                                         |
+|------------------------------|--------|-------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `ducknng_open_socket`        | scalar | `protocol`                                | `UBIGINT`                                                                                                                                                | Open a client socket handle for a supported protocol.                                               |
+| `ducknng_dial_socket`        | scalar | `socket_id, url, timeout_ms`              | `BOOLEAN`                                                                                                                                                | Dial a URL using an opened socket handle.                                                           |
+| `ducknng_close_socket`       | scalar | `socket_id`                               | `BOOLEAN`                                                                                                                                                | Close a client socket handle.                                                                       |
+| `ducknng_list_sockets`       | table  |                                           | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)`             | List client socket handles in the runtime.                                                          |
+| `ducknng_request`            | table  | `url, payload, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a one-shot raw request and return a structured result row.                                  |
+| `ducknng_request_socket`     | table  | `socket_id, payload, timeout_ms`          | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a raw request through a previously dialed socket handle and return a structured result row. |
+| `ducknng_request_raw`        | scalar | `url, payload, timeout_ms, tls_config_id` | `BLOB`                                                                                                                                                   | Perform a one-shot raw request and return the raw reply frame bytes.                                |
+| `ducknng_request_socket_raw` | scalar | `socket_id, payload, timeout_ms`          | `BLOB`                                                                                                                                                   | Perform a raw request through a dialed socket handle and return the raw reply frame bytes.          |
+| `ducknng_decode_frame`       | table  | `frame`                                   | `TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)` | Decode a raw ducknng frame into envelope fields and extracted payload columns.                      |
 
 ## Transport Security
 
@@ -106,13 +124,13 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## RPC Helper
 
-| name                           | kind   | arguments  | returns                                                                                               | description                                                                                   |
-|--------------------------------|--------|------------|-------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| `ducknng_get_rpc_manifest`     | table  | `url`      | `TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)`                                                  | Request the RPC manifest and return a structured result row.                                  |
-| `ducknng_get_rpc_manifest_raw` | scalar | `url`      | `BLOB`                                                                                                | Request the RPC manifest and return the raw reply frame as BLOB.                              |
-| `ducknng_run_rpc`              | table  | `url, sql` | `TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)` | Execute a metadata-oriented RPC call and return a structured result row.                      |
-| `ducknng_run_rpc_raw`          | scalar | `url, sql` | `BLOB`                                                                                                | Execute the exec RPC and return the raw reply frame as BLOB.                                  |
-| `ducknng_query_rpc`            | table  | `url, sql` | `table`                                                                                               | Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table. |
+| name                           | kind   | arguments                 | returns                                                                                               | description                                                                                   |
+|--------------------------------|--------|---------------------------|-------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| `ducknng_get_rpc_manifest`     | table  | `url, tls_config_id`      | `TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)`                                                  | Request the RPC manifest and return a structured result row.                                  |
+| `ducknng_get_rpc_manifest_raw` | scalar | `url, tls_config_id`      | `BLOB`                                                                                                | Request the RPC manifest and return the raw reply frame as BLOB.                              |
+| `ducknng_run_rpc`              | table  | `url, sql, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)` | Execute a metadata-oriented RPC call and return a structured result row.                      |
+| `ducknng_run_rpc_raw`          | scalar | `url, sql, tls_config_id` | `BLOB`                                                                                                | Execute the exec RPC and return the raw reply frame as BLOB.                                  |
+| `ducknng_query_rpc`            | table  | `url, sql, tls_config_id` | `table`                                                                                               | Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table. |
 
 ## Build
 
@@ -142,9 +160,7 @@ SELECT ducknng_start_server(
   1,                              -- REP contexts
   134217728,                      -- recv_max_bytes
   300000,                         -- session_idle_ms
-  NULL,                           -- tls_cert_key_file
-  NULL,                           -- tls_ca_file
-  NULL                            -- tls_auth_mode
+  0                               -- tls_config_id (0 means plaintext)
 );
 
 SELECT name, listen, contexts, running, sessions
@@ -153,24 +169,16 @@ FROM ducknng_list_servers();
 SELECT ducknng_stop_server('sql0');
 ```
 
-    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL) │
-    │                                               boolean                                               │
-    ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                                                │
-    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬─────────────────────────────┬──────────┬─────────┬──────────┐
-    │  name   │           listen            │ contexts │ running │ sessions │
-    │ varchar │           varchar           │  int32   │ boolean │  uint64  │
-    ├─────────┼─────────────────────────────┼──────────┼─────────┼──────────┤
-    │ sql0    │ ipc:///tmp/ducknng_sql0.ipc │        1 │ true    │        0 │
-    └─────────┴─────────────────────────────┴──────────┴─────────┴──────────┘
-    ┌─────────────────────────────┐
-    │ ducknng_stop_server('sql0') │
-    │           boolean           │
-    ├─────────────────────────────┤
-    │ true                        │
-    └─────────────────────────────┘
+    Success
+
+    ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, 0)
+    True
+
+    name    listen  contexts    running sessions
+    sql0    ipc:///tmp/ducknng_sql0.ipc 1   True    0
+
+    ducknng_stop_server('sql0')
+    True
 
 ### Request multiple REP contexts on one REP socket
 
@@ -182,9 +190,7 @@ SELECT ducknng_start_server(
   3,                              -- REP contexts
   134217728,                      -- recv_max_bytes
   300000,                         -- session_idle_ms
-  NULL,                           -- tls_cert_key_file
-  NULL,                           -- tls_ca_file
-  NULL                            -- tls_auth_mode
+  0                               -- tls_config_id (0 means plaintext)
 );
 
 SELECT name, contexts, running
@@ -194,24 +200,16 @@ WHERE name = 'sql_multi';
 SELECT ducknng_stop_server('sql_multi');
 ```
 
-    ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_start_server('sql_multi', 'ipc:///tmp/ducknng_sql_multi.ipc', 3, 134217728, 300000, NULL, NULL, NULL) │
-    │                                                    boolean                                                    │
-    ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                                                          │
-    └───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌───────────┬──────────┬─────────┐
-    │   name    │ contexts │ running │
-    │  varchar  │  int32   │ boolean │
-    ├───────────┼──────────┼─────────┤
-    │ sql_multi │        3 │ true    │
-    └───────────┴──────────┴─────────┘
-    ┌──────────────────────────────────┐
-    │ ducknng_stop_server('sql_multi') │
-    │             boolean              │
-    ├──────────────────────────────────┤
-    │ true                             │
-    └──────────────────────────────────┘
+    Success
+
+    ducknng_start_server('sql_multi', 'ipc:///tmp/ducknng_sql_multi.ipc', 3, 134217728, 300000, 0)
+    True
+
+    name    contexts    running
+    sql_multi   3   True
+
+    ducknng_stop_server('sql_multi')
+    True
 
 ### DuckDB can also act as a client
 
@@ -224,26 +222,24 @@ SELECT ducknng_start_server(
   1,                              -- REP contexts
   134217728,                      -- recv_max_bytes
   300000,                         -- session_idle_ms
-  NULL,                           -- tls_cert_key_file
-  NULL,                           -- tls_ca_file
-  NULL                            -- tls_auth_mode
+  0                               -- tls_config_id (0 means plaintext)
 );
 
 -- The default RPC surface is minimal: manifest is built in, exec is opt-in.
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc');
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
 SELECT * FROM ducknng_list_methods();
 
 -- Register exec explicitly before exposing SQL execution over RPC.
 SELECT ducknng_register_exec_method();
 SELECT * FROM ducknng_list_methods();
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc');
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
 
 -- RPC helper: run non-row statements and keep errors in-band.
-SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');
-SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT);
+SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)', 0::UBIGINT);
 
 -- RPC helper: fetch row results through the unary query path.
-SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i');
+SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i', 0::UBIGINT);
 
 -- Primitive transport layer: open a socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');
@@ -252,24 +248,24 @@ SELECT * FROM ducknng_list_sockets();
 
 -- Primitive transport layer: send a raw manifest frame and inspect the reply prefix.
 SELECT * FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
-SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);
+SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT);
 
 -- Raw scalar forms now mean raw reply frames as BLOBs.
 SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
 
 -- Decode raw manifest and exec replies into envelope fields plus extracted text payload.
 SELECT ok, version, type_name, name, position('"name":"exec"' IN payload_text) > 0
-FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc'));
+FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT));
 
 SELECT ok, type_name, name
 FROM ducknng_decode_frame(
-  ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)')
+  ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT)
 );
 
 -- The generic raw request helper can be decoded the same way.
 SELECT ok, version, type_name, name, payload_text
 FROM ducknng_decode_frame(
-  ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)
+  ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT)
 );
 
 -- Close the client socket handle and stop the demo server.
@@ -277,128 +273,77 @@ SELECT ducknng_close_socket(1);
 SELECT ducknng_stop_server('sql_client_demo');
 ```
 
-    ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_start_server('sql_client_demo', 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1, 134217728, 300000, NULL, NULL, NULL) │
-    │                                                          boolean                                                          │
-    ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                                                                      │
-    └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬─────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                               manifest                                                                                                                                                                                                                                                                                                                                               │
-    │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                               varchar                                                                                                                                                                                                                                                                                                                                                │
-    ├─────────┼─────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true    │ NULL    │ {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}}]} │
-    └─────────┴─────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌──────────┬─────────┬───────────────────────────────────────────┬───────────────────┬────────────────────────┬─────────────────────────┬───────────────┬─────────────────────┬──────────────────────┬───────────────┬──────────┐
-    │   name   │ family  │                  summary                  │ transport_pattern │ request_payload_format │ response_payload_format │ response_mode │ request_schema_json │ response_schema_json │ requires_auth │ disabled │
-    │ varchar  │ varchar │                  varchar                  │      varchar      │        varchar         │         varchar         │    varchar    │       varchar       │       varchar        │    boolean    │ boolean  │
-    ├──────────┼─────────┼───────────────────────────────────────────┼───────────────────┼────────────────────────┼─────────────────────────┼───────────────┼─────────────────────┼──────────────────────┼───────────────┼──────────┤
-    │ manifest │ control │ Return the registry-derived manifest JSON │ reqrep            │ none                   │ json                    │ metadata_only │ NULL                │ {"type":"json"}      │ false         │ false    │
-    └──────────┴─────────┴───────────────────────────────────────────┴───────────────────┴────────────────────────┴─────────────────────────┴───────────────┴─────────────────────┴──────────────────────┴───────────────┴──────────┘
-    ┌────────────────────────────────┐
-    │ ducknng_register_exec_method() │
-    │            boolean             │
-    ├────────────────────────────────┤
-    │ true                           │
-    └────────────────────────────────┘
-    ┌──────────┬─────────┬───────────────────────────────────────────┬───────────────────┬────────────────────────┬─────────────────────────┬──────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────┬───────────────┬──────────┐
-    │   name   │ family  │                  summary                  │ transport_pattern │ request_payload_format │ response_payload_format │  response_mode   │                                               request_schema_json                                                │    response_schema_json     │ requires_auth │ disabled │
-    │ varchar  │ varchar │                  varchar                  │      varchar      │        varchar         │         varchar         │     varchar      │                                                     varchar                                                      │           varchar           │    boolean    │ boolean  │
-    ├──────────┼─────────┼───────────────────────────────────────────┼───────────────────┼────────────────────────┼─────────────────────────┼──────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────┼───────────────┼──────────┤
-    │ manifest │ control │ Return the registry-derived manifest JSON │ reqrep            │ none                   │ json                    │ metadata_only    │ NULL                                                                                                             │ {"type":"json"}             │ false         │ false    │
-    │ exec     │ sql     │ Execute SQL and return metadata or rows   │ reqrep            │ arrow_ipc_stream       │ arrow_ipc_stream        │ metadata_or_rows │ {"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]} │ {"mode":"metadata_or_rows"} │ false         │ false    │
-    └──────────┴─────────┴───────────────────────────────────────────┴───────────────────┴────────────────────────┴─────────────────────────┴──────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────┴───────────────┴──────────┘
-    ┌─────────┬─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  manifest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  │
-    │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  varchar                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   │
-    ├─────────┼─────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true    │ NULL    │ {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"exec","family":"sql","summary":"Execute SQL and return metadata or rows","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"arrow_ipc_stream","response_mode":"metadata_or_rows","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":11,"max_request_bytes":16777216,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]},"response_schema":{"mode":"metadata_or_rows"}}]} │
-    └─────────┴─────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬─────────┬──────────────┬────────────────┬─────────────┐
-    │   ok    │  error  │ rows_changed │ statement_type │ result_type │
-    │ boolean │ varchar │    uint64    │     int32      │    int32    │
-    ├─────────┼─────────┼──────────────┼────────────────┼─────────────┤
-    │ true    │ NULL    │            0 │              7 │           2 │
-    └─────────┴─────────┴──────────────┴────────────────┴─────────────┘
-    ┌─────────┬─────────┬──────────────┬────────────────┬─────────────┐
-    │   ok    │  error  │ rows_changed │ statement_type │ result_type │
-    │ boolean │ varchar │    uint64    │     int32      │    int32    │
-    ├─────────┼─────────┼──────────────┼────────────────┼─────────────┤
-    │ true    │ NULL    │            2 │              2 │           1 │
-    └─────────┴─────────┴──────────────┴────────────────┴─────────────┘
-    ┌───────┬─────────┐
-    │   i   │  gt_10  │
-    │ int32 │ boolean │
-    ├───────┼─────────┤
-    │    10 │ false   │
-    │    11 │ true    │
-    └───────┴─────────┘
-    ┌────────────────────────────┐
-    │ ducknng_open_socket('req') │
-    │           uint64           │
-    ├────────────────────────────┤
-    │                          1 │
-    └────────────────────────────┘
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000) │
-    │                                boolean                                 │
-    ├────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                   │
-    └────────────────────────────────────────────────────────────────────────┘
-    ┌───────────┬──────────┬────────────────────────────────────────┬─────────┬───────────┬─────────────────┬─────────────────┐
-    │ socket_id │ protocol │                  url                   │  open   │ connected │ send_timeout_ms │ recv_timeout_ms │
-    │  uint64   │ varchar  │                varchar                 │ boolean │  boolean  │      int32      │      int32      │
-    ├───────────┼──────────┼────────────────────────────────────────┼─────────┼───────────┼─────────────────┼─────────────────┤
-    │         1 │ req      │ ipc:///tmp/ducknng_sql_client_demo.ipc │ true    │ true      │            1000 │            1000 │
-    └───────────┴──────────┴────────────────────────────────────────┴─────────┴───────────┴─────────────────┴─────────────────┘
-    ┌─────────┬─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              payload                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               │
-    │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                blob                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                │
-    ├─────────┼─────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true    │ NULL    │ \x01\x02\x04\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x8A\x05\x00\x00\x00\x00\x00\x00manifest{\x22server\x22:{\x22name\x22:\x22ducknng\x22,\x22version\x22:\x220.1.0\x22,\x22protocol_version\x22:1},\x22methods\x22:[{\x22name\x22:\x22manifest\x22,\x22family\x22:\x22control\x22,\x22summary\x22:\x22Return the registry-derived manifest JSON\x22,\x22transport_pattern\x22:\x22reqrep\x22,\x22request_payload_format\x22:\x22none\x22,\x22response_payload_format\x22:\x22json\x22,\x22response_mode\x22:\x22metadata_only\x22,\x22session_behavior\x22:\x22stateless\x22,\x22requires_auth\x22:false,\x22requires_session\x22:false,\x22opens_session\x22:false,\x22closes_session\x22:false,\x22mutates_state\x22:false,\x22idempotent\x22:true,\x22deprecated\x22:false,\x22disabled\x22:false,\x22accepted_request_flags\x22:0,\x22emitted_reply_flags\x22:4,\x22max_request_bytes\x22:0,\x22max_reply_bytes\x22:1048576,\x22version_introduced\x22:1,\x22request_schema\x22:null,\x22response_schema\x22:{\x22type\x22:\x22json\x22}},{\x22name\x22:\x22exec\x22,\x22family\x22:\x22sql\x22,\x22summary\x22:\x22Execute SQL and return metadata or rows\x22,\x22transport_pattern\x22:\x22reqrep\x22,\x22request_payload_format\x22:\x22arrow_ipc_stream\x22,\x22response_payload_format\x22:\x22arrow_ipc_stream\x22,\x22response_mode\x22:\x22metadata_or_rows\x22,\x22session_behavior\x22:\x22stateless\x22,\x22requires_auth\x22:false,\x22requires_session\x22:false,\x22opens_session\x22:false,\x22closes_session\x22:false,\x22mutates_state\x22:true,\x22idempotent\x22:false,\x22deprecated\x22:false,\x22disabled\x22:false,\x22accepted_request_flags\x22:0,\x22emitted_reply_flags\x22:11,\x22max_request_bytes\x22:16777216,\x22max_reply_bytes\x22:16777216,\x22version_introduced\x22:1,\x22request_schema\x22:{\x22fields\x22:[{\x22name\x22:\x22sql\x22,\x22type\x22:\x22utf8\x22,\x22nullable\x22:false},{\x22name\x22:\x22want_result\x22,\x22type\x22:\x22bool\x22,\x22nullable\x22:false}]},\x22response_schema\x22:{\x22mode\x22:\x22metadata_or_rows\x22}}]} │
-    └─────────┴─────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              payload                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               │
-    │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                blob                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                │
-    ├─────────┼─────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true    │ NULL    │ \x01\x02\x04\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x8A\x05\x00\x00\x00\x00\x00\x00manifest{\x22server\x22:{\x22name\x22:\x22ducknng\x22,\x22version\x22:\x220.1.0\x22,\x22protocol_version\x22:1},\x22methods\x22:[{\x22name\x22:\x22manifest\x22,\x22family\x22:\x22control\x22,\x22summary\x22:\x22Return the registry-derived manifest JSON\x22,\x22transport_pattern\x22:\x22reqrep\x22,\x22request_payload_format\x22:\x22none\x22,\x22response_payload_format\x22:\x22json\x22,\x22response_mode\x22:\x22metadata_only\x22,\x22session_behavior\x22:\x22stateless\x22,\x22requires_auth\x22:false,\x22requires_session\x22:false,\x22opens_session\x22:false,\x22closes_session\x22:false,\x22mutates_state\x22:false,\x22idempotent\x22:true,\x22deprecated\x22:false,\x22disabled\x22:false,\x22accepted_request_flags\x22:0,\x22emitted_reply_flags\x22:4,\x22max_request_bytes\x22:0,\x22max_reply_bytes\x22:1048576,\x22version_introduced\x22:1,\x22request_schema\x22:null,\x22response_schema\x22:{\x22type\x22:\x22json\x22}},{\x22name\x22:\x22exec\x22,\x22family\x22:\x22sql\x22,\x22summary\x22:\x22Execute SQL and return metadata or rows\x22,\x22transport_pattern\x22:\x22reqrep\x22,\x22request_payload_format\x22:\x22arrow_ipc_stream\x22,\x22response_payload_format\x22:\x22arrow_ipc_stream\x22,\x22response_mode\x22:\x22metadata_or_rows\x22,\x22session_behavior\x22:\x22stateless\x22,\x22requires_auth\x22:false,\x22requires_session\x22:false,\x22opens_session\x22:false,\x22closes_session\x22:false,\x22mutates_state\x22:true,\x22idempotent\x22:false,\x22deprecated\x22:false,\x22disabled\x22:false,\x22accepted_request_flags\x22:0,\x22emitted_reply_flags\x22:11,\x22max_request_bytes\x22:16777216,\x22max_reply_bytes\x22:16777216,\x22version_introduced\x22:1,\x22request_schema\x22:{\x22fields\x22:[{\x22name\x22:\x22sql\x22,\x22type\x22:\x22utf8\x22,\x22nullable\x22:false},{\x22name\x22:\x22want_result\x22,\x22type\x22:\x22bool\x22,\x22nullable\x22:false}]},\x22response_schema\x22:{\x22mode\x22:\x22metadata_or_rows\x22}}]} │
-    └─────────┴─────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) │
-    │                                                      varchar                                                      │
-    ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ 0102040000000800000000000000                                                                                      │
-    └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
-    │   ok    │ version │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
-    │ boolean │  uint8  │  varchar  │ varchar  │                       boolean                        │
-    ├─────────┼─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
-    │ true    │       1 │ result    │ manifest │ true                                                 │
-    └─────────┴─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
-    ┌─────────┬───────────┬─────────┐
-    │   ok    │ type_name │  name   │
-    │ boolean │  varchar  │ varchar │
-    ├─────────┼───────────┼─────────┤
-    │ true    │ result    │ exec    │
-    └─────────┴───────────┴─────────┘
-    ┌─────────┬─────────┬───────────┬──────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │   ok    │ version │ type_name │   name   │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                payload_text                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                │
-    │ boolean │  uint8  │  varchar  │ varchar  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  varchar                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   │
-    ├─────────┼─────────┼───────────┼──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true    │       1 │ result    │ manifest │ {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"exec","family":"sql","summary":"Execute SQL and return metadata or rows","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"arrow_ipc_stream","response_mode":"metadata_or_rows","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":11,"max_request_bytes":16777216,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]},"response_schema":{"mode":"metadata_or_rows"}}]} │
-    └─────────┴─────────┴───────────┴──────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────────────────────┐
-    │ ducknng_close_socket(1) │
-    │         boolean         │
-    ├─────────────────────────┤
-    │ true                    │
-    └─────────────────────────┘
-    ┌────────────────────────────────────────┐
-    │ ducknng_stop_server('sql_client_demo') │
-    │                boolean                 │
-    ├────────────────────────────────────────┤
-    │ true                                   │
-    └────────────────────────────────────────┘
+    Success
+
+    ducknng_start_server('sql_client_demo', 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1, 134217728, 300000, 0)
+    True
+
+    ok  error   manifest
+    True        {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"query_open","family":"query","summary":"Open a server-side query session","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"json","response_mode":"session_open","session_behavior":"opens_session","requires_auth":false,"requires_session":false,"opens_session":true,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":36,"max_request_bytes":16777216,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"batch_rows","type":"uint64","nullable":true},{"name":"batch_bytes","type":"uint64","nullable":true}]},"response_schema":{"type":"json","session_open":true}},{"name":"fetch","family":"query","summary":"Fetch the next Arrow batch from an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"arrow_ipc_stream","response_mode":"rows","session_behavior":"requires_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":29,"max_request_bytes":1048576,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"mode":"rows_or_control"}},{"name":"close","family":"query","summary":"Close an open or exhausted session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"closes_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":68,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"cancel","family":"query","summary":"Cancel and close an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"cancels_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":196,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}}]}
+
+    name    family  summary transport_pattern   request_payload_format  response_payload_format response_mode   request_schema_json response_schema_json    requires_auth   disabled
+    manifest    control Return the registry-derived manifest JSON   reqrep  none    json    metadata_only       {"type":"json"} False   False
+    query_open  query   Open a server-side query session    reqrep  arrow_ipc_stream    json    session_open    {"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"batch_rows","type":"uint64","nullable":true},{"name":"batch_bytes","type":"uint64","nullable":true}]} {"type":"json","session_open":true} False   False
+    fetch   query   Fetch the next Arrow batch from an open session reqrep  json    arrow_ipc_stream    rows    {"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]}   {"mode":"rows_or_control"}  False   False
+    close   query   Close an open or exhausted session  reqrep  json    json    metadata_only   {"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]}   {"type":"json"} False   False
+    cancel  query   Cancel and close an open session    reqrep  json    json    metadata_only   {"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]}   {"type":"json"} False   False
+
+    ducknng_register_exec_method()
+    True
+
+    name    family  summary transport_pattern   request_payload_format  response_payload_format response_mode   request_schema_json response_schema_json    requires_auth   disabled
+    manifest    control Return the registry-derived manifest JSON   reqrep  none    json    metadata_only       {"type":"json"} False   False
+    query_open  query   Open a server-side query session    reqrep  arrow_ipc_stream    json    session_open    {"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"batch_rows","type":"uint64","nullable":true},{"name":"batch_bytes","type":"uint64","nullable":true}]} {"type":"json","session_open":true} False   False
+    fetch   query   Fetch the next Arrow batch from an open session reqrep  json    arrow_ipc_stream    rows    {"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]}   {"mode":"rows_or_control"}  False   False
+    close   query   Close an open or exhausted session  reqrep  json    json    metadata_only   {"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]}   {"type":"json"} False   False
+    cancel  query   Cancel and close an open session    reqrep  json    json    metadata_only   {"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]}   {"type":"json"} False   False
+    exec    sql Execute SQL and return metadata or rows reqrep  arrow_ipc_stream    arrow_ipc_stream    metadata_or_rows    {"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]}    {"mode":"metadata_or_rows"} False   False
+
+    ok  error   manifest
+    True        {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"query_open","family":"query","summary":"Open a server-side query session","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"json","response_mode":"session_open","session_behavior":"opens_session","requires_auth":false,"requires_session":false,"opens_session":true,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":36,"max_request_bytes":16777216,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"batch_rows","type":"uint64","nullable":true},{"name":"batch_bytes","type":"uint64","nullable":true}]},"response_schema":{"type":"json","session_open":true}},{"name":"fetch","family":"query","summary":"Fetch the next Arrow batch from an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"arrow_ipc_stream","response_mode":"rows","session_behavior":"requires_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":29,"max_request_bytes":1048576,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"mode":"rows_or_control"}},{"name":"close","family":"query","summary":"Close an open or exhausted session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"closes_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":68,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"cancel","family":"query","summary":"Cancel and close an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"cancels_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":196,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"exec","family":"sql","summary":"Execute SQL and return metadata or rows","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"arrow_ipc_stream","response_mode":"metadata_or_rows","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":11,"max_request_bytes":16777216,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]},"response_schema":{"mode":"metadata_or_rows"}}]}
+
+    ok  error   rows_changed    statement_type  result_type
+    True        0   7   2
+
+    ok  error   rows_changed    statement_type  result_type
+    True        2   2   1
+
+    i   gt_10
+    10  False
+    11  True
+
+    ducknng_open_socket('req')
+    1
+
+    ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000)
+    True
+
+    socket_id   protocol    url open    connected   send_timeout_ms recv_timeout_ms
+    1   req ipc:///tmp/ducknng_sql_client_demo.ipc  True    True    1000    1000
+
+    ok  error   payload
+    True        b'\x01\x02\x04\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\xa0\x10\x00\x00\x00\x00\x00\x00manifest{"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"query_open","family":"query","summary":"Open a server-side query session","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"json","response_mode":"session_open","session_behavior":"opens_session","requires_auth":false,"requires_session":false,"opens_session":true,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":36,"max_request_bytes":16777216,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"batch_rows","type":"uint64","nullable":true},{"name":"batch_bytes","type":"uint64","nullable":true}]},"response_schema":{"type":"json","session_open":true}},{"name":"fetch","family":"query","summary":"Fetch the next Arrow batch from an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"arrow_ipc_stream","response_mode":"rows","session_behavior":"requires_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":29,"max_request_bytes":1048576,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"mode":"rows_or_control"}},{"name":"close","family":"query","summary":"Close an open or exhausted session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"closes_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":68,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"cancel","family":"query","summary":"Cancel and close an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"cancels_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":196,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"exec","family":"sql","summary":"Execute SQL and return metadata or rows","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"arrow_ipc_stream","response_mode":"metadata_or_rows","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":11,"max_request_bytes":16777216,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]},"response_schema":{"mode":"metadata_or_rows"}}]}'
+
+    ok  error   payload
+    True        b'\x01\x02\x04\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\xa0\x10\x00\x00\x00\x00\x00\x00manifest{"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"query_open","family":"query","summary":"Open a server-side query session","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"json","response_mode":"session_open","session_behavior":"opens_session","requires_auth":false,"requires_session":false,"opens_session":true,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":36,"max_request_bytes":16777216,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"batch_rows","type":"uint64","nullable":true},{"name":"batch_bytes","type":"uint64","nullable":true}]},"response_schema":{"type":"json","session_open":true}},{"name":"fetch","family":"query","summary":"Fetch the next Arrow batch from an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"arrow_ipc_stream","response_mode":"rows","session_behavior":"requires_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":29,"max_request_bytes":1048576,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"mode":"rows_or_control"}},{"name":"close","family":"query","summary":"Close an open or exhausted session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"closes_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":68,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"cancel","family":"query","summary":"Cancel and close an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"cancels_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":196,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"exec","family":"sql","summary":"Execute SQL and return metadata or rows","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"arrow_ipc_stream","response_mode":"metadata_or_rows","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":11,"max_request_bytes":16777216,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]},"response_schema":{"mode":"metadata_or_rows"}}]}'
+
+    substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28)
+    0102040000000800000000000000
+
+    ok  version type_name   name    (main."position"(payload_text, '"name":"exec"') > 0)
+    True    1   result  manifest    True
+
+    ok  type_name   name
+    True    result  exec
+
+    ok  version type_name   name    payload_text
+    True    1   result  manifest    {"server":{"name":"ducknng","version":"0.1.0","protocol_version":1},"methods":[{"name":"manifest","family":"control","summary":"Return the registry-derived manifest JSON","transport_pattern":"reqrep","request_payload_format":"none","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":4,"max_request_bytes":0,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":null,"response_schema":{"type":"json"}},{"name":"query_open","family":"query","summary":"Open a server-side query session","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"json","response_mode":"session_open","session_behavior":"opens_session","requires_auth":false,"requires_session":false,"opens_session":true,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":36,"max_request_bytes":16777216,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"batch_rows","type":"uint64","nullable":true},{"name":"batch_bytes","type":"uint64","nullable":true}]},"response_schema":{"type":"json","session_open":true}},{"name":"fetch","family":"query","summary":"Fetch the next Arrow batch from an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"arrow_ipc_stream","response_mode":"rows","session_behavior":"requires_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":false,"mutates_state":false,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":29,"max_request_bytes":1048576,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"mode":"rows_or_control"}},{"name":"close","family":"query","summary":"Close an open or exhausted session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"closes_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":true,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":68,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"cancel","family":"query","summary":"Cancel and close an open session","transport_pattern":"reqrep","request_payload_format":"json","response_payload_format":"json","response_mode":"metadata_only","session_behavior":"cancels_session","requires_auth":false,"requires_session":true,"opens_session":false,"closes_session":true,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":196,"max_request_bytes":1048576,"max_reply_bytes":1048576,"version_introduced":1,"request_schema":{"type":"json","fields":[{"name":"session_id","type":"uint64","nullable":false}]},"response_schema":{"type":"json"}},{"name":"exec","family":"sql","summary":"Execute SQL and return metadata or rows","transport_pattern":"reqrep","request_payload_format":"arrow_ipc_stream","response_payload_format":"arrow_ipc_stream","response_mode":"metadata_or_rows","session_behavior":"stateless","requires_auth":false,"requires_session":false,"opens_session":false,"closes_session":false,"mutates_state":true,"idempotent":false,"deprecated":false,"disabled":false,"accepted_request_flags":0,"emitted_reply_flags":11,"max_request_bytes":16777216,"max_reply_bytes":16777216,"version_introduced":1,"request_schema":{"fields":[{"name":"sql","type":"utf8","nullable":false},{"name":"want_result","type":"bool","nullable":false}]},"response_schema":{"mode":"metadata_or_rows"}}]}
+
+    ducknng_close_socket(1)
+    True
+
+    ducknng_stop_server('sql_client_demo')
+    True
 
 ### `tls+tcp://` with a self-signed development TLS config
 
@@ -433,36 +378,22 @@ SELECT ducknng_stop_server('tls_demo_self');
 SELECT ducknng_drop_tls_config(1);
 ```
 
-    ┌─────────────────────────────────────────────────────┐
-    │ ducknng_self_signed_tls_config('127.0.0.1', 365, 0) │
-    │                       uint64                        │
-    ├─────────────────────────────────────────────────────┤
-    │                                                   1 │
-    └─────────────────────────────────────────────────────┘
-    ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_start_server('tls_demo_self', 'tls+tcp://127.0.0.1:45453', 1, 134217728, 300000, 1) │
-    │                                           boolean                                           │
-    ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                                        │
-    └─────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
-    │   ok    │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
-    │ boolean │  varchar  │ varchar  │                       boolean                        │
-    ├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
-    │ true    │ result    │ manifest │ false                                                │
-    └─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
-    ┌──────────────────────────────────────┐
-    │ ducknng_stop_server('tls_demo_self') │
-    │               boolean                │
-    ├──────────────────────────────────────┤
-    │ true                                 │
-    └──────────────────────────────────────┘
-    ┌────────────────────────────┐
-    │ ducknng_drop_tls_config(1) │
-    │          boolean           │
-    ├────────────────────────────┤
-    │ true                       │
-    └────────────────────────────┘
+    Success
+
+    ducknng_self_signed_tls_config('127.0.0.1', 365, 0)
+    1
+
+    ducknng_start_server('tls_demo_self', 'tls+tcp://127.0.0.1:45453', 1, 134217728, 300000, 1)
+    True
+
+    ok  type_name   name    (main."position"(payload_text, '"name":"exec"') > 0)
+    True    result  manifest    False
+
+    ducknng_stop_server('tls_demo_self')
+    True
+
+    ducknng_drop_tls_config(1)
+    True
 
 ### `tls+tcp://` from file-backed certificate material
 
@@ -502,36 +433,22 @@ SELECT ducknng_stop_server('tls_demo_files');
 SELECT ducknng_drop_tls_config(1);
 ```
 
-    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_tls_config_from_files('test/certs/loopback-cert-key.pem', 'test/certs/loopback-ca.pem', NULL, 0) │
-    │                                                  uint64                                                  │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │                                                                                                        1 │
-    └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_start_server('tls_demo_files', 'tls+tcp://127.0.0.1:45454', 1, 134217728, 300000, 1) │
-    │                                           boolean                                            │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                                         │
-    └──────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬───────────┬──────────┬──────────────────────────────────────────────────────┐
-    │   ok    │ type_name │   name   │ (main."position"(payload_text, '"name":"exec"') > 0) │
-    │ boolean │  varchar  │ varchar  │                       boolean                        │
-    ├─────────┼───────────┼──────────┼──────────────────────────────────────────────────────┤
-    │ true    │ result    │ manifest │ false                                                │
-    └─────────┴───────────┴──────────┴──────────────────────────────────────────────────────┘
-    ┌───────────────────────────────────────┐
-    │ ducknng_stop_server('tls_demo_files') │
-    │                boolean                │
-    ├───────────────────────────────────────┤
-    │ true                                  │
-    └───────────────────────────────────────┘
-    ┌────────────────────────────┐
-    │ ducknng_drop_tls_config(1) │
-    │          boolean           │
-    ├────────────────────────────┤
-    │ true                       │
-    └────────────────────────────┘
+    Success
+
+    ducknng_tls_config_from_files('test/certs/loopback-cert-key.pem', 'test/certs/loopback-ca.pem', NULL, 0)
+    1
+
+    ducknng_start_server('tls_demo_files', 'tls+tcp://127.0.0.1:45454', 1, 134217728, 300000, 1)
+    True
+
+    ok  type_name   name    (main."position"(payload_text, '"name":"exec"') > 0)
+    True    result  manifest    False
+
+    ducknng_stop_server('tls_demo_files')
+    True
+
+    ducknng_drop_tls_config(1)
+    True
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example
 
@@ -702,12 +619,12 @@ DBI::dbExecute(db_con, sprintf("LOAD '%s'", ext_path))
 DBI::dbGetQuery(
   db_con,
   sprintf(
-    "SELECT ducknng_start_server('sql_exec', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
+    "SELECT ducknng_start_server('sql_exec', '%s', 1, 134217728, 300000, 0::UBIGINT)",
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_f3341538f691d.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
-#> 1                                                                                                                         TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_100fe378c93ef0.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

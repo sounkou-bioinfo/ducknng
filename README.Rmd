@@ -12,7 +12,25 @@ knitr::knit_engines$set(sql = function(options) {
   extension_path <- gsub("'", "''", extension_path, fixed = TRUE)
   code <- paste(sprintf("LOAD '%s';", extension_path), code, sep = "\n")
   if (isTRUE(options$eval)) {
-    out <- system2("duckdb", "-unsigned", input = code, stdout = TRUE, stderr = TRUE)
+    py <- file.path(getwd(), "configure", "venv", "bin", "python3")
+    py_script <- tempfile(fileext = ".py")
+    writeLines(c(
+      "import duckdb, sys",
+      "sql = sys.stdin.read()",
+      "con = duckdb.connect(config={'allow_unsigned_extensions': 'true'})",
+      "for stmt in con.extract_statements(sql):",
+      "    rel = con.execute(stmt.query)",
+      "    if rel.description is None:",
+      "        continue",
+      "    cols = [d[0] for d in rel.description]",
+      "    rows = rel.fetchall()",
+      "    print('\\t'.join(cols))",
+      "    for row in rows:",
+      "        print('\\t'.join('' if v is None else str(v) for v in row))",
+      "    print()"
+    ), py_script)
+    out <- system2(py, py_script, input = code, stdout = TRUE, stderr = TRUE)
+    unlink(py_script)
     status <- attr(out, "status")
     if (!is.null(status) && status != 0) stop(paste(out, collapse = "\n"))
     knitr::engine_output(options, code, out)
@@ -28,7 +46,9 @@ knitr::knit_engines$set(sql = function(options) {
 
 Its SQL-facing client and server interface is explicitly modeled over [`r-lib/nanonext`](https://github.com/r-lib/nanonext), taking req/rep sockets, dial/listen semantics, context-oriented NNG usage, and a practical messaging surface as the reference point for what should feel natural from DuckDB SQL. Its RPC framing and tabular payload direction are likewise informed by Arrow IPC based RPC work such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro) and related projects, where a thin envelope is kept separate from Arrow IPC request and reply payloads instead of being buried inside one-off method-specific binaries.
 
-At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. That transport surface is operation-oriented rather than transport-specific: transport is autodetected from the URL scheme in the same general style as `nanonext`, so the same API can work with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning a separate helper family for each scheme. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
+`ducknng` now declares itself explicitly as an unstable C API extension targeting a single DuckDB version line. This is deliberate and should not be hidden behind stable-ABI language. The DuckDB project’s own release-cycle documentation classifies unstable API extensions as version-tied extensions that are not binary-compatible across multiple DuckDB versions, and that is the correct model for `ducknng` while it reaches into unstable ABI territory for deeper Arrow/runtime work. The repo should therefore be read as an unstable-ABI extension that targets one DuckDB release line at a time, not as a stable C API extension promising cross-version binary compatibility. In the current local development/test setup that target line is DuckDB `v1.5.2`, and changing DuckDB versions now requires rebuilding and retargeting the extension on purpose.
+
+At the moment, `ducknng` already exposes a low-level transport layer with socket-open, dial, close, and raw request primitives, alongside SQL-visible server lifecycle control and runtime introspection through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`. That transport surface is operation-oriented rather than transport-specific: transport is autodetected from the URL scheme in the same general style as `nanonext`, so the same API can work with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning a separate helper family for each scheme, while TLS material is passed through reusable `tls_config_id` handles instead of inline transport-specific arguments. The current SQL client socket-handle layer is still honest but narrow: `ducknng_open_socket()` only implements `req` today. On the server side it runs one REP socket with one or more REP contexts, and on top of that transport it already supports a working RPC request/reply path with manifest discovery, metadata-oriented execution, and unary row-returning execution over the current raw wire and Arrow IPC model.
 
 The next documented protocol slice is the session query family: `query_open`, `fetch`, `close`, and `cancel`. In the current contract, `query_open` opens one server-owned query session and returns JSON control metadata, `fetch` is the only method that may return streamed row batches, `close` is the normal explicit cleanup path, and `cancel` is best-effort rather than a guarantee of immediate interruption. Until a real owner-identity model is implemented, that family should still be treated as development scaffolding rather than as a production-safe multi-client surface.
 
@@ -60,9 +80,7 @@ SELECT ducknng_start_server(
   1,                              -- REP contexts
   134217728,                      -- recv_max_bytes
   300000,                         -- session_idle_ms
-  NULL,                           -- tls_cert_key_file
-  NULL,                           -- tls_ca_file
-  NULL                            -- tls_auth_mode
+  0                               -- tls_config_id (0 means plaintext)
 );
 
 SELECT name, listen, contexts, running, sessions
@@ -80,9 +98,7 @@ SELECT ducknng_start_server(
   3,                              -- REP contexts
   134217728,                      -- recv_max_bytes
   300000,                         -- session_idle_ms
-  NULL,                           -- tls_cert_key_file
-  NULL,                           -- tls_ca_file
-  NULL                            -- tls_auth_mode
+  0                               -- tls_config_id (0 means plaintext)
 );
 
 SELECT name, contexts, running
@@ -102,26 +118,24 @@ SELECT ducknng_start_server(
   1,                              -- REP contexts
   134217728,                      -- recv_max_bytes
   300000,                         -- session_idle_ms
-  NULL,                           -- tls_cert_key_file
-  NULL,                           -- tls_ca_file
-  NULL                            -- tls_auth_mode
+  0                               -- tls_config_id (0 means plaintext)
 );
 
 -- The default RPC surface is minimal: manifest is built in, exec is opt-in.
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc');
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
 SELECT * FROM ducknng_list_methods();
 
 -- Register exec explicitly before exposing SQL execution over RPC.
 SELECT ducknng_register_exec_method();
 SELECT * FROM ducknng_list_methods();
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc');
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
 
 -- RPC helper: run non-row statements and keep errors in-band.
-SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)');
-SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)');
+SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT);
+SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)', 0::UBIGINT);
 
 -- RPC helper: fetch row results through the unary query path.
-SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i');
+SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i', 0::UBIGINT);
 
 -- Primitive transport layer: open a socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');
@@ -130,24 +144,24 @@ SELECT * FROM ducknng_list_sockets();
 
 -- Primitive transport layer: send a raw manifest frame and inspect the reply prefix.
 SELECT * FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
-SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);
+SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT);
 
 -- Raw scalar forms now mean raw reply frames as BLOBs.
 SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
 
 -- Decode raw manifest and exec replies into envelope fields plus extracted text payload.
 SELECT ok, version, type_name, name, position('"name":"exec"' IN payload_text) > 0
-FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc'));
+FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT));
 
 SELECT ok, type_name, name
 FROM ducknng_decode_frame(
-  ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)')
+  ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT)
 );
 
 -- The generic raw request helper can be decoded the same way.
 SELECT ok, version, type_name, name, payload_text
 FROM ducknng_decode_frame(
-  ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)
+  ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT)
 );
 
 -- Close the client socket handle and stop the demo server.
@@ -390,7 +404,7 @@ DBI::dbExecute(db_con, sprintf("LOAD '%s'", ext_path))
 DBI::dbGetQuery(
   db_con,
   sprintf(
-    "SELECT ducknng_start_server('sql_exec', '%s', 1, 134217728, 300000, NULL, NULL, NULL)",
+    "SELECT ducknng_start_server('sql_exec', '%s', 1, 134217728, 300000, 0::UBIGINT)",
     ipc_url
   )
 )

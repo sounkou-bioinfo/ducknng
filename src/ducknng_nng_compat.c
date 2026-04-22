@@ -55,7 +55,7 @@ static char *ducknng_url_with_port(const nng_url *up, int port) {
     snprintf(port_buf, sizeof(port_buf), "%d", port);
     need = strlen(up->u_scheme) + strlen(up->u_hostname) + strlen(port_buf) + 8;
     if (up->u_path) need += strlen(up->u_path);
-    out = (char *)malloc(need);
+    out = (char *)duckdb_malloc(need);
     if (!out) return NULL;
     snprintf(out, need, "%s://%s:%s%s", up->u_scheme, up->u_hostname, port_buf, up->u_path ? up->u_path : "");
     return out;

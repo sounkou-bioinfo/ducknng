@@ -4,17 +4,17 @@
       "name": "ducknng_start_server",
       "kind": "scalar",
       "category": "Service Control",
-      "signature": "ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_cert_key_file, tls_ca_file, tls_auth_mode) or ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id)",
+      "signature": "ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id)",
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
       "description": "Start a named ducknng REP listener.",
       "notes": [
-        "The 8-argument form is the non-TLS or inline-file-args form: name, listen URL, REP contexts, receive limit in bytes, session idle timeout in milliseconds, TLS cert+key file, TLS CA file, and TLS auth mode.",
-        "The 6-argument form is the preferred TLS-handle form and requires a real tls_config_id returned by ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config()."
+        "Transport is selected by the listen URL scheme. Pass tls_config_id = 0 for plaintext URLs such as inproc://, ipc://, or tcp://.",
+        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for tls+tcp:// listeners."
       ],
       "examples": [
-        "SELECT ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, NULL, NULL, NULL);"
+        "SELECT ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, 0);"
       ]
     },
     {
@@ -119,7 +119,8 @@
       "implemented": true,
       "description": "Open a client socket handle for a supported protocol.",
       "notes": [
-        "This is the primitive transport entry point. Currently only req is implemented."
+        "This is the primitive transport entry point. Currently only req is implemented.",
+        "Currently only req is implemented."
       ],
       "examples": [
         "SELECT ducknng_open_socket('req');"
@@ -256,17 +257,18 @@
       "name": "ducknng_request",
       "kind": "table",
       "category": "Primitive Transport",
-      "signature": "ducknng_request(url, payload, timeout_ms)",
+      "signature": "ducknng_request(url, payload, timeout_ms, tls_config_id)",
       "returns": "TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Perform a one-shot raw request and return a structured result row.",
       "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "This is the preferred low-level primitive for one-shot req/rep from SQL.",
         "Use ducknng_request_raw() only when a bare BLOB return is specifically needed."
       ],
       "examples": [
-        "SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000);"
+        "SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT);"
       ]
     },
     {
@@ -290,101 +292,107 @@
       "name": "ducknng_get_rpc_manifest",
       "kind": "table",
       "category": "RPC Helper",
-      "signature": "ducknng_get_rpc_manifest(url)",
+      "signature": "ducknng_get_rpc_manifest(url, tls_config_id)",
       "returns": "TABLE(ok BOOLEAN, error VARCHAR, manifest VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Request the RPC manifest and return a structured result row.",
       "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "Built on top of the primitive request layer and ducknng RPC envelope."
       ],
       "examples": [
-        "SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc');"
+        "SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);"
       ]
     },
     {
       "name": "ducknng_get_rpc_manifest_raw",
       "kind": "scalar",
       "category": "RPC Helper",
-      "signature": "ducknng_get_rpc_manifest_raw(url)",
+      "signature": "ducknng_get_rpc_manifest_raw(url, tls_config_id)",
       "returns": "BLOB",
       "since": "0.1.0",
       "implemented": true,
       "description": "Request the RPC manifest and return the raw reply frame as BLOB.",
       "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "This is a raw helper: it returns the full reply frame and yields NULL on local request failure.",
         "Use ducknng_decode_frame() to inspect the envelope and payload from SQL."
       ],
       "examples": [
-        "SELECT ok, type_name, name, payload_text FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql0.ipc'));"
+        "SELECT ok, type_name, name, payload_text FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT));"
       ]
     },
     {
       "name": "ducknng_run_rpc",
       "kind": "table",
       "category": "RPC Helper",
-      "signature": "ducknng_run_rpc(url, sql)",
+      "signature": "ducknng_run_rpc(url, sql, tls_config_id)",
       "returns": "TABLE(ok BOOLEAN, error VARCHAR, rows_changed UBIGINT, statement_type INTEGER, result_type INTEGER)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Execute a metadata-oriented RPC call and return a structured result row.",
       "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "These helpers require the remote server to have explicitly registered the exec method."
       ],
       "examples": [
-        "SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)');"
+        "SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)', 0::UBIGINT);"
       ]
     },
     {
       "name": "ducknng_run_rpc_raw",
       "kind": "scalar",
       "category": "RPC Helper",
-      "signature": "ducknng_run_rpc_raw(url, sql)",
+      "signature": "ducknng_run_rpc_raw(url, sql, tls_config_id)",
       "returns": "BLOB",
       "since": "0.1.0",
       "implemented": true,
       "description": "Execute the exec RPC and return the raw reply frame as BLOB.",
       "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "This is a raw helper: it returns the full reply frame and yields NULL on local request failure.",
         "Use ducknng_decode_frame() or a payload-specific decoder after inspection.",
         "These helpers require the remote server to have explicitly registered the exec method."
       ],
       "examples": [
-        "SELECT ok, type_name, name FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)'));"
+        "SELECT ok, type_name, name FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)', 0::UBIGINT));"
       ]
     },
     {
       "name": "ducknng_query_rpc",
       "kind": "table",
       "category": "RPC Helper",
-      "signature": "ducknng_query_rpc(url, sql)",
+      "signature": "ducknng_query_rpc(url, sql, tls_config_id)",
       "returns": "table",
       "since": "0.1.0",
       "implemented": true,
       "description": "Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table.",
       "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "This is the current unary row path, not the future session streaming path.",
         "These helpers require the remote server to have explicitly registered the exec method."
       ],
       "examples": [
-        "SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer');"
+        "SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer', 0::UBIGINT);"
       ]
     },
     {
       "name": "ducknng_request_raw",
       "kind": "scalar",
       "category": "Primitive Transport",
-      "signature": "ducknng_request_raw(url, payload, timeout_ms)",
+      "signature": "ducknng_request_raw(url, payload, timeout_ms, tls_config_id)",
       "returns": "BLOB",
       "since": "0.1.0",
       "implemented": true,
       "description": "Perform a one-shot raw request and return the raw reply frame bytes.",
       "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "Returns NULL on local request failure instead of throwing.",
         "Use ducknng_decode_frame() to inspect the envelope and textual payload from SQL."
       ],
       "examples": [
-        "SELECT hex(ducknng_request_raw('ipc:///tmp/ducknng_sql0.ipc', from_hex('0100'), 1000));"
+        "SELECT hex(ducknng_request_raw('ipc:///tmp/ducknng_sql0.ipc', from_hex('0100'), 1000, 0::UBIGINT));"
       ]
     },
     {
@@ -418,7 +426,7 @@
         "payload_text is populated only when the payload looks textual."
       ],
       "examples": [
-        "SELECT ok, version, type_name, name, payload_text FROM ducknng_decode_frame(ducknng_request_raw('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000));"
+        "SELECT ok, version, type_name, name, payload_text FROM ducknng_decode_frame(ducknng_request_raw('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT));"
       ]
     }
   ]

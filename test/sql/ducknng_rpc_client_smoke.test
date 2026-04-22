@@ -5,14 +5,14 @@ require ducknng
 
 query I
 SELECT CASE
-  WHEN ducknng_start_server('rpc_smoke', 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1, 134217728, 300000, NULL, NULL, NULL)
+  WHEN ducknng_start_server('rpc_smoke', 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1, 134217728, 300000, 0::UBIGINT)
   THEN 1 ELSE 0 END
 ----
 1
 
 query II
 SELECT ok, position('"name":"exec"' IN manifest) > 0
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc')
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIGINT)
 ----
 1	0
 
@@ -30,42 +30,42 @@ exec	false
 
 query II
 SELECT ok, position('"name":"exec"' IN manifest) > 0
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc')
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIGINT)
 ----
 1	1
 
 query IIIIIII
 SELECT ok, version, type, flags, type_name, name, position('"name":"exec"' IN payload_text) > 0
-FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc'))
+FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIGINT))
 ----
 1	1	2	4	result	manifest	1
 
 query III
 SELECT ok, type_name, name
-FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'DROP TABLE IF EXISTS remote_t'))
+FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'DROP TABLE IF EXISTS remote_t', 0::UBIGINT))
 ----
 1	result	exec
 
 query IIII
 SELECT ok, rows_changed, statement_type, result_type
-FROM ducknng_run_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'CREATE TABLE IF NOT EXISTS remote_t(i INTEGER)')
+FROM ducknng_run_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'CREATE TABLE IF NOT EXISTS remote_t(i INTEGER)', 0::UBIGINT)
 ----
 1	0	7	2
 
 query IIII
 SELECT ok, rows_changed, statement_type, result_type
-FROM ducknng_run_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'DELETE FROM remote_t')
+FROM ducknng_run_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'DELETE FROM remote_t', 0::UBIGINT)
 ----
 1	0	5	1
 
 query III
 SELECT ok, type_name, name
-FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'INSERT INTO remote_t VALUES (7), (8)'))
+FROM ducknng_decode_frame(ducknng_run_rpc_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'INSERT INTO remote_t VALUES (7), (8)', 0::UBIGINT))
 ----
 1	result	exec
 
 query II
-SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT DISTINCT i, i > 7 AS gt_7 FROM remote_t WHERE i IN (7, 8) ORDER BY i')
+SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT DISTINCT i, i > 7 AS gt_7 FROM remote_t WHERE i IN (7, 8) ORDER BY i', 0::UBIGINT)
 ----
 7	false
 8	true
@@ -98,25 +98,25 @@ FROM ducknng_request_socket(1::UBIGINT, from_hex('010000000000000000000000000000
 1	1
 
 query I
-SELECT substr(hex(ducknng_request_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) = '0102040000000800000000000000'
+SELECT substr(hex(ducknng_request_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT)), 1, 28) = '0102040000000800000000000000'
 ----
 1
 
 query II
 SELECT ok, substr(hex(payload), 1, 28) = '0102040000000800000000000000'
-FROM ducknng_request('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000)
+FROM ducknng_request('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT)
 ----
 1	1
 
 query IIIIIII
 SELECT ok, version, type, flags, type_name, name, position('"name":"exec"' IN payload_text) > 0
-FROM ducknng_decode_frame(ducknng_request_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000))
+FROM ducknng_decode_frame(ducknng_request_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT))
 ----
 1	1	2	4	result	manifest	1
 
 query II
 SELECT ok, error = 'ducknng: request URL must not be NULL or empty'
-FROM ducknng_request('', from_hex('01000000000000000000000000000000000000000000'), 1000)
+FROM ducknng_request('', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT)
 ----
 0	1
 

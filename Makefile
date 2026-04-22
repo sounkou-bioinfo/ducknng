@@ -13,8 +13,8 @@ rpc_smoke_r:
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 EXTENSION_NAME=ducknng
-USE_UNSTABLE_C_API=0
-TARGET_DUCKDB_VERSION=v1.2.0
+USE_UNSTABLE_C_API=1
+TARGET_DUCKDB_VERSION=v1.5.2
 
 all: configure release
 

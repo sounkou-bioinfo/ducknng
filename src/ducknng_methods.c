@@ -1,8 +1,12 @@
 #include "ducknng_manifest.h"
 #include "ducknng_ipc_in.h"
 #include "ducknng_ipc_out.h"
+#include "ducknng_duckdb_streaming_compat.h"
 #include "ducknng_service.h"
+#include "ducknng_session.h"
 #include "ducknng_util.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 DUCKDB_EXTENSION_EXTERN
@@ -49,6 +53,202 @@ static int ducknng_method_manifest_handler(ducknng_service *svc,
     return 0;
 }
 
+static char *ducknng_copy_payload_json(const ducknng_request_context *req) {
+    char *json;
+    if (!req || !req->frame || !req->frame->payload || req->frame->payload_len == 0) return NULL;
+    json = (char *)duckdb_malloc((size_t)req->frame->payload_len + 1);
+    if (!json) return NULL;
+    memcpy(json, req->frame->payload, (size_t)req->frame->payload_len);
+    json[req->frame->payload_len] = '\0';
+    return json;
+}
+
+static int ducknng_json_extract_u64(const char *json, const char *key, uint64_t *out) {
+    const char *p;
+    char *end = NULL;
+    if (out) *out = 0;
+    if (!json || !key || !out) return -1;
+    p = strstr(json, key);
+    if (!p) return -1;
+    p = strchr(p, ':');
+    if (!p) return -1;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '"') p++;
+    *out = (uint64_t)strtoull(p, &end, 10);
+    return end == p ? -1 : 0;
+}
+
+static int ducknng_json_reply(ducknng_method_reply *reply, const char *method_name, uint32_t flags,
+    const char *json_text) {
+    size_t payload_len;
+    uint8_t *payload;
+    (void)method_name;
+    if (!reply || !json_text) return -1;
+    payload_len = strlen(json_text);
+    payload = (uint8_t *)duckdb_malloc(payload_len);
+    if (!payload) return -1;
+    memcpy(payload, json_text, payload_len);
+    return ducknng_method_reply_set_payload(reply, DUCKNNG_RPC_RESULT,
+        flags | DUCKNNG_RPC_FLAG_PAYLOAD_JSON, payload, payload_len);
+}
+
+static int ducknng_method_query_open_handler(ducknng_service *svc,
+    const ducknng_method_descriptor *method,
+    const ducknng_request_context *req,
+    ducknng_method_reply *reply) {
+    ducknng_query_open_request open_req;
+    duckdb_result result;
+    ducknng_session *session;
+    char json[256];
+    char *errmsg = NULL;
+    (void)method;
+    memset(&open_req, 0, sizeof(open_req));
+    memset(&result, 0, sizeof(result));
+    if (!svc || !svc->rt || !svc->rt->init_con || !req || !req->frame || !reply) {
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INTERNAL, "ducknng: missing query_open execution context");
+        return -1;
+    }
+    if (ducknng_decode_query_open_payload(req->frame->payload, (size_t)req->frame->payload_len, &open_req, &errmsg) != 0) {
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INVALID, errmsg ? errmsg : "ducknng: invalid query_open payload");
+        if (errmsg) duckdb_free(errmsg);
+        return -1;
+    }
+    ducknng_mutex_lock(&svc->mu);
+    if (duckdb_query(svc->rt->init_con, open_req.sql, &result) == DuckDBError) {
+        const char *detail = duckdb_result_error(&result);
+        duckdb_destroy_result(&result);
+        ducknng_mutex_unlock(&svc->mu);
+        ducknng_query_open_request_destroy(&open_req);
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR, detail && detail[0] ? detail : "ducknng: query_open failed");
+        return -1;
+    }
+    if (duckdb_result_return_type(result) != DUCKDB_RESULT_TYPE_QUERY_RESULT) {
+        duckdb_destroy_result(&result);
+        ducknng_mutex_unlock(&svc->mu);
+        ducknng_query_open_request_destroy(&open_req);
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR, "ducknng: query_open requires a row-returning query");
+        return -1;
+    }
+    ducknng_mutex_unlock(&svc->mu);
+    session = ducknng_service_add_session(svc, &result, &errmsg);
+    ducknng_query_open_request_destroy(&open_req);
+    if (!session) {
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INTERNAL, errmsg ? errmsg : "ducknng: failed to register query session");
+        if (errmsg) duckdb_free(errmsg);
+        return -1;
+    }
+    snprintf(json, sizeof(json), "{\"session_id\":%llu,\"state\":\"open\",\"next_method\":\"fetch\"}",
+        (unsigned long long)session->session_id);
+    return ducknng_json_reply(reply, "query_open", DUCKNNG_RPC_FLAG_SESSION_OPEN, json);
+}
+
+static int ducknng_method_fetch_handler(ducknng_service *svc,
+    const ducknng_method_descriptor *method,
+    const ducknng_request_context *req,
+    ducknng_method_reply *reply) {
+    char *json = NULL;
+    uint64_t session_id = 0;
+    ducknng_session *session;
+    uint8_t *payload = NULL;
+    size_t payload_len = 0;
+    int has_batch = 0;
+    char *errmsg = NULL;
+    char control[256];
+    (void)method;
+    if (!svc || !req || !reply) {
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INTERNAL, "ducknng: missing fetch context");
+        return -1;
+    }
+    json = ducknng_copy_payload_json(req);
+    if (!json || ducknng_json_extract_u64(json, "session_id", &session_id) != 0) {
+        if (json) duckdb_free(json);
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INVALID, "ducknng: fetch requires JSON payload with session_id");
+        return -1;
+    }
+    duckdb_free(json);
+    session = ducknng_service_find_session(svc, session_id);
+    if (!session) {
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_NOT_FOUND, "ducknng: session not found");
+        return -1;
+    }
+    ducknng_mutex_lock(&svc->mu);
+    session->last_touch_ms = ducknng_now_ms();
+    if (session->cancelled) {
+        ducknng_mutex_unlock(&svc->mu);
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_CANCELLED, "ducknng: session was cancelled");
+        return -1;
+    }
+    if (!session->result_open || ducknng_result_next_chunk_to_ipc(session->result, &payload, &payload_len, &has_batch, &errmsg) != 0) {
+        ducknng_mutex_unlock(&svc->mu);
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_ARROW_ERROR, errmsg ? errmsg : "ducknng: fetch failed to encode Arrow batch");
+        if (errmsg) duckdb_free(errmsg);
+        return -1;
+    }
+    if (has_batch) {
+        session->batch_no++;
+        ducknng_mutex_unlock(&svc->mu);
+        ducknng_method_reply_set_payload(reply, DUCKNNG_RPC_RESULT,
+            DUCKNNG_RPC_FLAG_RESULT_ROWS | DUCKNNG_RPC_FLAG_PAYLOAD_ARROW_STREAM,
+            payload, payload_len);
+        return 0;
+    }
+    session->eos = 1;
+    ducknng_mutex_unlock(&svc->mu);
+    snprintf(control, sizeof(control), "{\"session_id\":%llu,\"state\":\"exhausted\"}", (unsigned long long)session_id);
+    return ducknng_json_reply(reply, "fetch", DUCKNNG_RPC_FLAG_END_OF_STREAM, control);
+}
+
+static int ducknng_method_close_handler(ducknng_service *svc,
+    const ducknng_method_descriptor *method,
+    const ducknng_request_context *req,
+    ducknng_method_reply *reply) {
+    char *json = ducknng_copy_payload_json(req);
+    uint64_t session_id = 0;
+    ducknng_session *session;
+    char control[256];
+    (void)method;
+    if (!json || ducknng_json_extract_u64(json, "session_id", &session_id) != 0) {
+        if (json) duckdb_free(json);
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INVALID, "ducknng: close requires JSON payload with session_id");
+        return -1;
+    }
+    duckdb_free(json);
+    session = ducknng_service_remove_session(svc, session_id);
+    if (!session) {
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_NOT_FOUND, "ducknng: session not found");
+        return -1;
+    }
+    ducknng_session_destroy(session);
+    snprintf(control, sizeof(control), "{\"session_id\":%llu,\"state\":\"closed\"}", (unsigned long long)session_id);
+    return ducknng_json_reply(reply, "close", DUCKNNG_RPC_FLAG_SESSION_CLOSED, control);
+}
+
+static int ducknng_method_cancel_handler(ducknng_service *svc,
+    const ducknng_method_descriptor *method,
+    const ducknng_request_context *req,
+    ducknng_method_reply *reply) {
+    char *json = ducknng_copy_payload_json(req);
+    uint64_t session_id = 0;
+    ducknng_session *session;
+    char control[256];
+    (void)method;
+    if (!json || ducknng_json_extract_u64(json, "session_id", &session_id) != 0) {
+        if (json) duckdb_free(json);
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INVALID, "ducknng: cancel requires JSON payload with session_id");
+        return -1;
+    }
+    duckdb_free(json);
+    session = ducknng_service_remove_session(svc, session_id);
+    if (!session) {
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_NOT_FOUND, "ducknng: session not found");
+        return -1;
+    }
+    session->cancelled = 1;
+    ducknng_session_destroy(session);
+    snprintf(control, sizeof(control), "{\"session_id\":%llu,\"state\":\"cancelled\"}", (unsigned long long)session_id);
+    return ducknng_json_reply(reply, "cancel", DUCKNNG_RPC_FLAG_CANCELLED | DUCKNNG_RPC_FLAG_SESSION_CLOSED, control);
+}
+
 static int ducknng_method_exec_handler(ducknng_service *svc,
     const ducknng_method_descriptor *method,
     const ducknng_request_context *req,
@@ -78,39 +278,43 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
         return -1;
     }
 
-    ducknng_mutex_lock(&svc->mu);
-    if (duckdb_query(svc->rt->init_con, exec_req.sql, &result) == DuckDBError) {
-        const char *exec_err = duckdb_result_error(&result);
-        duckdb_destroy_result(&result);
-        ducknng_mutex_unlock(&svc->mu);
-        ducknng_exec_request_destroy(&exec_req);
-        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
-            exec_err && exec_err[0] ? exec_err : "ducknng: exec failed");
-        return -1;
-    }
-
-    stmt_type = duckdb_result_statement_type(result);
-    result_type = duckdb_result_return_type(result);
-    if (!exec_req.want_result && result_type == DUCKDB_RESULT_TYPE_QUERY_RESULT) {
-        duckdb_destroy_result(&result);
-        ducknng_mutex_unlock(&svc->mu);
-        ducknng_exec_request_destroy(&exec_req);
-        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
-            "ducknng: EXEC result requires want_result = true");
-        return -1;
-    }
-
-    if (result_type == DUCKDB_RESULT_TYPE_QUERY_RESULT) {
-        if (ducknng_result_to_ipc_stream(NULL, result, &payload, &payload_len, &errmsg) != 0) {
+    if (exec_req.want_result) {
+        ducknng_mutex_lock(&svc->mu);
+        if (ducknng_query_to_ipc_stream(svc->rt->init_con, exec_req.sql, &payload, &payload_len, &errmsg) != 0) {
+            ducknng_mutex_unlock(&svc->mu);
+            ducknng_exec_request_destroy(&exec_req);
             ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_ARROW_ERROR,
                 errmsg ? errmsg : "ducknng: failed to encode query result as Arrow IPC");
-        } else {
-            ducknng_method_reply_set_payload(reply, DUCKNNG_RPC_RESULT,
-                DUCKNNG_RPC_FLAG_RESULT_ROWS | DUCKNNG_RPC_FLAG_PAYLOAD_ARROW_STREAM,
-                payload, payload_len);
-            payload = NULL;
+            if (errmsg) duckdb_free(errmsg);
+            return -1;
         }
+        ducknng_mutex_unlock(&svc->mu);
+        ducknng_method_reply_set_payload(reply, DUCKNNG_RPC_RESULT,
+            DUCKNNG_RPC_FLAG_RESULT_ROWS | DUCKNNG_RPC_FLAG_PAYLOAD_ARROW_STREAM,
+            payload, payload_len);
+        payload = NULL;
     } else {
+        ducknng_mutex_lock(&svc->mu);
+        if (duckdb_query(svc->rt->init_con, exec_req.sql, &result) == DuckDBError) {
+            const char *exec_err = duckdb_result_error(&result);
+            duckdb_destroy_result(&result);
+            ducknng_mutex_unlock(&svc->mu);
+            ducknng_exec_request_destroy(&exec_req);
+            ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
+                exec_err && exec_err[0] ? exec_err : "ducknng: exec failed");
+            return -1;
+        }
+
+        stmt_type = duckdb_result_statement_type(result);
+        result_type = duckdb_result_return_type(result);
+        if (result_type == DUCKDB_RESULT_TYPE_QUERY_RESULT) {
+            duckdb_destroy_result(&result);
+            ducknng_mutex_unlock(&svc->mu);
+            ducknng_exec_request_destroy(&exec_req);
+            ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
+                "ducknng: EXEC result requires want_result = true");
+            return -1;
+        }
         rows_changed = duckdb_rows_changed(&result);
         duckdb_destroy_result(&result);
         memset(&result, 0, sizeof(result));
@@ -124,10 +328,8 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
                 payload, payload_len);
             payload = NULL;
         }
+        ducknng_mutex_unlock(&svc->mu);
     }
-
-    duckdb_destroy_result(&result);
-    ducknng_mutex_unlock(&svc->mu);
     if (payload) duckdb_free(payload);
     if (errmsg) duckdb_free(errmsg);
     ducknng_exec_request_destroy(&exec_req);
@@ -161,6 +363,114 @@ const ducknng_method_descriptor ducknng_method_exec = {
     ducknng_method_exec_handler
 };
 
+const ducknng_method_descriptor ducknng_method_query_open = {
+    "query_open",
+    "query",
+    "Open a server-side query session",
+    DUCKNNG_TRANSPORT_REQREP,
+    DUCKNNG_PAYLOAD_ARROW_IPC_STREAM,
+    DUCKNNG_PAYLOAD_JSON,
+    DUCKNNG_RESPONSE_SESSION_OPEN,
+    DUCKNNG_SESSION_OPENS,
+    0,
+    DUCKNNG_RPC_FLAG_PAYLOAD_JSON | DUCKNNG_RPC_FLAG_SESSION_OPEN,
+    16 * 1024 * 1024,
+    1024 * 1024,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    "{\"fields\":[{\"name\":\"sql\",\"type\":\"utf8\",\"nullable\":false},{\"name\":\"batch_rows\",\"type\":\"uint64\",\"nullable\":true},{\"name\":\"batch_bytes\",\"type\":\"uint64\",\"nullable\":true}]}",
+    "{\"type\":\"json\",\"session_open\":true}",
+    ducknng_method_query_open_handler
+};
+
+const ducknng_method_descriptor ducknng_method_fetch = {
+    "fetch",
+    "query",
+    "Fetch the next Arrow batch from an open session",
+    DUCKNNG_TRANSPORT_REQREP,
+    DUCKNNG_PAYLOAD_JSON,
+    DUCKNNG_PAYLOAD_ARROW_IPC_STREAM,
+    DUCKNNG_RESPONSE_ROWS,
+    DUCKNNG_SESSION_REQUIRES,
+    0,
+    DUCKNNG_RPC_FLAG_RESULT_ROWS | DUCKNNG_RPC_FLAG_PAYLOAD_ARROW_STREAM | DUCKNNG_RPC_FLAG_END_OF_STREAM | DUCKNNG_RPC_FLAG_PAYLOAD_JSON,
+    1024 * 1024,
+    16 * 1024 * 1024,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    "{\"type\":\"json\",\"fields\":[{\"name\":\"session_id\",\"type\":\"uint64\",\"nullable\":false}]}",
+    "{\"mode\":\"rows_or_control\"}",
+    ducknng_method_fetch_handler
+};
+
+const ducknng_method_descriptor ducknng_method_close = {
+    "close",
+    "query",
+    "Close an open or exhausted session",
+    DUCKNNG_TRANSPORT_REQREP,
+    DUCKNNG_PAYLOAD_JSON,
+    DUCKNNG_PAYLOAD_JSON,
+    DUCKNNG_RESPONSE_METADATA_ONLY,
+    DUCKNNG_SESSION_CLOSES,
+    0,
+    DUCKNNG_RPC_FLAG_PAYLOAD_JSON | DUCKNNG_RPC_FLAG_SESSION_CLOSED,
+    1024 * 1024,
+    1024 * 1024,
+    0,
+    1,
+    0,
+    1,
+    1,
+    1,
+    0,
+    0,
+    1,
+    "{\"type\":\"json\",\"fields\":[{\"name\":\"session_id\",\"type\":\"uint64\",\"nullable\":false}]}",
+    "{\"type\":\"json\"}",
+    ducknng_method_close_handler
+};
+
+const ducknng_method_descriptor ducknng_method_cancel = {
+    "cancel",
+    "query",
+    "Cancel and close an open session",
+    DUCKNNG_TRANSPORT_REQREP,
+    DUCKNNG_PAYLOAD_JSON,
+    DUCKNNG_PAYLOAD_JSON,
+    DUCKNNG_RESPONSE_METADATA_ONLY,
+    DUCKNNG_SESSION_CANCELS,
+    0,
+    DUCKNNG_RPC_FLAG_PAYLOAD_JSON | DUCKNNG_RPC_FLAG_CANCELLED | DUCKNNG_RPC_FLAG_SESSION_CLOSED,
+    1024 * 1024,
+    1024 * 1024,
+    0,
+    1,
+    0,
+    1,
+    1,
+    0,
+    0,
+    0,
+    1,
+    "{\"type\":\"json\",\"fields\":[{\"name\":\"session_id\",\"type\":\"uint64\",\"nullable\":false}]}",
+    "{\"type\":\"json\"}",
+    ducknng_method_cancel_handler
+};
+
 const ducknng_method_descriptor ducknng_method_manifest = {
     "manifest",
     "control",
@@ -190,7 +500,11 @@ const ducknng_method_descriptor ducknng_method_manifest = {
 
 int ducknng_register_builtin_methods(ducknng_runtime *rt, char **errmsg) {
     const ducknng_method_descriptor *methods[] = {
-        &ducknng_method_manifest
+        &ducknng_method_manifest,
+        &ducknng_method_query_open,
+        &ducknng_method_fetch,
+        &ducknng_method_close,
+        &ducknng_method_cancel
     };
     if (!rt) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: missing runtime for method registration");

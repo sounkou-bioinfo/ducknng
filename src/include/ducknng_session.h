@@ -11,17 +11,20 @@ typedef struct ducknng_schema_cache {
 
 typedef struct ducknng_session {
     uint64_t session_id;
-    duckdb_connection con;
-    duckdb_prepared_statement stmt;
-    duckdb_pending_result pending;
     duckdb_result result;
-    int stmt_open;
-    int pending_open;
     int result_open;
     int eos;
-    char *input_table_name;
-    ducknng_schema_cache schema;
+    int cancelled;
     uint64_t batch_no;
     uint64_t last_touch_ms;
     ducknng_mutex mu;
 } ducknng_session;
+
+typedef struct ducknng_service ducknng_service;
+
+ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_id, char **errmsg);
+void ducknng_session_destroy(ducknng_session *session);
+ducknng_session *ducknng_service_add_session(ducknng_service *svc, duckdb_result *result, char **errmsg);
+ducknng_session *ducknng_service_find_session(ducknng_service *svc, uint64_t session_id);
+ducknng_session *ducknng_service_remove_session(ducknng_service *svc, uint64_t session_id);
+size_t ducknng_service_prune_idle_sessions(ducknng_service *svc, uint64_t now_ms);

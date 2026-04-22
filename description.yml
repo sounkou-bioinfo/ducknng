@@ -1,6 +1,6 @@
 name: ducknng
 version: 0.1.0
-description: NNG-backed DuckDB C extension for REQ/REP SQL serving with Arrow IPC
+description: NNG-backed DuckDB unstable C API extension for REQ/REP SQL serving with Arrow IPC
 license: MIT
 excluded_platforms: wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_arm64
 maintainers:

@@ -243,9 +243,95 @@ cleanup:
     return rc;
 }
 
+int ducknng_decode_query_open_payload(const uint8_t *payload, size_t payload_len,
+    ducknng_query_open_request *out, char **errmsg) {
+    struct ArrowBuffer input_buf;
+    struct ArrowIpcInputStream input_stream;
+    struct ArrowArrayStream stream;
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    struct ArrowArrayView view;
+    struct ArrowError error;
+    struct ArrowStringView sql_view;
+    int rc = -1;
+    memset(&input_buf, 0, sizeof(input_buf));
+    memset(&input_stream, 0, sizeof(input_stream));
+    memset(&stream, 0, sizeof(stream));
+    memset(&schema, 0, sizeof(schema));
+    memset(&array, 0, sizeof(array));
+    memset(&view, 0, sizeof(view));
+    memset(&error, 0, sizeof(error));
+    if (out) memset(out, 0, sizeof(*out));
+    if (!payload || payload_len == 0 || !out) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing query_open payload");
+        return -1;
+    }
+    ArrowBufferInit(&input_buf);
+    if (ArrowBufferAppend(&input_buf, payload, (int64_t)payload_len) != NANOARROW_OK ||
+        ArrowIpcInputStreamInitBuffer(&input_stream, &input_buf) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize query_open Arrow payload reader");
+        goto cleanup;
+    }
+    input_buf.data = NULL;
+    if (ArrowIpcArrayStreamReaderInit(&stream, &input_stream, NULL) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize query_open Arrow stream reader");
+        goto cleanup;
+    }
+    input_stream.release = NULL;
+    if (ArrowArrayStreamGetSchema(&stream, &schema, &error) != NANOARROW_OK ||
+        ArrowArrayStreamGetNext(&stream, &array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message : "ducknng: failed to decode query_open payload");
+        goto cleanup;
+    }
+    if (!array.release || array.length != 1 || schema.n_children < 1 || !schema.children || !schema.children[0] ||
+        !schema.children[0]->name || strcmp(schema.children[0]->name, "sql") != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: query_open payload must contain exactly one row with sql as the first field");
+        goto cleanup;
+    }
+    if (ArrowArrayViewInitFromSchema(&view, &schema, &error) != NANOARROW_OK ||
+        ArrowArrayViewSetArray(&view, &array, &error) != NANOARROW_OK) {
+        if (errmsg) *errmsg = ducknng_strdup(error.message[0] ? error.message : "ducknng: failed to view query_open payload");
+        goto cleanup;
+    }
+    if (ArrowArrayViewIsNull(view.children[0], 0)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: query_open payload sql must not be NULL");
+        goto cleanup;
+    }
+    sql_view = ArrowArrayViewGetStringUnsafe(view.children[0], 0);
+    out->sql = ducknng_copy_string_view(sql_view);
+    if (!out->sql) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to copy sql from query_open payload");
+        goto cleanup;
+    }
+    if (schema.n_children > 1 && schema.children[1] && schema.children[1]->name && strcmp(schema.children[1]->name, "batch_rows") == 0 && !ArrowArrayViewIsNull(view.children[1], 0)) {
+        out->batch_rows = ArrowArrayViewGetUIntUnsafe(view.children[1], 0);
+    }
+    if (schema.n_children > 2 && schema.children[2] && schema.children[2]->name && strcmp(schema.children[2]->name, "batch_bytes") == 0 && !ArrowArrayViewIsNull(view.children[2], 0)) {
+        out->batch_bytes = ArrowArrayViewGetUIntUnsafe(view.children[2], 0);
+    }
+    rc = 0;
+cleanup:
+    if (rc != 0 && out) ducknng_query_open_request_destroy(out);
+    ArrowArrayViewReset(&view);
+    if (array.release) ArrowArrayRelease(&array);
+    if (schema.release) ArrowSchemaRelease(&schema);
+    if (stream.release) ArrowArrayStreamRelease(&stream);
+    if (input_stream.release) input_stream.release(&input_stream);
+    if (input_buf.data) ArrowBufferReset(&input_buf);
+    return rc;
+}
+
 void ducknng_exec_request_destroy(ducknng_exec_request *req) {
     if (!req) return;
     if (req->sql) duckdb_free(req->sql);
     req->sql = NULL;
     req->want_result = 0;
+}
+
+void ducknng_query_open_request_destroy(ducknng_query_open_request *req) {
+    if (!req) return;
+    if (req->sql) duckdb_free(req->sql);
+    req->sql = NULL;
+    req->batch_rows = 0;
+    req->batch_bytes = 0;
 }
