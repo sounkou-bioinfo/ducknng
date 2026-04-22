@@ -51,52 +51,53 @@ target_include_directories(nng INTERFACE $<INSTALL_INTERFACE:include>
 target_include_directories(nng PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_include_directories(nng_testing PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-install(TARGETS ${PROJECT_NAME}
-        EXPORT ${PROJECT_NAME}-target
-        FRAMEWORK DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Library
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Library
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Library
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Tools
-        )
+if (NOT NNG_DISABLE_PACKAGE_CONFIG_AND_INSTALL)
+    install(TARGETS ${PROJECT_NAME}
+            EXPORT ${PROJECT_NAME}-target
+            FRAMEWORK DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Library
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Library
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Library
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Tools
+            )
 
-install(EXPORT ${PROJECT_NAME}-target
-        FILE ${PROJECT_NAME}-targets.cmake
-        NAMESPACE nng::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
-        COMPONENT Library
-        )
+    install(EXPORT ${PROJECT_NAME}-target
+            FILE ${PROJECT_NAME}-targets.cmake
+            NAMESPACE nng::
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
+            COMPONENT Library
+            )
 
-export(EXPORT ${PROJECT_NAME}-target
-        FILE ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-targets.cmake
-        NAMESPACE nng::)
+    export(EXPORT ${PROJECT_NAME}-target
+            FILE ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-targets.cmake
+            NAMESPACE nng::)
 
-# Install the header files.
-install(DIRECTORY ../include/nng
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        COMPONENT Headers)
+    # Install the header files.
+    install(DIRECTORY ../include/nng
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+            COMPONENT Headers)
+
+    # Configure files
+    set(INCLUDE_INSTALL_DIRS "${CMAKE_INSTALL_INCLUDEDIR}/nng")
+
+    include(CMakePackageConfigHelpers)
+    set(version_config "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake")
+    set(project_config "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake")
+
+    write_basic_package_version_file("${version_config}"
+            VERSION ${NNG_PACKAGE_VERSION}
+            COMPATIBILITY SameMajorVersion
+            )
+    configure_package_config_file(${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}-config.cmake.in "${project_config}"
+            INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
+            PATH_VARS INCLUDE_INSTALL_DIRS)
+
+    install(FILES "${project_config}" "${version_config}"
+            DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
+            COMPONENT Library)
+endif()
 
 # These are promoted for testing
 set(NNG_SUPP_BASE64 ${NNG_SUPP_BASE64} PARENT_SCOPE)
 set(NNG_SUPP_HTTP ${NNG_SUPP_HTTP} PARENT_SCOPE)
 set(NNG_SUPP_SHA1 ${NNG_SUPP_SHA1} PARENT_SCOPE)
 set(NNG_SUPP_WEBSOCKET ${NNG_SUPP_WEBSOCKET} PARENT_SCOPE)
-
-# Configure files
-
-set(INCLUDE_INSTALL_DIRS "${CMAKE_INSTALL_INCLUDEDIR}/nng")
-
-include(CMakePackageConfigHelpers)
-set(version_config "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake")
-set(project_config "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake")
-
-write_basic_package_version_file("${version_config}"
-        VERSION ${NNG_PACKAGE_VERSION}
-        COMPATIBILITY SameMajorVersion
-        )
-configure_package_config_file(${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}-config.cmake.in "${project_config}"
-        INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
-        PATH_VARS INCLUDE_INSTALL_DIRS)
-
-install(FILES "${project_config}" "${version_config}"
-        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
-        COMPONENT Library)
