@@ -37,7 +37,7 @@ Today the extension already includes:
 - a low-level HTTP/HTTPS client helper for transport-adapter work
 - explicit query-session helpers and TLS config handles
 
-Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. The session family is implemented and usable, but it should still be treated as experimental until session ownership is bound to a concrete multi-client identity model.
+Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. The session family is implemented and usable, but it should still be treated as experimental until session ownership is bound to a concrete multi-client identity model. HTTP/HTTPS are the only current web-carrier focus; `ws://` and `wss://` are intentionally deferred and are not enabled in the current build.
 
 ## Functions
 
@@ -52,7 +52,7 @@ make configure
 make release
 ```
 
-See `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, and `docs/types.md` for the authoritative protocol, transport, TLS, HTTP-adapter, and session/query-family contract. `NEWS.md` summarizes notable landed changes, while `docs/design_review_checklist.md` is a better guide to the main remaining gaps and next implementation slices. TLS already supports both file-backed and in-memory PEM material through helpers such as `ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, and `ducknng_self_signed_tls_config(...)`.
+See `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, and `docs/types.md` for the authoritative protocol, transport, TLS, HTTP-adapter, and session/query-family contract. `NEWS.md` summarizes notable landed changes, `docs/api_sealing_checklist.md` tracks what still blocks calling the public API sealed, and `docs/design_review_checklist.md` is the broader implementation-gap checklist. TLS already supports both file-backed and in-memory PEM material through helpers such as `ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, and `ducknng_self_signed_tls_config(...)`.
 
 ## Examples
 
@@ -330,6 +330,54 @@ SELECT ducknng_close_socket(2);
 SELECT ducknng_close_socket(1);
 ```
 
+### Push one raw message through `push` / `pull`
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Open one pull socket, listen on it, then dial it from a push peer.
+SELECT ducknng_open_socket('pull');
+SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 134217728, 0::UBIGINT);
+SELECT ducknng_open_socket('push');
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000);
+
+-- Receive asynchronously on pull so the send side can return immediately.
+CREATE TEMP TABLE pushpull_recv AS
+SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+
+SELECT ducknng_send_socket_raw(2::UBIGINT, from_hex('707573682d70756c6c'), 1000) AS sent;
+
+SELECT ok, hex(frame) = '707573682D70756C6C' AS got_payload
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM pushpull_recv), 1000);
+
+SELECT ducknng_aio_drop((SELECT recv_aio FROM pushpull_recv));
+DROP TABLE pushpull_recv;
+SELECT ducknng_close_socket(2);
+SELECT ducknng_close_socket(1);
+```
+
+### Publish one raw message through `pub` / `sub`
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Open one publisher, then subscribe from a sub peer to all topics.
+SELECT ducknng_open_socket('pub');
+SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 134217728, 0::UBIGINT);
+SELECT ducknng_open_socket('sub');
+SELECT ducknng_subscribe_socket(2::UBIGINT, from_hex(''));
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000);
+
+CREATE TEMP TABLE pubsub_recv AS
+SELECT ducknng_recv_socket_raw_aio(2::UBIGINT, 1000) AS recv_aio;
+
+SELECT ducknng_send_socket_raw(1::UBIGINT, from_hex('7075622d737562'), 1000) AS sent;
+
+SELECT ok, hex(frame) = '7075622D737562' AS got_payload
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM pubsub_recv), 1000);
+
+SELECT ducknng_aio_drop((SELECT recv_aio FROM pubsub_recv));
+DROP TABLE pubsub_recv;
+SELECT ducknng_close_socket(2);
+SELECT ducknng_close_socket(1);
+```
+
 ### Launch raw requests asynchronously and collect the reply frames later
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
@@ -544,10 +592,10 @@ SELECT ducknng_drop_tls_config(1);
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
 -- Register a file-backed TLS config using committed loopback test certificates.
 SELECT ducknng_tls_config_from_files(
-  'test/certs/loopback-cert-key.pem', -- cert_chain_path
-  'test/certs/loopback-ca.pem',       -- ca_cert_path
-  NULL,                               -- private_key_path (included in the cert/key PEM above)
-  0                                   -- mode flags
+  'test/certs/loopback-cert-key.pem', -- cert_key_file
+  'test/certs/loopback-ca.pem',       -- ca_file
+  NULL,                               -- password
+  0                                   -- auth_mode
 );
 
 -- Start a TLS listener with that file-backed config.

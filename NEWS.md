@@ -6,7 +6,11 @@
 
 - Added the first raw unary RPC aio wrappers: `ducknng_get_rpc_manifest_raw_aio(...)` and `ducknng_run_rpc_raw_aio(...)`.
 - Added a documented local NNG patch under `patches/nng/` so the vendored Windows clock fallback for DuckDB CI's Rtools42 MinGW environment is explicit rather than an undocumented edit inside `third_party/nng/`.
+- Fixed runtime teardown so `ducknng_runtime_destroy(...)` now cleans up services, client aio handles, client sockets, TLS configs, the runtime mutex, and the global runtime registry entry instead of leaving destruction partial.
+- Added `docs/api_sealing_checklist.md` to track what still blocks calling the current public API sealed, with the session ownership model called out as the main blocker.
+- Expanded the README with runnable `push` / `pull` and `pub` / `sub` raw messaging examples instead of leaving the broader protocol family only implied by the function list.
 - Clarified the README and protocol docs so the layering is explicit: the generic socket layer is the transport substrate, higher-level RPC helpers wrap manifest-declared request/reply methods, session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle, and aio launch `timeout_ms` is distinct from later `ducknng_aio_collect(..., wait_ms)` polling.
+- Clarified in the README that `ws://` and `wss://` are intentionally deferred and are not enabled in the current build.
 - Switched the README HTTP client illustration to a visible local `nanonext` HTTPS server so the example shows the real carrier and TLS story rather than hiding it behind generic setup prose.
 - Implemented `ducknng_ncurl(...)` as the first low-level HTTP/HTTPS client slice, returning in-band `ok`, `status`, `error`, `headers_json`, `body`, and `body_text` columns.
 - Added `make http_smoke` and a local Python-stdlib smoke harness to validate real HTTP GET and POST roundtrips without depending on the public internet.

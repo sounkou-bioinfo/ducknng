@@ -38,6 +38,19 @@ static int reg_reserve(size_t want) {
     g_entry_cap = new_cap;
     return 1;
 }
+static void reg_remove(duckdb_database *db) {
+    long idx;
+    if (!db) return;
+    idx = reg_find(db);
+    if (idx < 0) return;
+    for (; (size_t)idx + 1 < g_entry_count; idx++) g_entries[idx] = g_entries[idx + 1];
+    g_entry_count--;
+    if (g_entry_count == 0 && g_entries) {
+        duckdb_free(g_entries);
+        g_entries = NULL;
+        g_entry_cap = 0;
+    }
+}
 
 int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info info,
     struct duckdb_extension_access *access, ducknng_runtime **out_rt) {
@@ -115,7 +128,30 @@ void ducknng_client_aio_destroy(ducknng_client_aio *aio) {
 
 void ducknng_runtime_destroy(ducknng_runtime *rt) {
     size_t i;
+    duckdb_database *db;
     if (!rt) return;
+    db = rt->db;
+    if (rt->services) {
+        for (i = 0; i < rt->service_count; i++) {
+            ducknng_service *svc = rt->services[i];
+            if (!svc) continue;
+            ducknng_service_stop(svc, NULL);
+            ducknng_service_destroy(svc);
+        }
+        duckdb_free(rt->services);
+        rt->services = NULL;
+        rt->service_count = 0;
+        rt->service_cap = 0;
+    }
+    if (rt->client_aios) {
+        for (i = 0; i < rt->client_aio_count; i++) {
+            ducknng_client_aio_destroy(rt->client_aios[i]);
+        }
+        duckdb_free(rt->client_aios);
+        rt->client_aios = NULL;
+        rt->client_aio_count = 0;
+        rt->client_aio_cap = 0;
+    }
     if (rt->client_sockets) {
         for (i = 0; i < rt->client_socket_count; i++) {
             ducknng_client_socket *sock = rt->client_sockets[i];
@@ -131,12 +167,9 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
             duckdb_free(sock);
         }
         duckdb_free(rt->client_sockets);
-    }
-    if (rt->client_aios) {
-        for (i = 0; i < rt->client_aio_count; i++) {
-            ducknng_client_aio_destroy(rt->client_aios[i]);
-        }
-        duckdb_free(rt->client_aios);
+        rt->client_sockets = NULL;
+        rt->client_socket_count = 0;
+        rt->client_socket_cap = 0;
     }
     if (rt->tls_configs) {
         for (i = 0; i < rt->tls_config_count; i++) {
@@ -147,9 +180,17 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
             duckdb_free(cfg);
         }
         duckdb_free(rt->tls_configs);
+        rt->tls_configs = NULL;
+        rt->tls_config_count = 0;
+        rt->tls_config_cap = 0;
     }
     ducknng_method_registry_destroy(&rt->registry);
     if (rt->aio_cv_initialized) ducknng_cond_destroy(&rt->aio_cv);
+    ducknng_mutex_destroy(&rt->mu);
+    reg_lock();
+    reg_remove(db);
+    reg_unlock();
+    duckdb_free(rt);
 }
 
 ducknng_service *ducknng_runtime_find_service(ducknng_runtime *rt, const char *name) {
