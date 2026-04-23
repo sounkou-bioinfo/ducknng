@@ -238,7 +238,7 @@ This file is generated from `function_catalog/functions.yaml`.
 ### Start an IPC listener and inspect the registry
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 SELECT ducknng_start_server(
   'sql0',                         -- service name
   'ipc:///tmp/ducknng_sql0.ipc', -- listen URL
@@ -276,7 +276,7 @@ SELECT ducknng_stop_server('sql0');
 ### Request multiple REP contexts on one REP socket
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 SELECT ducknng_start_server(
   'sql_multi',                    -- service name
   'ipc:///tmp/ducknng_sql_multi.ipc', -- listen URL
@@ -315,7 +315,7 @@ SELECT ducknng_stop_server('sql_multi');
 ### DuckDB can also act as a client
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Start a local ducknng service that the following client examples will talk to.
 SELECT ducknng_start_server(
   'sql_client_demo',              -- service name
@@ -567,7 +567,7 @@ server <- http_server(
 ```
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Register a client TLS handle that trusts the self-signed HTTPS demo server.
 SELECT ducknng_tls_config_from_files(
   NULL,                                     -- cert_key_file
@@ -608,17 +608,17 @@ SELECT ducknng_drop_tls_config(1);
     ├──────────────────────────────────────────────────────────────────────────────────────┤
     │                                                                                    1 │
     └──────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬────────┬──────────────────────────┐
-    │   ok    │ status │        body_text         │
-    │ boolean │ int32  │         varchar          │
-    ├─────────┼────────┼──────────────────────────┤
-    │ true    │    200 │ hello from ducknng https │
-    └─────────┴────────┴──────────────────────────┘
+    ┌─────────┬────────┬───────────┐
+    │   ok    │ status │ body_text │
+    │ boolean │ int32  │  varchar  │
+    ├─────────┼────────┼───────────┤
+    │ false   │   NULL │ NULL      │
+    └─────────┴────────┴───────────┘
     ┌─────────┬────────┬──────────┬────────────┐
     │   ok    │ status │ body_hex │ has_header │
     │ boolean │ int32  │ varchar  │  boolean   │
     ├─────────┼────────┼──────────┼────────────┤
-    │ true    │    200 │ 01020304 │ true       │
+    │ false   │   NULL │ NULL     │ NULL       │
     └─────────┴────────┴──────────┴────────────┘
     ┌────────────────────────────┐
     │ ducknng_drop_tls_config(1) │
@@ -630,7 +630,7 @@ SELECT ducknng_drop_tls_config(1);
 ### Launch raw socket send/recv airos and inspect send status explicitly
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Open one listening pair socket and one dialed peer.
 SELECT ducknng_open_socket('pair');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 134217728, 0::UBIGINT);
@@ -735,7 +735,7 @@ SELECT ducknng_close_socket(1);
 ### Push one raw message through `push` / `pull`
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Open one pull socket, listen on it, then dial it from a push peer.
 SELECT ducknng_open_socket('pull');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 134217728, 0::UBIGINT);
@@ -815,7 +815,7 @@ SELECT ducknng_close_socket(1);
 ### Publish one raw message through `pub` / `sub`
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Open one publisher, then subscribe from a sub peer to all topics.
 SELECT ducknng_open_socket('pub');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 134217728, 0::UBIGINT);
@@ -901,7 +901,7 @@ SELECT ducknng_close_socket(1);
 ### Exchange one survey and one response through `surveyor` / `respondent`
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Open one respondent listener and one surveyor peer.
 SELECT ducknng_open_socket('respondent');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 134217728, 0::UBIGINT);
@@ -1010,7 +1010,7 @@ SELECT ducknng_close_socket(1);
 ### Launch raw requests asynchronously and collect the reply frames later
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Start a local listener that the aio requests will target.
 SELECT ducknng_start_server(
   'sql_aio_demo',                -- service name
@@ -1107,7 +1107,7 @@ request frames for you. They still collect raw reply frames later, so
 decoding remains explicit and honest.
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Start a local listener for the async RPC wrapper demo.
 SELECT ducknng_start_server(
   'sql_rpc_aio_demo',            -- service name
@@ -1217,7 +1217,7 @@ SELECT ducknng_stop_server('sql_rpc_aio_demo');
 ### Open, fetch, and close a query session explicitly
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Start a listener that will own the server-side query session.
 SELECT ducknng_start_server(
   'sql_session_demo',            -- service name
@@ -1311,7 +1311,7 @@ SELECT ducknng_stop_server('sql_session_demo');
 ### `tls+tcp://` with a self-signed development TLS config
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Generate a self-signed loopback certificate and keep it as a runtime TLS handle.
 SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 0);
 
@@ -1375,7 +1375,7 @@ SELECT ducknng_drop_tls_config(1);
 ### `tls+tcp://` from file-backed certificate material
 
 ``` sql
-LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+LOAD 'build/release/ducknng.duckdb_extension';
 -- Register a file-backed TLS config using committed loopback test certificates.
 SELECT ducknng_tls_config_from_files(
   'test/certs/loopback-cert-key.pem', -- cert_key_file
@@ -1629,8 +1629,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1d912a158280e.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1da2b5744cb9b9.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

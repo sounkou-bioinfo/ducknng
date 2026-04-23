@@ -8,7 +8,7 @@ output: github_document
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
 knitr::knit_engines$set(sql = function(options) {
   code <- paste(options$code, collapse = "\n")
-  extension_path <- normalizePath("build/release/ducknng.duckdb_extension", mustWork = FALSE)
+  extension_path <- "build/release/ducknng.duckdb_extension"
   extension_path <- gsub("'", "''", extension_path, fixed = TRUE)
   if (!identical(options$autoload, FALSE)) {
     code <- paste(sprintf("LOAD '%s';", extension_path), code, sep = "\n")
