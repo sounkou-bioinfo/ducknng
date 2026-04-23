@@ -80,7 +80,7 @@ This checklist tracks the implementation status of the recommendations in `docs/
   - Current state: signatures were unified and transport reach no longer diverges.
   - Remaining work: decide whether to delete the raw or structured twins entirely.
 - [~] Prepare HTTP / HTTPS transport adapters without inventing a second RPC surface.
-  - Current state: `docs/transports.md` now fixes the intended boundary and the codebase has a transport-family parser above the NNG shim.
+  - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, the planned SQL signatures, and the frame-over-HTTP carrier rule, and the codebase has a transport-family parser above the NNG shim.
   - Remaining work: implement `ducknng_start_http_server(...)`, `ducknng_ncurl(...)`, and any future HTTP aio helpers as transport-local entry points over the existing registry-backed methods.
 
 ## Blocked by larger architectural replacement work

@@ -41,6 +41,7 @@
 - Added a runtime-owned aio registry and SQL-visible raw aio helpers for both request/reply and generic socket operations: `ducknng_request_raw_aio()`, `ducknng_request_socket_raw_aio()`, `ducknng_send_socket_raw_aio()`, `ducknng_recv_socket_raw_aio()`, `ducknng_aio_ready()`, `ducknng_aio_status()`, `ducknng_aio_collect()`, `ducknng_aio_cancel()`, and `ducknng_aio_drop()`.
 - `ducknng_aio_collect()` and `ducknng_aio_status()` are now exposed as SQL macros over internal scalar helpers so dynamic arguments can work without relying on lateral-capable stable-C-API table-function parameters.
 - Added a transport-family URL parser above the NNG shim so current NNG paths fail fast on `http://` and `https://` as reserved future transport adapters instead of treating them as malformed NNG endpoints.
+- Added `docs/http.md` to pin the first HTTP transport contract: planned SQL signatures for `ducknng_start_http_server(...)` and `ducknng_ncurl(...)`, frame-over-HTTP carriage, and the invariant that session methods and Arrow record batches keep the same protocol semantics under HTTP.
 - Wider row-result type coverage, SQL-side Arrow batch decoding for session fetches, and the remaining session-ownership hardening work are still pending.
 - The docs contract for the session query family now fixes the intended lifecycle: `query_open` returns JSON control metadata and a session id, `fetch` is the only row-bearing method, `close` is the normal cleanup path, and `cancel` is best-effort until the implementation can bind sessions to a concrete owner identity.
 
