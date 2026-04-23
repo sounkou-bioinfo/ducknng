@@ -30,6 +30,8 @@ The TLS configuration model should not be file-only. The runtime accepts certifi
 
 `ipc://` listeners on shared filesystems are subject to filesystem access control. The server must create the socket under a path whose directory permissions restrict access to the intended principal, or must apply restrictive permissions to the socket itself after bind. The default `/tmp` path used in examples is suitable for single-user development and not for multi-user hosts. That distinction must appear in any user-facing example.
 
+If HTTP or HTTPS transport adapters are added later, they inherit the same trust model rather than defining a second security model. `ducknng_start_http_server(...)` and `ducknng_ncurl(...)` are transport-local helpers, not alternate manifest methods and not authorization bypasses. Registry policy, manifest visibility, session ownership, and Arrow-versus-JSON payload rules must remain identical across carriers even if the outer transport adds headers, status codes, or other HTTP-native metadata.
+
 ## Envelope and wire safety
 
 The envelope is the first line of defense because every byte that reaches a method handler first passes through the decoder. The envelope must be versioned, and the version must be checked. `docs/protocol.md` calls the version field mandatory, and the implementation must enforce that by reading a version byte from a fixed position and rejecting frames whose version the server does not understand. Silently misparsing a future envelope as a current one is a forward-compatibility hole and a security hazard, because attacker-influenced bytes land in field positions whose semantics differ between versions.
@@ -79,6 +81,8 @@ The manifest is derived from the registry and therefore never reveals methods th
 ## Future transport patterns
 
 PUB/SUB is reserved by `docs/protocol.md` for server-originated fanout. Broadcast is an inherent property of the pattern, and PUB/SUB events therefore must not carry per-client-confidential payloads, per-session state, or any data that would be unsafe to deliver to every subscriber. Per-client or per-session notifications require a different pattern, such as SURVEY/RESPONDENT keyed on identity or a session-scoped reply channel, and that choice must be made in `docs/protocol.md` before the PUB/SUB surface is populated. Event schemas published through PUB/SUB are manifest-declared like any other method output and are subject to the same type-contract discipline described in `docs/types.md`.
+
+A future HTTP/HTTPS carrier does not change that rule. Transport adapters may widen how clients reach the same registry-backed methods, but they do not alter which payloads are fanout-safe, session-bound, or confidential.
 
 ## Resource bounds and denial of service
 

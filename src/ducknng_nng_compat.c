@@ -1,4 +1,5 @@
 #include "ducknng_nng_compat.h"
+#include "ducknng_transport.h"
 #include "ducknng_util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -126,6 +127,21 @@ fail:
 
 int ducknng_rep_socket_open(nng_socket *out) { return nng_rep0_open(out); }
 int ducknng_req_socket_open(nng_socket *out) { return nng_req0_open(out); }
+int ducknng_validate_nng_url(const char *url, char **errmsg) {
+    ducknng_transport_url parsed;
+    char *parse_err = NULL;
+    if (errmsg) *errmsg = NULL;
+    if (ducknng_transport_url_parse(url, &parsed, &parse_err) != 0) {
+        if (errmsg) *errmsg = parse_err;
+        else if (parse_err) duckdb_free(parse_err);
+        return -1;
+    }
+    if (!ducknng_transport_url_is_nng(&parsed)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: http:// and https:// URLs are reserved for future HTTP transport adapters");
+        return -1;
+    }
+    return 0;
+}
 int ducknng_socket_open_protocol(const char *protocol, nng_socket *out, char **errmsg) {
     int rv = NNG_EINVAL;
     if (errmsg) *errmsg = NULL;
@@ -201,19 +217,23 @@ int ducknng_req_transact(nng_socket sock, nng_msg *req, nng_msg **resp) {
 }
 int ducknng_listener_create(nng_listener *out, nng_socket sock, const char *url) { return nng_listener_create(out, sock, url); }
 int ducknng_listener_validate_startup_url(const char *url, const ducknng_tls_opts *opts, char **errmsg) {
+    ducknng_transport_url parsed;
     nng_url *up = NULL;
     int tls_requested = ducknng_tls_requested(opts);
     int rc = 0;
+    if (errmsg) *errmsg = NULL;
     if (!url || !url[0]) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: listen URL is required");
         return -1;
     }
+    if (ducknng_validate_nng_url(url, errmsg) != 0) return -1;
+    if (ducknng_transport_url_parse(url, &parsed, errmsg) != 0) return -1;
     if (nng_url_parse(&up, url) != 0 || !up || !up->u_scheme || !up->u_scheme[0]) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid listen URL");
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: invalid listen URL");
         rc = -1;
         goto done;
     }
-    if (strcmp(up->u_scheme, "tls+tcp") == 0) {
+    if (parsed.scheme == DUCKNNG_TRANSPORT_SCHEME_TLS_TCP) {
         if (!tls_requested) {
             if (errmsg) *errmsg = ducknng_strdup("ducknng: tls+tcp listeners require TLS configuration");
             rc = -1;

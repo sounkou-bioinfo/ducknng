@@ -130,6 +130,11 @@ SELECT ducknng_open_socket('req')
 ----
 9
 
+statement error
+SELECT ducknng_dial_socket(9, 'https://127.0.0.1:45447', 1000)
+----
+ducknng: http:// and https:// URLs are reserved for future HTTP transport adapters
+
 query I
 SELECT ducknng_open_socket('rep')
 ----

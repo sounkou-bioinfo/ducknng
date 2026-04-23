@@ -1247,6 +1247,7 @@ static int ducknng_client_open_req_socket_tls(const char *url, int timeout_ms, c
         if (errmsg) *errmsg = ducknng_strdup("ducknng: client URL is required");
         return -1;
     }
+    if (ducknng_validate_nng_url(url, errmsg) != 0) return -1;
     rv = ducknng_req_socket_open(out);
     if (rv != 0) {
         if (errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));
@@ -1486,6 +1487,7 @@ static void ducknng_dial_scalar(duckdb_function_info info, duckdb_data_chunk inp
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
         int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 5000);
         ducknng_client_socket *sock;
+        char *errmsg = NULL;
         int rv;
         if (!ctx || !ctx->rt || socket_id == 0 || !url) {
             if (url) duckdb_free(url);
@@ -1501,6 +1503,12 @@ static void ducknng_dial_scalar(duckdb_function_info info, duckdb_data_chunk inp
         if (sock->connected) {
             duckdb_free(url);
             duckdb_scalar_function_set_error(info, "ducknng: socket is already dialed");
+            return;
+        }
+        if (ducknng_validate_nng_url(url, &errmsg) != 0) {
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: invalid transport URL");
+            if (errmsg) duckdb_free(errmsg);
             return;
         }
         rv = ducknng_socket_set_timeout_ms(sock->sock, timeout_ms, timeout_ms);
