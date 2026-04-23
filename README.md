@@ -5,66 +5,28 @@
 
 `ducknng` is a pure C DuckDB extension for DuckDB + NNG REQ/REP interop.
 
-Its SQL-facing client and server interface is explicitly modeled over
-[`r-lib/nanonext`](https://github.com/r-lib/nanonext), taking req/rep
-sockets, dial/listen semantics, context-oriented NNG usage, and a
-practical messaging surface as the reference point for what should feel
-natural from DuckDB SQL. Its RPC framing and tabular payload direction
-are likewise informed by Arrow IPC based RPC work such as
-[`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro)
-and related projects, where a thin envelope is kept separate from Arrow
-IPC request and reply payloads instead of being buried inside one-off
-method-specific binaries.
+It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin,
+versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are
+inspired by [`r-lib/nanonext`](https://github.com/r-lib/nanonext), and
+the thin-envelope + Arrow IPC direction is informed by projects such as
+[`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro).
 
-At the moment, `ducknng` already exposes a low-level transport layer
-with socket-open, dial, close, and raw request primitives, alongside
-SQL-visible server lifecycle control and runtime introspection through
-`ducknng_start_server()`, `ducknng_stop_server()`, and
-`ducknng_list_servers()`. That transport surface is operation-oriented
-rather than transport-specific: transport is autodetected from the URL
-scheme in the same general style as `nanonext`, so the same API can work
-with `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://` without spawning
-a separate helper family for each scheme, while TLS material is passed
-through reusable `tls_config_id` handles instead of inline
-transport-specific arguments. The current SQL client socket-handle layer
-is still honest but narrow: `ducknng_open_socket()` only implements
-`req` today. On the server side it runs one REP socket with one or more
-REP contexts, and on top of that transport it already supports a working
-RPC request/reply path with manifest discovery, metadata-oriented
-execution, and unary row-returning execution over the current raw wire
-and Arrow IPC model.
+Today the extension already includes:
 
-A SQL-visible aio surface now exists for raw request/reply futures. In
-`nanonext` terms, an aio here means one pending NNG operation backed by
-`nng_aio`, not a new wire mode or a background job queue. The first
-exposed slice is deliberately raw-first: `ducknng_request_raw_aio()` and
-`ducknng_request_socket_raw_aio()` launch framed requests and return aio
-handle ids immediately, `ducknng_aio_ready()` reports whether a handle
-has reached a terminal state, `ducknng_aio_collect()` waits for and
-returns full reply frames, and `ducknng_aio_drop()` releases terminal
-handles explicitly.
+- server lifecycle control through `ducknng_start_server()`,
+  `ducknng_stop_server()`, and `ducknng_list_servers()`
+- req client sockets plus raw request/reply helpers
+- RPC helpers for manifest discovery, opt-in `exec`, and unary query
+  execution
+- raw aio helpers for request/reply futures
+- explicit query-session helpers and TLS config handles
 
-The session query family is now exposed on the SQL client side through
-`ducknng_open_query()`, `ducknng_fetch_query()`,
-`ducknng_close_query()`, and `ducknng_cancel_query()`. That surface
-stays control-first: opening, closing, and cancelling a session return
-JSON-derived control rows, while `ducknng_fetch_query()` returns either
-the next Arrow IPC batch as a BLOB payload or an end-of-stream control
-row. Until a real owner-identity model is implemented, that family
-should still be treated as development scaffolding rather than as a
-production-safe multi-client surface.
-
-The transport-security utility layer now has a runtime model for TLS
-configuration handles. Those handles can be assembled from file-backed
-certificate material, from in-memory PEM strings, or from self-signed
-development certificates generated on demand. The actual `tls+tcp://`
-transport wiring remains isolated behind `ducknng_nng_compat.c`, but it
-is now enabled for real loopback listener and one-shot client-request
-paths so the public API no longer needs a separate transport-specific
-helper family. This follows the same broad direction as `nanonext`,
-which exposes TLS helper facilities backed by mbedTLS rather than
-forcing every client to hand-roll certificate setup outside the
-transport layer.
+Transport is selected from the URL scheme, so the same SQL-facing
+operations work across `inproc://`, `ipc://`, `tcp://`, and
+`tls+tcp://`. The current socket-handle layer is intentionally honest
+but still narrow: `ducknng_open_socket()` supports `req` today, and the
+session family should still be treated as development scaffolding until
+multi-client ownership is hardened.
 
 ## Functions
 
@@ -273,17 +235,40 @@ SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT 
 -- RPC helper: fetch row results through the unary query path.
 SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i', 0::UBIGINT);
 
--- Primitive transport layer: open a socket handle, dial it, and inspect the registry.
+-- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');
 SELECT ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
 SELECT * FROM ducknng_list_sockets();
 
--- Primitive transport layer: send a raw manifest frame and inspect the reply prefix.
-SELECT * FROM ducknng_request_socket(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);
-SELECT * FROM ducknng_request('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT);
+-- Primitive transport layer: send the built-in manifest request frame.
+-- The hex literal here is the current wire-format request for the always-on manifest method.
+SELECT *
+FROM ducknng_request_socket(
+  1::UBIGINT,                                        -- socket_id
+  from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
+  1000                                               -- timeout_ms
+);
+
+SELECT *
+FROM ducknng_request(
+  'ipc:///tmp/ducknng_sql_client_demo.ipc',          -- url
+  from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
+  1000,                                              -- timeout_ms
+  0::UBIGINT                                         -- tls_config_id
+);
 
 -- Raw scalar forms now mean raw reply frames as BLOBs.
-SELECT substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28);
+SELECT substr(
+  hex(
+    ducknng_request_socket_raw(
+      1,                                             -- socket_id
+      from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
+      1000                                           -- timeout_ms
+    )
+  ),
+  1,
+  28
+);
 
 -- Decode raw manifest and exec replies into envelope fields plus extracted text payload.
 SELECT ok, version, type_name, name, position('"name":"exec"' IN payload_text) > 0
@@ -440,43 +425,51 @@ SELECT ducknng_stop_server('sql_client_demo');
 
 ``` sql
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Start a local listener that the aio requests will target.
 SELECT ducknng_start_server(
-  'sql_aio_demo',
-  'ipc:///tmp/ducknng_sql_aio_demo.ipc',
-  1,
-  134217728,
-  300000,
-  0
+  'sql_aio_demo',                -- service name
+  'ipc:///tmp/ducknng_sql_aio_demo.ipc', -- listen URL
+  1,                             -- REP contexts
+  134217728,                     -- recv_max_bytes
+  300000,                        -- session_idle_ms
+  0                              -- tls_config_id (0 means plaintext)
 );
 
+-- Launch two raw request/reply futures and keep their aio ids in one temp row.
+-- The hex literal below is the built-in manifest request frame in the current wire format.
 CREATE TEMP TABLE aio_demo AS
 SELECT
   ducknng_request_raw_aio(
-    'ipc:///tmp/ducknng_sql_aio_demo.ipc',
-    from_hex('01000000000000000000000000000000000000000000'),
-    1000,
-    0::UBIGINT
+    'ipc:///tmp/ducknng_sql_aio_demo.ipc', -- url
+    from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
+    1000,                                  -- timeout_ms
+    0::UBIGINT                             -- tls_config_id
   ) AS aio1,
   ducknng_request_raw_aio(
-    'ipc:///tmp/ducknng_sql_aio_demo.ipc',
-    from_hex('01000000000000000000000000000000000000000000'),
-    1000,
-    0::UBIGINT
+    'ipc:///tmp/ducknng_sql_aio_demo.ipc', -- url
+    from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
+    1000,                                  -- timeout_ms
+    0::UBIGINT                             -- tls_config_id
   ) AS aio2;
 
+-- Confirm that both aio launches returned runtime handle ids.
 SELECT aio1 > 0 AS aio1_started, aio2 > aio1 AS aio2_started_after_aio1
 FROM aio_demo;
 
+-- Wait for terminal results and return the full reply frames for later decoding.
 SELECT aio_id, ok, octet_length(frame) > 0 AS has_frame
 FROM ducknng_aio_collect((SELECT list_value(aio1, aio2) FROM aio_demo), 1000)
 ORDER BY aio_id;
 
+-- A collected aio is terminal, so ready() stays true until the handle is dropped.
 SELECT ducknng_aio_ready(aio1) AS aio1_ready, ducknng_aio_ready(aio2) AS aio2_ready
 FROM aio_demo;
 
+-- Drop the terminal aio handles explicitly because SQL has no destructor hook.
 SELECT ducknng_aio_drop(aio1) AND ducknng_aio_drop(aio2) AS dropped
 FROM aio_demo;
 
+-- Remove the temp state and stop the demo listener.
 DROP TABLE aio_demo;
 SELECT ducknng_stop_server('sql_aio_demo');
 ```
@@ -523,53 +516,56 @@ SELECT ducknng_stop_server('sql_aio_demo');
 
 ``` sql
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Start a listener that will own the server-side query session.
 SELECT ducknng_start_server(
-  'sql_session_demo',
-  'ipc:///tmp/ducknng_sql_session_demo.ipc',
-  1,
-  134217728,
-  300000,
-  0
+  'sql_session_demo',            -- service name
+  'ipc:///tmp/ducknng_sql_session_demo.ipc', -- listen URL
+  1,                             -- REP contexts
+  134217728,                     -- recv_max_bytes
+  300000,                        -- session_idle_ms
+  0                              -- tls_config_id (0 means plaintext)
 );
 
--- Open one server-owned query session and inspect the control reply.
+-- Open one server-owned query session.
+-- batch_rows = 0 and batch_bytes = 0 mean "use the server defaults" for this demo.
 SELECT *
 FROM ducknng_open_query(
-  'ipc:///tmp/ducknng_sql_session_demo.ipc',
-  'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id',
-  0::UBIGINT,
-  0::UBIGINT,
-  0::UBIGINT
+  'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
+  'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id', -- SQL text to run remotely
+  0::UBIGINT,                                -- batch_rows
+  0::UBIGINT,                                -- batch_bytes
+  0::UBIGINT                                 -- tls_config_id
 );
 
 -- The first fetch returns one Arrow IPC batch in payload.
 SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
 FROM ducknng_fetch_query(
-  'ipc:///tmp/ducknng_sql_session_demo.ipc',
-  1::UBIGINT,
-  0::UBIGINT,
-  0::UBIGINT,
-  0::UBIGINT
+  'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
+  1::UBIGINT,                                -- session_id
+  0::UBIGINT,                                -- batch_rows override
+  0::UBIGINT,                                -- batch_bytes override
+  0::UBIGINT                                 -- tls_config_id
 );
 
 -- The second fetch returns JSON control metadata saying the session is exhausted.
 SELECT ok, session_id, state, payload IS NULL AS no_payload, end_of_stream
 FROM ducknng_fetch_query(
-  'ipc:///tmp/ducknng_sql_session_demo.ipc',
-  1::UBIGINT,
-  0::UBIGINT,
-  0::UBIGINT,
-  0::UBIGINT
+  'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
+  1::UBIGINT,                                -- session_id
+  0::UBIGINT,                                -- batch_rows override
+  0::UBIGINT,                                -- batch_bytes override
+  0::UBIGINT                                 -- tls_config_id
 );
 
 -- Close the exhausted session explicitly.
 SELECT *
 FROM ducknng_close_query(
-  'ipc:///tmp/ducknng_sql_session_demo.ipc',
-  1::UBIGINT,
-  0::UBIGINT
+  'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
+  1::UBIGINT,                                -- session_id
+  0::UBIGINT                                 -- tls_config_id
 );
 
+-- Stop the demo listener after the session is closed.
 SELECT ducknng_stop_server('sql_session_demo');
 ```
 
@@ -619,22 +615,22 @@ SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 0);
 
 -- Start a TLS listener using the generated config handle.
 SELECT ducknng_start_server(
-  'tls_demo_self',
-  'tls+tcp://127.0.0.1:45453',
-  1,
-  134217728,
-  300000,
-  1
+  'tls_demo_self',               -- service name
+  'tls+tcp://127.0.0.1:45453',   -- listen URL
+  1,                             -- REP contexts
+  134217728,                     -- recv_max_bytes
+  300000,                        -- session_idle_ms
+  1                              -- tls_config_id returned above
 );
 
--- Send a raw manifest request over TLS and decode the reply frame.
+-- Send the built-in manifest request frame over TLS and decode the reply.
 SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0
 FROM ducknng_decode_frame(
   ducknng_request_raw(
-    'tls+tcp://127.0.0.1:45453',
-    from_hex('01000000000000000000000000000000000000000000'),
-    1000,
-    1
+    'tls+tcp://127.0.0.1:45453',                -- url
+    from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
+    1000,                                       -- timeout_ms
+    1                                           -- tls_config_id
   )
 );
 
@@ -680,30 +676,30 @@ SELECT ducknng_drop_tls_config(1);
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
 -- Register a file-backed TLS config using committed loopback test certificates.
 SELECT ducknng_tls_config_from_files(
-  'test/certs/loopback-cert-key.pem',
-  'test/certs/loopback-ca.pem',
-  NULL,
-  0
+  'test/certs/loopback-cert-key.pem', -- cert_chain_path
+  'test/certs/loopback-ca.pem',       -- ca_cert_path
+  NULL,                               -- private_key_path (included in the cert/key PEM above)
+  0                                   -- mode flags
 );
 
 -- Start a TLS listener with that file-backed config.
 SELECT ducknng_start_server(
-  'tls_demo_files',
-  'tls+tcp://127.0.0.1:45454',
-  1,
-  134217728,
-  300000,
-  1
+  'tls_demo_files',              -- service name
+  'tls+tcp://127.0.0.1:45454',   -- listen URL
+  1,                             -- REP contexts
+  134217728,                     -- recv_max_bytes
+  300000,                        -- session_idle_ms
+  1                              -- tls_config_id returned above
 );
 
 -- Inspect the manifest reply over TLS using the same config handle on the client side.
 SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0
 FROM ducknng_decode_frame(
   ducknng_request_raw(
-    'tls+tcp://127.0.0.1:45454',
-    from_hex('01000000000000000000000000000000000000000000'),
-    1000,
-    1
+    'tls+tcp://127.0.0.1:45454',                -- url
+    from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
+    1000,                                       -- timeout_ms
+    1                                           -- tls_config_id
   )
 );
 
@@ -744,6 +740,13 @@ SELECT ducknng_drop_tls_config(1);
     └────────────────────────────┘
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example
+
+This example is easier to follow as a short sequence: define the frame
+helpers, define the retry helpers, start a local server, run a few
+remote `exec` requests, inspect the same table locally, and then clean
+up.
+
+#### Frame encoding and decoding helpers
 
 ``` r
 # Little-endian helpers for the versioned ducknng RPC envelope.
@@ -837,7 +840,11 @@ decode_ducknng_exec_reply <- function(buf) {
     data = if (payload_len > 0) as.data.frame(nanoarrow::read_nanoarrow(payload)) else NULL
   )
 }
+```
 
+#### REQ/REP retry helpers
+
+``` r
 # Send and receive with the same retry style used in mangoro examples.
 send_ducknng_frame <- function(socket, frame, timeout_ms = 1000L, max_attempts = 20L) {
   attempt <- 1L
@@ -892,7 +899,11 @@ wait_for_ducknng_listener <- function(path, timeout_secs = 10, interval_secs = 0
 
   stop("ducknng IPC listener did not become ready in time", call. = FALSE)
 }
+```
 
+#### Start a local ducknng server and dial a req socket
+
+``` r
 # Start a ducknng server in this R session, then talk to it over a req socket.
 ext_path <- normalizePath("build/release/ducknng.duckdb_extension")
 ipc_path <- tempfile(pattern = "ducknng_readme_exec_", tmpdir = "/tmp", fileext = ".ipc")
@@ -916,7 +927,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_12e8127ece5296.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_15d041269820c8.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
@@ -924,7 +935,11 @@ DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 
 wait_for_ducknng_listener(ipc_path)
 req <- nanonext::socket("req", dial = ipc_url)
+```
 
+#### Create and insert rows remotely
+
+``` r
 # Create a table remotely and inspect the metadata reply.
 create_reply <- run_ducknng_req(
   req,
@@ -942,8 +957,11 @@ insert_reply <- run_ducknng_req(
 insert_reply$data
 #>   rows_changed statement_type result_type
 #> 1            2              2           1
+```
 
-# Request result rows directly with want_result = TRUE.
+#### Query rows remotely with `want_result = TRUE`
+
+``` r
 select_reply <- run_ducknng_req(
   req,
   encode_ducknng_exec_request(
@@ -955,15 +973,21 @@ select_reply$data
 #>    i gt_50
 #> 1 42 FALSE
 #> 2 99  TRUE
+```
 
-# Inspect the same table locally through the DuckDB connection that owns the server.
+#### Inspect the same table locally through DuckDB
+
+``` r
 server_rows <- DBI::dbGetQuery(db_con, "SELECT * FROM ducknng_exec_demo ORDER BY i")
 server_rows
 #>    i
 #> 1 42
 #> 2 99
+```
 
-# Stop the server and clean up the socket and temporary IPC path.
+#### Stop the server and clean up
+
+``` r
 DBI::dbGetQuery(db_con, "SELECT ducknng_stop_server('sql_exec')")
 #>   ducknng_stop_server('sql_exec')
 #> 1                            TRUE
