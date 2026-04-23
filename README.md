@@ -20,8 +20,8 @@ Today the extension already includes:
   `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
 - raw socket send/recv primitives plus req-style raw request/reply
   helpers
-- raw aio helpers for socket send/recv and req-style request/reply
-  futures
+- raw aio helpers for socket send/recv, req-style request/reply futures,
+  and the first raw unary RPC futures
 - a low-level HTTP/HTTPS client helper for transport-adapter work
 - explicit query-session helpers and TLS config handles
 
@@ -34,10 +34,13 @@ then use raw send/recv or aio helpers as appropriate. The higher-level
 RPC helpers wrap manifest-declared request/reply methods, and the
 session helpers wrap the fixed `query_open` / `fetch` / `close` /
 `cancel` lifecycle over repeated request/reply exchanges rather than
-acting as a generic abstraction over all socket patterns. The session
-family is implemented and usable, but it should still be treated as
-experimental until session ownership is bound to a concrete multi-client
-identity model.
+acting as a generic abstraction over all socket patterns. The current
+async RPC wrappers are also layered this way: they launch one ordinary
+request/reply method call asynchronously and later return the collected
+raw reply frame for decoding, rather than introducing a second
+background-job protocol. The session family is implemented and usable,
+but it should still be treated as experimental until session ownership
+is bound to a concrete multi-client identity model.
 
 ## Functions
 
@@ -104,17 +107,19 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Async I/O
 
-| name                             | kind   | arguments                               | returns                                                                                                                                                                                                               | description                                                                                                   |
-|----------------------------------|--------|-----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| `ducknng_request_raw_aio`        | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT`                                                                                                                                                                                                             | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id.                       |
-| `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                                                                                                                                                                             | Launch one raw req/rep roundtrip asynchronously on an existing req socket handle and return an aio handle id. |
-| `ducknng_send_socket_raw_aio`    | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                                                                                                                                                                             | Launch one raw socket send asynchronously and return an aio handle id.                                        |
-| `ducknng_recv_socket_raw_aio`    | scalar | `socket_id, timeout_ms`                 | `UBIGINT`                                                                                                                                                                                                             | Launch one raw socket receive asynchronously and return an aio handle id.                                     |
-| `ducknng_aio_ready`              | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Return whether an aio handle has reached a terminal state.                                                    |
-| `ducknng_aio_status`             | table  | `aio_id`                                | `TABLE(aio_id UBIGINT, exists BOOLEAN, kind VARCHAR, state VARCHAR, phase VARCHAR, terminal BOOLEAN, send_done BOOLEAN, send_ok BOOLEAN, recv_done BOOLEAN, recv_ok BOOLEAN, has_reply_frame BOOLEAN, error VARCHAR)` | Inspect the current or terminal status of one aio handle, including send-phase and recv-phase completion.     |
-| `ducknng_aio_collect`            | table  | `aio_ids, wait_ms`                      | `TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)`                                                                                                                                                        | Wait for any requested aio handles to finish and return one row per newly collected terminal result.          |
-| `ducknng_aio_cancel`             | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Request cancellation of a pending aio handle.                                                                 |
-| `ducknng_aio_drop`               | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Release a terminal aio handle from the runtime registry.                                                      |
+| name                               | kind   | arguments                               | returns                                                                                                                                                                                                               | description                                                                                                   |
+|------------------------------------|--------|-----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
+| `ducknng_request_raw_aio`          | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT`                                                                                                                                                                                                             | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id.                       |
+| `ducknng_get_rpc_manifest_raw_aio` | scalar | `url, timeout_ms, tls_config_id`        | `UBIGINT`                                                                                                                                                                                                             | Launch one asynchronous manifest RPC request and return an aio handle id for the raw reply frame.             |
+| `ducknng_run_rpc_raw_aio`          | scalar | `url, sql, timeout_ms, tls_config_id`   | `UBIGINT`                                                                                                                                                                                                             | Launch one asynchronous metadata-only exec RPC request and return an aio handle id for the raw reply frame.   |
+| `ducknng_request_socket_raw_aio`   | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                                                                                                                                                                             | Launch one raw req/rep roundtrip asynchronously on an existing req socket handle and return an aio handle id. |
+| `ducknng_send_socket_raw_aio`      | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                                                                                                                                                                             | Launch one raw socket send asynchronously and return an aio handle id.                                        |
+| `ducknng_recv_socket_raw_aio`      | scalar | `socket_id, timeout_ms`                 | `UBIGINT`                                                                                                                                                                                                             | Launch one raw socket receive asynchronously and return an aio handle id.                                     |
+| `ducknng_aio_ready`                | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Return whether an aio handle has reached a terminal state.                                                    |
+| `ducknng_aio_status`               | table  | `aio_id`                                | `TABLE(aio_id UBIGINT, exists BOOLEAN, kind VARCHAR, state VARCHAR, phase VARCHAR, terminal BOOLEAN, send_done BOOLEAN, send_ok BOOLEAN, recv_done BOOLEAN, recv_ok BOOLEAN, has_reply_frame BOOLEAN, error VARCHAR)` | Inspect the current or terminal status of one aio handle, including send-phase and recv-phase completion.     |
+| `ducknng_aio_collect`              | table  | `aio_ids, wait_ms`                      | `TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)`                                                                                                                                                        | Wait for any requested aio handles to finish and return one row per newly collected terminal result.          |
+| `ducknng_aio_cancel`               | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Request cancellation of a pending aio handle.                                                                 |
+| `ducknng_aio_drop`                 | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Release a terminal aio handle from the runtime registry.                                                      |
 
 ## RPC Helper
 
@@ -528,17 +533,17 @@ SELECT ducknng_drop_tls_config(1);
     ├──────────────────────────────────────────────────────────────────────────────────────┤
     │                                                                                    1 │
     └──────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬────────┬───────────┐
-    │   ok    │ status │ body_text │
-    │ boolean │ int32  │  varchar  │
-    ├─────────┼────────┼───────────┤
-    │ false   │   NULL │ NULL      │
-    └─────────┴────────┴───────────┘
+    ┌─────────┬────────┬──────────────────────────┐
+    │   ok    │ status │        body_text         │
+    │ boolean │ int32  │         varchar          │
+    ├─────────┼────────┼──────────────────────────┤
+    │ true    │    200 │ hello from ducknng https │
+    └─────────┴────────┴──────────────────────────┘
     ┌─────────┬────────┬──────────┬────────────┐
     │   ok    │ status │ body_hex │ has_header │
     │ boolean │ int32  │ varchar  │  boolean   │
     ├─────────┼────────┼──────────┼────────────┤
-    │ false   │   NULL │ NULL     │ NULL       │
+    │ true    │    200 │ 01020304 │ true       │
     └─────────┴────────┴──────────┴────────────┘
     ┌────────────────────────────┐
     │ ducknng_drop_tls_config(1) │
@@ -667,6 +672,7 @@ SELECT ducknng_start_server(
 );
 
 -- Launch two raw request/reply futures and keep their aio ids in one temp row.
+-- timeout_ms bounds the pending network operation itself; it is separate from the later wait_ms passed to ducknng_aio_collect().
 -- The hex literal below is the built-in manifest request frame in the current wire format.
 CREATE TEMP TABLE aio_demo AS
 SELECT
@@ -742,6 +748,121 @@ SELECT ducknng_stop_server('sql_aio_demo');
     ├─────────────────────────────────────┤
     │ true                                │
     └─────────────────────────────────────┘
+
+### Launch unary RPC calls asynchronously and decode the replies later
+
+These helpers sit above the same request/reply aio substrate as
+`ducknng_request_raw_aio(...)`, but they build the manifest and exec
+request frames for you. They still collect raw reply frames later, so
+decoding remains explicit and honest.
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Start a local listener for the async RPC wrapper demo.
+SELECT ducknng_start_server(
+  'sql_rpc_aio_demo',            -- service name
+  'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', -- listen URL
+  1,                             -- REP contexts
+  134217728,                     -- recv_max_bytes
+  300000,                        -- session_idle_ms
+  0                              -- tls_config_id (0 means plaintext)
+);
+
+-- Register exec so the later async exec wrapper has a real method to call.
+SELECT ducknng_register_exec_method();
+
+-- Launch one manifest request and one metadata-only exec request asynchronously.
+SET VARIABLE manifest_aio = ducknng_get_rpc_manifest_raw_aio(
+  'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', -- url
+  1000,                                      -- timeout_ms
+  0::UBIGINT                                 -- tls_config_id
+);
+
+SET VARIABLE exec_aio = ducknng_run_rpc_raw_aio(
+  'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', -- url
+  'CREATE TABLE IF NOT EXISTS rpc_aio_demo_t(i INTEGER)', -- sql
+  1000,                                      -- timeout_ms
+  0::UBIGINT                                 -- tls_config_id
+);
+
+SELECT getvariable('manifest_aio') > 0 AS manifest_aio_started,
+       getvariable('exec_aio') > getvariable('manifest_aio') AS exec_aio_started_after_manifest
+;
+
+-- Collect both terminal results. The collected values are still raw frames.
+CREATE TEMP TABLE rpc_aio_collect AS
+SELECT *
+FROM ducknng_aio_collect(list_value(getvariable('manifest_aio'), getvariable('exec_aio')), 1000);
+
+-- Store the collected raw frames explicitly before decoding them.
+SET VARIABLE manifest_frame = (
+  SELECT frame
+  FROM rpc_aio_collect
+  WHERE aio_id = getvariable('manifest_aio')
+);
+
+SET VARIABLE exec_frame = (
+  SELECT frame
+  FROM rpc_aio_collect
+  WHERE aio_id = getvariable('exec_aio')
+);
+
+-- Decode the manifest reply frame explicitly after collection.
+SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0 AS has_exec
+FROM ducknng_decode_frame(getvariable('manifest_frame'));
+
+-- Decode the async exec reply frame the same way.
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(getvariable('exec_frame'));
+
+-- Drop the terminal aio handles, remove the temp state, and stop the demo server.
+SELECT ducknng_aio_drop(getvariable('manifest_aio')) AND ducknng_aio_drop(getvariable('exec_aio')) AS dropped;
+DROP TABLE rpc_aio_collect;
+SELECT ducknng_stop_server('sql_rpc_aio_demo');
+```
+
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_server('sql_rpc_aio_demo', 'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', 1, 134217728, 300000, 0) │
+    │                                                   boolean                                                    │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                         │
+    └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌────────────────────────────────┐
+    │ ducknng_register_exec_method() │
+    │            boolean             │
+    ├────────────────────────────────┤
+    │ true                           │
+    └────────────────────────────────┘
+    ┌──────────────────────┬─────────────────────────────────┐
+    │ manifest_aio_started │ exec_aio_started_after_manifest │
+    │       boolean        │             boolean             │
+    ├──────────────────────┼─────────────────────────────────┤
+    │ true                 │ true                            │
+    └──────────────────────┴─────────────────────────────────┘
+    ┌─────────┬───────────┬──────────┬──────────┐
+    │   ok    │ type_name │   name   │ has_exec │
+    │ boolean │  varchar  │ varchar  │ boolean  │
+    ├─────────┼───────────┼──────────┼──────────┤
+    │ true    │ result    │ manifest │ true     │
+    └─────────┴───────────┴──────────┴──────────┘
+    ┌─────────┬───────────┬─────────┐
+    │   ok    │ type_name │  name   │
+    │ boolean │  varchar  │ varchar │
+    ├─────────┼───────────┼─────────┤
+    │ true    │ result    │ exec    │
+    └─────────┴───────────┴─────────┘
+    ┌─────────┐
+    │ dropped │
+    │ boolean │
+    ├─────────┤
+    │ true    │
+    └─────────┘
+    ┌─────────────────────────────────────────┐
+    │ ducknng_stop_server('sql_rpc_aio_demo') │
+    │                 boolean                 │
+    ├─────────────────────────────────────────┤
+    │ true                                    │
+    └─────────────────────────────────────────┘
 
 ### Open, fetch, and close a query session explicitly
 
@@ -1158,7 +1279,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1ae9d73a08f4bd.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1b847b132fb826.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

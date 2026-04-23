@@ -64,6 +64,8 @@ This file is generated from `function_catalog/functions.yaml`.
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
 | `ducknng_request_raw_aio` | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT` | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id. |
+| `ducknng_get_rpc_manifest_raw_aio` | scalar | `url, timeout_ms, tls_config_id` | `UBIGINT` | Launch one asynchronous manifest RPC request and return an aio handle id for the raw reply frame. |
+| `ducknng_run_rpc_raw_aio` | scalar | `url, sql, timeout_ms, tls_config_id` | `UBIGINT` | Launch one asynchronous metadata-only exec RPC request and return an aio handle id for the raw reply frame. |
 | `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms` | `UBIGINT` | Launch one raw req/rep roundtrip asynchronously on an existing req socket handle and return an aio handle id. |
 | `ducknng_send_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms` | `UBIGINT` | Launch one raw socket send asynchronously and return an aio handle id. |
 | `ducknng_recv_socket_raw_aio` | scalar | `socket_id, timeout_ms` | `UBIGINT` | Launch one raw socket receive asynchronously and return an aio handle id. |

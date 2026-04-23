@@ -33,11 +33,11 @@ Today the extension already includes:
 - server lifecycle control through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`
 - generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`, `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
 - raw socket send/recv primitives plus req-style raw request/reply helpers
-- raw aio helpers for socket send/recv and req-style request/reply futures
+- raw aio helpers for socket send/recv, req-style request/reply futures, and the first raw unary RPC futures
 - a low-level HTTP/HTTPS client helper for transport-adapter work
 - explicit query-session helpers and TLS config handles
 
-Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The session family is implemented and usable, but it should still be treated as experimental until session ownership is bound to a concrete multi-client identity model.
+Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. The session family is implemented and usable, but it should still be treated as experimental until session ownership is bound to a concrete multi-client identity model.
 
 ## Functions
 
@@ -344,6 +344,7 @@ SELECT ducknng_start_server(
 );
 
 -- Launch two raw request/reply futures and keep their aio ids in one temp row.
+-- timeout_ms bounds the pending network operation itself; it is separate from the later wait_ms passed to ducknng_aio_collect().
 -- The hex literal below is the built-in manifest request frame in the current wire format.
 CREATE TEMP TABLE aio_demo AS
 SELECT
@@ -380,6 +381,74 @@ FROM aio_demo;
 -- Remove the temp state and stop the demo listener.
 DROP TABLE aio_demo;
 SELECT ducknng_stop_server('sql_aio_demo');
+```
+
+### Launch unary RPC calls asynchronously and decode the replies later
+
+These helpers sit above the same request/reply aio substrate as `ducknng_request_raw_aio(...)`, but they build the manifest and exec request frames for you. They still collect raw reply frames later, so decoding remains explicit and honest.
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Start a local listener for the async RPC wrapper demo.
+SELECT ducknng_start_server(
+  'sql_rpc_aio_demo',            -- service name
+  'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', -- listen URL
+  1,                             -- REP contexts
+  134217728,                     -- recv_max_bytes
+  300000,                        -- session_idle_ms
+  0                              -- tls_config_id (0 means plaintext)
+);
+
+-- Register exec so the later async exec wrapper has a real method to call.
+SELECT ducknng_register_exec_method();
+
+-- Launch one manifest request and one metadata-only exec request asynchronously.
+SET VARIABLE manifest_aio = ducknng_get_rpc_manifest_raw_aio(
+  'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', -- url
+  1000,                                      -- timeout_ms
+  0::UBIGINT                                 -- tls_config_id
+);
+
+SET VARIABLE exec_aio = ducknng_run_rpc_raw_aio(
+  'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', -- url
+  'CREATE TABLE IF NOT EXISTS rpc_aio_demo_t(i INTEGER)', -- sql
+  1000,                                      -- timeout_ms
+  0::UBIGINT                                 -- tls_config_id
+);
+
+SELECT getvariable('manifest_aio') > 0 AS manifest_aio_started,
+       getvariable('exec_aio') > getvariable('manifest_aio') AS exec_aio_started_after_manifest
+;
+
+-- Collect both terminal results. The collected values are still raw frames.
+CREATE TEMP TABLE rpc_aio_collect AS
+SELECT *
+FROM ducknng_aio_collect(list_value(getvariable('manifest_aio'), getvariable('exec_aio')), 1000);
+
+-- Store the collected raw frames explicitly before decoding them.
+SET VARIABLE manifest_frame = (
+  SELECT frame
+  FROM rpc_aio_collect
+  WHERE aio_id = getvariable('manifest_aio')
+);
+
+SET VARIABLE exec_frame = (
+  SELECT frame
+  FROM rpc_aio_collect
+  WHERE aio_id = getvariable('exec_aio')
+);
+
+-- Decode the manifest reply frame explicitly after collection.
+SELECT ok, type_name, name, position('"name":"exec"' IN payload_text) > 0 AS has_exec
+FROM ducknng_decode_frame(getvariable('manifest_frame'));
+
+-- Decode the async exec reply frame the same way.
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(getvariable('exec_frame'));
+
+-- Drop the terminal aio handles, remove the temp state, and stop the demo server.
+SELECT ducknng_aio_drop(getvariable('manifest_aio')) AND ducknng_aio_drop(getvariable('exec_aio')) AS dropped;
+DROP TABLE rpc_aio_collect;
+SELECT ducknng_stop_server('sql_rpc_aio_demo');
 ```
 
 ### Open, fetch, and close a query session explicitly

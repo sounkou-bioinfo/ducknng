@@ -902,6 +902,7 @@ static void ducknng_unregister_family_scalar(duckdb_function_info info, duckdb_d
 }
 
 static int ducknng_client_open_req_socket_tls(const char *url, int timeout_ms, const ducknng_tls_opts *tls_opts, nng_socket *out, char **errmsg);
+static int ducknng_lookup_tls_opts(ducknng_sql_context *ctx, uint64_t tls_config_id, const ducknng_tls_opts **out_opts, char **errmsg);
 static int ducknng_wait_any_for_ids(ducknng_runtime *rt, const uint64_t *aio_ids, idx_t aio_id_count, int32_t wait_ms);
 static int ducknng_socket_is_active(const ducknng_client_socket *sock);
 static int ducknng_socket_is_req_protocol(const ducknng_client_socket *sock);
@@ -1122,6 +1123,32 @@ static int ducknng_client_launch_socket_recv_aio(ducknng_runtime *rt, ducknng_cl
     slot->kind = DUCKNNG_CLIENT_AIO_KIND_RECV;
     slot->phase = DUCKNNG_CLIENT_AIO_PHASE_RECV;
     ducknng_socket_recv_aio(slot->sock, slot->aio);
+    return 0;
+}
+
+static int ducknng_client_launch_url_request_aio(ducknng_sql_context *ctx, const char *url,
+    int32_t timeout_ms, uint64_t tls_config_id, nng_msg *req, uint64_t *out_aio_id, char **errmsg) {
+    const ducknng_tls_opts *tls_opts = NULL;
+    ducknng_client_aio *slot = NULL;
+    if (out_aio_id) *out_aio_id = 0;
+    if (!ctx || !ctx->rt || !url || !req) {
+        if (req) nng_msg_free(req);
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: missing async RPC request state");
+        return -1;
+    }
+    if (ducknng_lookup_tls_opts(ctx, tls_config_id, &tls_opts, errmsg) != 0) {
+        nng_msg_free(req);
+        return -1;
+    }
+    slot = ducknng_client_prepare_url_aio(ctx->rt, url, timeout_ms, tls_opts, errmsg);
+    if (!slot) {
+        nng_msg_free(req);
+        return -1;
+    }
+    if (ducknng_client_launch_request_aio(ctx->rt, slot, req, errmsg) != 0) {
+        return -1;
+    }
+    if (out_aio_id) *out_aio_id = slot->aio_id;
     return 0;
 }
 
@@ -1877,21 +1904,12 @@ static void ducknng_request_raw_aio_scalar(duckdb_function_info info, duckdb_dat
         uint8_t *payload = arg_blob_dup(duckdb_data_chunk_get_vector(input, 1), row, &payload_len);
         int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 5000);
         uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 3), row, 0);
-        const ducknng_tls_opts *tls_opts = NULL;
-        ducknng_client_aio *slot = NULL;
         nng_msg *req = NULL;
         char *errmsg = NULL;
         if (!ctx || !ctx->rt || !url || (!payload && payload_len > 0)) {
             if (url) duckdb_free(url);
             if (payload) duckdb_free(payload);
             duckdb_scalar_function_set_error(info, "ducknng: request_raw_aio requires url and payload");
-            return;
-        }
-        if (ducknng_lookup_tls_opts(ctx, tls_config_id, &tls_opts, &errmsg) != 0) {
-            duckdb_free(url);
-            if (payload) duckdb_free(payload);
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: tls config not found");
-            if (errmsg) duckdb_free(errmsg);
             return;
         }
         req = ducknng_client_raw_request_message(payload, (size_t)payload_len, &errmsg);
@@ -1903,20 +1921,81 @@ static void ducknng_request_raw_aio_scalar(duckdb_function_info info, duckdb_dat
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        slot = ducknng_client_prepare_url_aio(ctx->rt, url, timeout_ms, tls_opts, &errmsg);
-        duckdb_free(url);
-        if (!slot) {
-            nng_msg_free(req);
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to prepare aio request");
-            if (errmsg) duckdb_free(errmsg);
-            return;
-        }
-        if (ducknng_client_launch_request_aio(ctx->rt, slot, req, &errmsg) != 0) {
+        if (ducknng_client_launch_url_request_aio(ctx, url, timeout_ms, tls_config_id, req, &out[row], &errmsg) != 0) {
+            duckdb_free(url);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to launch aio request");
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        out[row] = slot->aio_id;
+        duckdb_free(url);
+    }
+}
+
+static void ducknng_get_rpc_manifest_raw_aio_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 1), row, 5000);
+        uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 2), row, 0);
+        nng_msg *req = NULL;
+        char *errmsg = NULL;
+        if (!ctx || !ctx->rt || !url) {
+            if (url) duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: get_rpc_manifest_raw_aio requires url");
+            return;
+        }
+        req = ducknng_client_manifest_request();
+        if (!req) {
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: failed to build manifest request frame");
+            return;
+        }
+        if (ducknng_client_launch_url_request_aio(ctx, url, timeout_ms, tls_config_id, req, &out[row], &errmsg) != 0) {
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to launch manifest aio request");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        duckdb_free(url);
+    }
+}
+
+static void ducknng_run_rpc_raw_aio_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        char *sql = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
+        int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 5000);
+        uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 3), row, 0);
+        nng_msg *req = NULL;
+        char *errmsg = NULL;
+        if (!ctx || !ctx->rt || !url || !sql) {
+            if (url) duckdb_free(url);
+            if (sql) duckdb_free(sql);
+            duckdb_scalar_function_set_error(info, "ducknng: run_rpc_raw_aio requires url and sql");
+            return;
+        }
+        req = ducknng_client_exec_request(sql, 0, &errmsg);
+        duckdb_free(sql);
+        if (!req) {
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to build exec request frame");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        if (ducknng_client_launch_url_request_aio(ctx, url, timeout_ms, tls_config_id, req, &out[row], &errmsg) != 0) {
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to launch exec aio request");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        duckdb_free(url);
     }
 }
 
@@ -4883,7 +4962,9 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
         DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
     duckdb_type stop_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type rpc_exec_raw_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT};
+    duckdb_type rpc_exec_raw_aio_types[4] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT};
     duckdb_type rpc_manifest_raw_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT};
+    duckdb_type rpc_manifest_raw_aio_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT};
     duckdb_type socket_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type dial_types[3] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER};
     duckdb_type listen_types[4] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
@@ -4910,7 +4991,9 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_unregister_method", 1, ducknng_unregister_method_scalar, &ctx, method_name_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_unregister_family", 1, ducknng_unregister_family_scalar, &ctx, method_family_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_run_rpc_raw", 3, ducknng_run_rpc_raw_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_BLOB)) return 0;
+    if (!register_scalar(connection, "ducknng_run_rpc_raw_aio", 4, ducknng_run_rpc_raw_aio_scalar, &ctx, rpc_exec_raw_aio_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 2, ducknng_get_rpc_manifest_raw_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_BLOB)) return 0;
+    if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw_aio", 3, ducknng_get_rpc_manifest_raw_aio_scalar, &ctx, rpc_manifest_raw_aio_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_open_socket", 1, ducknng_socket_scalar, &ctx, socket_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_dial_socket", 3, ducknng_dial_scalar, &ctx, dial_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_listen_socket", 4, ducknng_listen_scalar, &ctx, listen_types, DUCKDB_TYPE_BOOLEAN)) return 0;

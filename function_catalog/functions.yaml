@@ -408,11 +408,48 @@
       "notes": [
         "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "The returned handle represents one pending request operation backed by NNG aio state.",
+        "timeout_ms bounds the lifetime of that pending operation; it is separate from the later wait_ms argument passed to ducknng_aio_collect().",
         "Use ducknng_aio_status() to inspect whether the send phase has completed successfully.",
         "Use ducknng_aio_collect() to retrieve the full reply frame later."
       ],
       "examples": [
         "SELECT ducknng_request_raw_aio('ipc:///tmp/ducknng_sql0.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_get_rpc_manifest_raw_aio",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_get_rpc_manifest_raw_aio(url, timeout_ms, tls_config_id)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Launch one asynchronous manifest RPC request and return an aio handle id for the raw reply frame.",
+      "notes": [
+        "This is a raw unary RPC aio wrapper layered on top of the ordinary request/reply aio substrate rather than a separate job system.",
+        "Collect the aio later and decode the returned frame with ducknng_decode_frame().",
+        "timeout_ms bounds the launched request operation itself; it does not control how long a later ducknng_aio_collect() call waits."
+      ],
+      "examples": [
+        "SELECT ducknng_get_rpc_manifest_raw_aio('ipc:///tmp/ducknng_sql0.ipc', 1000, 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_run_rpc_raw_aio",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_run_rpc_raw_aio(url, sql, timeout_ms, tls_config_id)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Launch one asynchronous metadata-only exec RPC request and return an aio handle id for the raw reply frame.",
+      "notes": [
+        "This is the raw async companion to ducknng_run_rpc_raw().",
+        "Collect the aio later and decode the returned frame with ducknng_decode_frame().",
+        "timeout_ms bounds the launched request operation itself; it does not control how long a later ducknng_aio_collect() call waits."
+      ],
+      "examples": [
+        "SELECT ducknng_run_rpc_raw_aio('ipc:///tmp/ducknng_sql0.ipc', 'CREATE TABLE t(i INTEGER)', 1000, 0::UBIGINT);"
       ]
     },
     {
@@ -513,6 +550,7 @@
       "notes": [
         "Pass a LIST<UBIGINT> of aio handle ids, for example list_value(aio1, aio2).",
         "Dynamic list expressions are supported through the SQL macro wrapper, including scalar subqueries that produce one list value.",
+        "wait_ms controls only how long this collect call waits for already-launched aio handles; it is separate from the timeout_ms used when those handles were launched.",
         "wait_ms = 0 performs a pure poll.",
         "For send-only airos, frame is NULL on success. For recv/request airos, frame contains the collected raw frame when present."
       ],
