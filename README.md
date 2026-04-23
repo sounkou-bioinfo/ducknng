@@ -1,10 +1,10 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# ducknng
+# ducknng: a DuckDB binding to the NNG Scalability Protocols library and an Arrow IPC-based RPC framework
 
-`ducknng` is a pure C DuckDB extension for DuckDB +
-[NNG](https://nng.nanomsg.org/) interop.
+`ducknng` is the pure C DuckDB extension that implements that
+binding/framework inside DuckDB.
 
 It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin,
 versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are
@@ -45,7 +45,56 @@ multi-client identity model. HTTP/HTTPS are the only current web-carrier
 focus; `ws://` and `wss://` are intentionally deferred and are not
 enabled in the current build.
 
-## Functions
+## Getting started
+
+Build the extension locally:
+
+``` sh
+make configure
+make release
+```
+
+Load it into DuckDB:
+
+``` sql
+LOAD 'build/release/ducknng.duckdb_extension';
+```
+
+Start a local IPC listener, inspect the built-in manifest, and stop it
+again:
+
+``` sql
+SELECT ducknng_start_server(
+  'sql0',
+  'ipc:///tmp/ducknng_sql0.ipc',
+  1,
+  134217728,
+  300000,
+  0
+);
+
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
+SELECT ducknng_stop_server('sql0');
+```
+
+See `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`,
+`docs/registry.md`, `docs/transports.md`, `docs/http.md`, and
+`docs/types.md` for the authoritative protocol, transport, TLS,
+HTTP-adapter, and session/query-family contract. `NEWS.md` summarizes
+notable landed changes, `docs/api_sealing_checklist.md` tracks what
+still blocks calling the public API sealed, and
+`docs/design_review_checklist.md` is the broader implementation-gap
+checklist. TLS already supports both file-backed and in-memory PEM
+material through helpers such as `ducknng_tls_config_from_files(...)`,
+`ducknng_tls_config_from_pem(...)`, and
+`ducknng_self_signed_tls_config(...)`.
+
+## Function catalog
+
+<details>
+<summary>
+Expand the full generated function catalog
+</summary>
 
 # Function Catalog
 
@@ -143,24 +192,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_close_query`  | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Close a server-side query session and return the JSON control metadata as a structured row.            |
 | `ducknng_cancel_query` | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Cancel and close a server-side query session and return the JSON control metadata as a structured row. |
 
-## Build
-
-``` sh
-make configure
-make release
-```
-
-See `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`,
-`docs/registry.md`, `docs/transports.md`, `docs/http.md`, and
-`docs/types.md` for the authoritative protocol, transport, TLS,
-HTTP-adapter, and session/query-family contract. `NEWS.md` summarizes
-notable landed changes, `docs/api_sealing_checklist.md` tracks what
-still blocks calling the public API sealed, and
-`docs/design_review_checklist.md` is the broader implementation-gap
-checklist. TLS already supports both file-backed and in-memory PEM
-material through helpers such as `ducknng_tls_config_from_files(...)`,
-`ducknng_tls_config_from_pem(...)`, and
-`ducknng_self_signed_tls_config(...)`.
+</details>
 
 ## Examples
 
@@ -1558,7 +1590,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1d448451961057.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1d5a9f3faa713f.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

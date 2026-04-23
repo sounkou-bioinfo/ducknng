@@ -22,9 +22,9 @@ knitr::knit_engines$set(sql = function(options) {
 })
 ```
 
-# ducknng
+# ducknng: a DuckDB binding to the NNG Scalability Protocols library and an Arrow IPC-based RPC framework
 
-`ducknng` is a pure C DuckDB extension for DuckDB + [NNG](https://nng.nanomsg.org/) interop.
+`ducknng` is the pure C DuckDB extension that implements that binding/framework inside DuckDB.
 
 It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin, versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are inspired by [`r-lib/nanonext`](https://github.com/r-lib/nanonext), and the thin-envelope + Arrow IPC direction is informed by projects such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro).
 
@@ -39,20 +39,49 @@ Today the extension already includes:
 
 Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. The current server is still unauthenticated, so the session family is implemented and usable but should still be treated as experimental until session ownership is bound to a concrete multi-client identity model. HTTP/HTTPS are the only current web-carrier focus; `ws://` and `wss://` are intentionally deferred and are not enabled in the current build.
 
-## Functions
+## Getting started
 
-```{r function-catalog, echo=FALSE, results='asis'}
-knitr::asis_output(paste(readLines("function_catalog/functions.md"), collapse = "\n"))
-```
-
-## Build
+Build the extension locally:
 
 ```sh
 make configure
 make release
 ```
 
+Load it into DuckDB:
+
+```sql
+LOAD 'build/release/ducknng.duckdb_extension';
+```
+
+Start a local IPC listener, inspect the built-in manifest, and stop it again:
+
+```sql
+SELECT ducknng_start_server(
+  'sql0',
+  'ipc:///tmp/ducknng_sql0.ipc',
+  1,
+  134217728,
+  300000,
+  0
+);
+
+SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
+SELECT ducknng_stop_server('sql0');
+```
+
 See `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, and `docs/types.md` for the authoritative protocol, transport, TLS, HTTP-adapter, and session/query-family contract. `NEWS.md` summarizes notable landed changes, `docs/api_sealing_checklist.md` tracks what still blocks calling the public API sealed, and `docs/design_review_checklist.md` is the broader implementation-gap checklist. TLS already supports both file-backed and in-memory PEM material through helpers such as `ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, and `ducknng_self_signed_tls_config(...)`.
+
+## Function catalog
+
+<details>
+<summary>Expand the full generated function catalog</summary>
+
+```{r function-catalog, echo=FALSE, results='asis'}
+knitr::asis_output(paste(readLines("function_catalog/functions.md"), collapse = "\n"))
+```
+
+</details>
 
 ## Examples
 
