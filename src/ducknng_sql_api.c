@@ -1063,6 +1063,10 @@ static void ducknng_client_aio_cb(void *arg) {
         slot->error = ducknng_strdup(ducknng_nng_strerror(rv));
         slot->state = rv == NNG_ECANCELED ? DUCKNNG_CLIENT_AIO_CANCELLED : DUCKNNG_CLIENT_AIO_ERROR;
         slot->finished_ms = ducknng_now_ms();
+        if (slot->socket_ref) {
+            ducknng_runtime_release_client_socket(slot->socket_ref);
+            slot->socket_ref = NULL;
+        }
         ducknng_cond_broadcast(&rt->aio_cv);
         ducknng_mutex_unlock(&rt->mu);
         return;
@@ -1079,6 +1083,10 @@ static void ducknng_client_aio_cb(void *arg) {
     }
     slot->state = DUCKNNG_CLIENT_AIO_READY;
     slot->finished_ms = ducknng_now_ms();
+    if (slot->socket_ref) {
+        ducknng_runtime_release_client_socket(slot->socket_ref);
+        slot->socket_ref = NULL;
+    }
     ducknng_cond_broadcast(&rt->aio_cv);
     ducknng_mutex_unlock(&rt->mu);
 }
@@ -1127,16 +1135,27 @@ static ducknng_client_aio *ducknng_client_prepare_url_aio(ducknng_runtime *rt, c
     return slot;
 }
 
-static ducknng_client_aio *ducknng_client_prepare_socket_request_aio(ducknng_runtime *rt, ducknng_client_socket *sock,
+static ducknng_client_aio *ducknng_client_prepare_socket_request_aio(ducknng_runtime *rt, uint64_t socket_id,
     int timeout_ms, char **errmsg) {
+    ducknng_client_socket *sock;
     ducknng_client_aio *slot;
     int rv;
-    if (!rt || !sock || !sock->open || !sock->connected || !sock->url || !ducknng_socket_is_req_protocol(sock)) {
+    if (!rt || socket_id == 0) {
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: connected req client socket is required for aio request");
+        return NULL;
+    }
+    sock = ducknng_runtime_acquire_client_socket(rt, socket_id);
+    if (!sock || !sock->open || !sock->connected || !ducknng_socket_is_req_protocol(sock)) {
+        if (sock) ducknng_runtime_release_client_socket(sock);
         if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: connected req client socket is required for aio request");
         return NULL;
     }
     slot = ducknng_client_aio_alloc_slot(rt, timeout_ms, errmsg);
-    if (!slot) return NULL;
+    if (!slot) {
+        ducknng_runtime_release_client_socket(sock);
+        return NULL;
+    }
+    slot->socket_ref = sock;
     slot->sock = sock->sock;
     slot->socket_id = sock->socket_id;
     rv = ducknng_ctx_open(&slot->ctx, sock->sock);
@@ -1149,15 +1168,26 @@ static ducknng_client_aio *ducknng_client_prepare_socket_request_aio(ducknng_run
     return slot;
 }
 
-static ducknng_client_aio *ducknng_client_prepare_socket_raw_aio(ducknng_runtime *rt, ducknng_client_socket *sock,
+static ducknng_client_aio *ducknng_client_prepare_socket_raw_aio(ducknng_runtime *rt, uint64_t socket_id,
     int timeout_ms, char **errmsg) {
+    ducknng_client_socket *sock;
     ducknng_client_aio *slot;
-    if (!rt || !ducknng_socket_is_active(sock)) {
+    if (!rt || socket_id == 0) {
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: active client socket is required for aio socket operation");
+        return NULL;
+    }
+    sock = ducknng_runtime_acquire_client_socket(rt, socket_id);
+    if (!ducknng_socket_is_active(sock)) {
+        if (sock) ducknng_runtime_release_client_socket(sock);
         if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: active client socket is required for aio socket operation");
         return NULL;
     }
     slot = ducknng_client_aio_alloc_slot(rt, timeout_ms, errmsg);
-    if (!slot) return NULL;
+    if (!slot) {
+        ducknng_runtime_release_client_socket(sock);
+        return NULL;
+    }
+    slot->socket_ref = sock;
     slot->sock = sock->sock;
     slot->socket_id = sock->socket_id;
     return slot;
@@ -1652,9 +1682,24 @@ static void ducknng_socket_scalar(duckdb_function_info info, duckdb_data_chunk i
         sock->protocol = protocol;
         sock->send_timeout_ms = 5000;
         sock->recv_timeout_ms = 5000;
-        if (ducknng_socket_open_protocol(protocol, &sock->sock, &errmsg) != 0) {
+        if (ducknng_mutex_init(&sock->mu) != 0) {
             duckdb_free(sock->protocol);
             duckdb_free(sock);
+            duckdb_scalar_function_set_error(info, "ducknng: failed to initialize client socket mutex");
+            return;
+        }
+        sock->mu_initialized = 1;
+        if (ducknng_cond_init(&sock->cv) != 0) {
+            ducknng_mutex_destroy(&sock->mu);
+            sock->mu_initialized = 0;
+            duckdb_free(sock->protocol);
+            duckdb_free(sock);
+            duckdb_scalar_function_set_error(info, "ducknng: failed to initialize client socket condition variable");
+            return;
+        }
+        sock->cv_initialized = 1;
+        if (ducknng_socket_open_protocol(protocol, &sock->sock, &errmsg) != 0) {
+            ducknng_client_socket_destroy(sock);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to open socket protocol");
             if (errmsg) duckdb_free(errmsg);
             return;
@@ -1664,17 +1709,22 @@ static void ducknng_socket_scalar(duckdb_function_info info, duckdb_data_chunk i
             sock->has_ctx = 1;
         } else if (rv != NNG_ENOTSUP) {
             ducknng_socket_close(sock->sock);
-            duckdb_free(sock->protocol);
-            duckdb_free(sock);
+            sock->open = 0;
+            ducknng_client_socket_destroy(sock);
             duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
             return;
         }
         sock->open = 1;
         if (ducknng_runtime_add_client_socket(ctx->rt, sock, &errmsg) != 0) {
-            if (sock->has_ctx) ducknng_ctx_close(sock->ctx);
-            ducknng_socket_close(sock->sock);
-            duckdb_free(sock->protocol);
-            duckdb_free(sock);
+            if (sock->has_ctx) {
+                ducknng_ctx_close(sock->ctx);
+                sock->has_ctx = 0;
+            }
+            if (sock->open) {
+                ducknng_socket_close(sock->sock);
+                sock->open = 0;
+            }
+            ducknng_client_socket_destroy(sock);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to register client socket");
             if (errmsg) duckdb_free(errmsg);
             return;
@@ -1697,6 +1747,7 @@ static void ducknng_dial_scalar(duckdb_function_info info, duckdb_data_chunk inp
         ducknng_client_socket *sock;
         char *errmsg = NULL;
         int rv;
+        out[row] = false;
         if (!ctx || !ctx->rt || socket_id == 0 || !url) {
             if (url) duckdb_free(url);
             duckdb_scalar_function_set_error(info, "ducknng: socket id and URL are required");
@@ -1708,47 +1759,52 @@ static void ducknng_dial_scalar(duckdb_function_info info, duckdb_data_chunk inp
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
-        if (!sock || !sock->open) {
-            duckdb_free(url);
-            duckdb_scalar_function_set_error(info, "ducknng: client socket not found");
-            return;
-        }
-        if (sock->connected) {
-            duckdb_free(url);
-            duckdb_scalar_function_set_error(info, "ducknng: socket is already dialed");
-            return;
-        }
         if (ducknng_validate_nng_url(url, &errmsg) != 0) {
             duckdb_free(url);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: invalid transport URL");
             if (errmsg) duckdb_free(errmsg);
             return;
         }
+        sock = ducknng_runtime_acquire_client_socket(ctx->rt, socket_id);
+        if (!sock) {
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: client socket not found");
+            return;
+        }
+        ducknng_mutex_lock(&sock->mu);
+        if (!sock->open) {
+            ducknng_mutex_unlock(&sock->mu);
+            ducknng_runtime_release_client_socket(sock);
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: client socket not found");
+            return;
+        }
+        if (sock->connected) {
+            ducknng_mutex_unlock(&sock->mu);
+            ducknng_runtime_release_client_socket(sock);
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: socket is already dialed");
+            return;
+        }
         rv = ducknng_socket_set_timeout_ms(sock->sock, timeout_ms, timeout_ms);
+        if (rv == 0) rv = ducknng_socket_apply_tls(sock->sock, url, tls_opts);
+        if (rv == 0) rv = ducknng_socket_dial(sock->sock, url);
+        if (rv == 0) {
+            if (sock->url) duckdb_free(sock->url);
+            sock->url = url;
+            sock->connected = 1;
+            sock->send_timeout_ms = timeout_ms;
+            sock->recv_timeout_ms = timeout_ms;
+            out[row] = true;
+            url = NULL;
+        }
+        ducknng_mutex_unlock(&sock->mu);
+        ducknng_runtime_release_client_socket(sock);
+        if (url) duckdb_free(url);
         if (rv != 0) {
-            duckdb_free(url);
             duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
             return;
         }
-        rv = ducknng_socket_apply_tls(sock->sock, url, tls_opts);
-        if (rv != 0) {
-            duckdb_free(url);
-            duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
-            return;
-        }
-        rv = ducknng_socket_dial(sock->sock, url);
-        if (rv != 0) {
-            duckdb_free(url);
-            duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
-            return;
-        }
-        if (sock->url) duckdb_free(sock->url);
-        sock->url = url;
-        sock->connected = 1;
-        sock->send_timeout_ms = timeout_ms;
-        sock->recv_timeout_ms = timeout_ms;
-        out[row] = true;
     }
 }
 
@@ -1768,6 +1824,7 @@ static void ducknng_listen_scalar(duckdb_function_info info, duckdb_data_chunk i
         nng_listener lst;
         char *resolved_url = NULL;
         int rv;
+        out[row] = false;
         memset(&lst, 0, sizeof(lst));
         if (!ctx || !ctx->rt || socket_id == 0 || !url) {
             if (url) duckdb_free(url);
@@ -1780,40 +1837,55 @@ static void ducknng_listen_scalar(duckdb_function_info info, duckdb_data_chunk i
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
-        if (!sock || !sock->open) {
-            duckdb_free(url);
-            duckdb_scalar_function_set_error(info, "ducknng: client socket not found");
-            return;
-        }
-        if (sock->has_listener) {
-            duckdb_free(url);
-            duckdb_scalar_function_set_error(info, "ducknng: socket is already listening");
-            return;
-        }
         if (ducknng_listener_validate_startup_url(url, tls_opts, &errmsg) != 0) {
             duckdb_free(url);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: invalid listen URL");
             if (errmsg) duckdb_free(errmsg);
             return;
         }
+        sock = ducknng_runtime_acquire_client_socket(ctx->rt, socket_id);
+        if (!sock) {
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: client socket not found");
+            return;
+        }
+        ducknng_mutex_lock(&sock->mu);
+        if (!sock->open) {
+            ducknng_mutex_unlock(&sock->mu);
+            ducknng_runtime_release_client_socket(sock);
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: client socket not found");
+            return;
+        }
+        if (sock->has_listener) {
+            ducknng_mutex_unlock(&sock->mu);
+            ducknng_runtime_release_client_socket(sock);
+            duckdb_free(url);
+            duckdb_scalar_function_set_error(info, "ducknng: socket is already listening");
+            return;
+        }
         rv = ducknng_listener_create(&lst, sock->sock, url);
         if (rv == 0 && recv_max_bytes > 0) rv = ducknng_listener_set_recvmaxsz(lst, (size_t)recv_max_bytes);
         if (rv == 0) rv = ducknng_listener_apply_tls(lst, tls_opts);
         if (rv == 0) rv = ducknng_listener_start(lst);
+        if (rv == 0) {
+            resolved_url = ducknng_listener_resolve_url(lst, url);
+            if (sock->listen_url) duckdb_free(sock->listen_url);
+            sock->listen_url = resolved_url ? resolved_url : url;
+            if (resolved_url) duckdb_free(url);
+            url = NULL;
+            sock->listener = lst;
+            sock->has_listener = 1;
+            out[row] = true;
+        }
+        ducknng_mutex_unlock(&sock->mu);
+        ducknng_runtime_release_client_socket(sock);
+        if (url) duckdb_free(url);
         if (rv != 0) {
-            duckdb_free(url);
             duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        resolved_url = ducknng_listener_resolve_url(lst, url);
-        if (sock->listen_url) duckdb_free(sock->listen_url);
-        sock->listen_url = resolved_url ? resolved_url : url;
-        if (resolved_url) duckdb_free(url);
-        sock->listener = lst;
-        sock->has_listener = 1;
-        out[row] = true;
     }
 }
 
@@ -1834,15 +1906,7 @@ static void ducknng_close_scalar(duckdb_function_info info, duckdb_data_chunk in
             duckdb_scalar_function_set_error(info, "ducknng: client socket not found");
             return;
         }
-        if (sock->has_listener) ducknng_listener_close(sock->listener);
-        if (sock->has_ctx) ducknng_ctx_close(sock->ctx);
-        if (sock->open) ducknng_socket_close(sock->sock);
-        if (sock->protocol) duckdb_free(sock->protocol);
-        if (sock->url) duckdb_free(sock->url);
-        if (sock->listen_url) duckdb_free(sock->listen_url);
-        if (sock->pending_request) duckdb_free(sock->pending_request);
-        if (sock->pending_reply) duckdb_free(sock->pending_reply);
-        duckdb_free(sock);
+        ducknng_client_socket_destroy(sock);
         out[row] = true;
     }
 }
@@ -1867,32 +1931,34 @@ static void ducknng_send_scalar(duckdb_function_info info, duckdb_data_chunk inp
             duckdb_scalar_function_set_error(info, "ducknng: socket id, payload, and timeout are required");
             return;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
+        sock = ducknng_runtime_acquire_client_socket(ctx->rt, socket_id);
         if (!ducknng_socket_is_active(sock)) {
             if (payload) duckdb_free(payload);
+            if (sock) ducknng_runtime_release_client_socket(sock);
             duckdb_scalar_function_set_error(info, "ducknng: active client socket not found");
             return;
         }
         msg = ducknng_client_raw_request_message(payload, (size_t)payload_len, &errmsg);
         if (payload) duckdb_free(payload);
         if (!msg) {
+            ducknng_runtime_release_client_socket(sock);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to build socket send message");
             if (errmsg) duckdb_free(errmsg);
             return;
         }
+        ducknng_mutex_lock(&sock->mu);
         rv = ducknng_socket_set_timeout_ms(sock->sock, timeout_ms, sock->recv_timeout_ms);
+        if (rv == 0) rv = ducknng_socket_send(sock->sock, msg);
+        if (rv == 0) {
+            sock->send_timeout_ms = timeout_ms;
+            out[row] = true;
+        }
+        ducknng_mutex_unlock(&sock->mu);
+        ducknng_runtime_release_client_socket(sock);
         if (rv != 0) {
-            nng_msg_free(msg);
             duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
             return;
         }
-        rv = ducknng_socket_send(sock->sock, msg);
-        if (rv != 0) {
-            duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
-            return;
-        }
-        sock->send_timeout_ms = timeout_ms;
-        out[row] = true;
     }
 }
 
@@ -1910,24 +1976,24 @@ static void ducknng_recv_scalar(duckdb_function_info info, duckdb_data_chunk inp
             duckdb_scalar_function_set_error(info, "ducknng: socket id is required");
             return;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
+        sock = ducknng_runtime_acquire_client_socket(ctx->rt, socket_id);
         if (!ducknng_socket_is_active(sock)) {
+            if (sock) ducknng_runtime_release_client_socket(sock);
             duckdb_scalar_function_set_error(info, "ducknng: active client socket not found");
             return;
         }
+        ducknng_mutex_lock(&sock->mu);
         rv = ducknng_socket_set_timeout_ms(sock->sock, sock->send_timeout_ms, timeout_ms);
-        if (rv != 0) {
-            duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
-            return;
-        }
-        rv = ducknng_socket_recv(sock->sock, &msg);
+        if (rv == 0) rv = ducknng_socket_recv(sock->sock, &msg);
+        if (rv == 0) sock->recv_timeout_ms = timeout_ms;
+        ducknng_mutex_unlock(&sock->mu);
+        ducknng_runtime_release_client_socket(sock);
         if (rv != 0) {
             duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
             return;
         }
         assign_blob(output, row, (const uint8_t *)nng_msg_body(msg), (idx_t)nng_msg_len(msg));
         nng_msg_free(msg);
-        sock->recv_timeout_ms = timeout_ms;
     }
 }
 
@@ -1948,14 +2014,18 @@ static void ducknng_subscribe_scalar(duckdb_function_info info, duckdb_data_chun
             duckdb_scalar_function_set_error(info, "ducknng: subscribe_socket requires socket id and topic blob");
             return;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
+        sock = ducknng_runtime_acquire_client_socket(ctx->rt, socket_id);
         if (!sock || !sock->open || !sock->protocol || strcmp(sock->protocol, "sub") != 0) {
             if (topic) duckdb_free(topic);
+            if (sock) ducknng_runtime_release_client_socket(sock);
             duckdb_scalar_function_set_error(info, "ducknng: sub socket not found");
             return;
         }
+        ducknng_mutex_lock(&sock->mu);
         rv = ducknng_socket_subscribe(sock->sock, topic, (size_t)topic_len);
+        ducknng_mutex_unlock(&sock->mu);
         if (topic) duckdb_free(topic);
+        ducknng_runtime_release_client_socket(sock);
         if (rv != 0) {
             duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
             return;
@@ -1981,14 +2051,18 @@ static void ducknng_unsubscribe_scalar(duckdb_function_info info, duckdb_data_ch
             duckdb_scalar_function_set_error(info, "ducknng: unsubscribe_socket requires socket id and topic blob");
             return;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
+        sock = ducknng_runtime_acquire_client_socket(ctx->rt, socket_id);
         if (!sock || !sock->open || !sock->protocol || strcmp(sock->protocol, "sub") != 0) {
             if (topic) duckdb_free(topic);
+            if (sock) ducknng_runtime_release_client_socket(sock);
             duckdb_scalar_function_set_error(info, "ducknng: sub socket not found");
             return;
         }
+        ducknng_mutex_lock(&sock->mu);
         rv = ducknng_socket_unsubscribe(sock->sock, topic, (size_t)topic_len);
+        ducknng_mutex_unlock(&sock->mu);
         if (topic) duckdb_free(topic);
+        ducknng_runtime_release_client_socket(sock);
         if (rv != 0) {
             duckdb_scalar_function_set_error(info, ducknng_nng_strerror(rv));
             return;
@@ -2048,9 +2122,10 @@ static void ducknng_request_socket_scalar(duckdb_function_info info, duckdb_data
             set_null(output, row);
             continue;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
+        sock = ducknng_runtime_acquire_client_socket(ctx->rt, socket_id);
         if (!sock || !sock->open || !sock->connected || !ducknng_socket_is_req_protocol(sock)) {
             if (payload) duckdb_free(payload);
+            if (sock) ducknng_runtime_release_client_socket(sock);
             set_null(output, row);
             continue;
         }
@@ -2059,23 +2134,24 @@ static void ducknng_request_socket_scalar(duckdb_function_info info, duckdb_data
             if (payload) duckdb_free(payload);
             payload = NULL;
             if (!req) {
+                if (sock) ducknng_runtime_release_client_socket(sock);
                 if (errmsg) duckdb_free(errmsg);
                 set_null(output, row);
                 continue;
             }
+            ducknng_mutex_lock(&sock->mu);
             rv = ducknng_socket_set_timeout_ms(sock->sock, timeout_ms, timeout_ms);
+            if (rv == 0) rv = ducknng_req_transact(sock->sock, req, &resp);
+            if (rv == 0) {
+                sock->send_timeout_ms = timeout_ms;
+                sock->recv_timeout_ms = timeout_ms;
+            }
+            ducknng_mutex_unlock(&sock->mu);
+            ducknng_runtime_release_client_socket(sock);
             if (rv != 0) {
-                nng_msg_free(req);
                 set_null(output, row);
                 continue;
             }
-            rv = ducknng_req_transact(sock->sock, req, &resp);
-            if (rv != 0) {
-                set_null(output, row);
-                continue;
-            }
-            sock->send_timeout_ms = timeout_ms;
-            sock->recv_timeout_ms = timeout_ms;
         }
         if (!resp) {
             if (errmsg) duckdb_free(errmsg);
@@ -2203,19 +2279,12 @@ static void ducknng_request_socket_raw_aio_scalar(duckdb_function_info info, duc
         idx_t payload_len = 0;
         uint8_t *payload = arg_blob_dup(duckdb_data_chunk_get_vector(input, 1), row, &payload_len);
         int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 5000);
-        ducknng_client_socket *sock;
         ducknng_client_aio *slot = NULL;
         nng_msg *req = NULL;
         char *errmsg = NULL;
         if (!ctx || !ctx->rt || socket_id == 0 || (!payload && payload_len > 0)) {
             if (payload) duckdb_free(payload);
             duckdb_scalar_function_set_error(info, "ducknng: request_socket_raw_aio requires socket id and payload");
-            return;
-        }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
-        if (!sock || !sock->open || !sock->connected || !sock->url || !ducknng_socket_is_req_protocol(sock)) {
-            if (payload) duckdb_free(payload);
-            duckdb_scalar_function_set_error(info, "ducknng: connected req client socket not found");
             return;
         }
         req = ducknng_client_raw_request_message(payload, (size_t)payload_len, &errmsg);
@@ -2226,7 +2295,7 @@ static void ducknng_request_socket_raw_aio_scalar(duckdb_function_info info, duc
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        slot = ducknng_client_prepare_socket_request_aio(ctx->rt, sock, timeout_ms, &errmsg);
+        slot = ducknng_client_prepare_socket_request_aio(ctx->rt, socket_id, timeout_ms, &errmsg);
         if (!slot) {
             nng_msg_free(req);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to prepare socket aio request");
@@ -2252,19 +2321,12 @@ static void ducknng_send_socket_raw_aio_scalar(duckdb_function_info info, duckdb
         idx_t payload_len = 0;
         uint8_t *payload = arg_blob_dup(duckdb_data_chunk_get_vector(input, 1), row, &payload_len);
         int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 5000);
-        ducknng_client_socket *sock;
         ducknng_client_aio *slot = NULL;
         nng_msg *msg = NULL;
         char *errmsg = NULL;
         if (!ctx || !ctx->rt || socket_id == 0 || (!payload && payload_len > 0)) {
             if (payload) duckdb_free(payload);
             duckdb_scalar_function_set_error(info, "ducknng: send_socket_raw_aio requires socket id and payload");
-            return;
-        }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
-        if (!ducknng_socket_is_active(sock)) {
-            if (payload) duckdb_free(payload);
-            duckdb_scalar_function_set_error(info, "ducknng: active client socket not found");
             return;
         }
         msg = ducknng_client_raw_request_message(payload, (size_t)payload_len, &errmsg);
@@ -2274,7 +2336,7 @@ static void ducknng_send_socket_raw_aio_scalar(duckdb_function_info info, duckdb
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        slot = ducknng_client_prepare_socket_raw_aio(ctx->rt, sock, timeout_ms, &errmsg);
+        slot = ducknng_client_prepare_socket_raw_aio(ctx->rt, socket_id, timeout_ms, &errmsg);
         if (!slot) {
             nng_msg_free(msg);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to prepare socket send aio");
@@ -2298,19 +2360,13 @@ static void ducknng_recv_socket_raw_aio_scalar(duckdb_function_info info, duckdb
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
         int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 1), row, 5000);
-        ducknng_client_socket *sock;
         ducknng_client_aio *slot = NULL;
         char *errmsg = NULL;
         if (!ctx || !ctx->rt || socket_id == 0) {
             duckdb_scalar_function_set_error(info, "ducknng: recv_socket_raw_aio requires socket id");
             return;
         }
-        sock = ducknng_runtime_find_client_socket(ctx->rt, socket_id);
-        if (!ducknng_socket_is_active(sock)) {
-            duckdb_scalar_function_set_error(info, "ducknng: active client socket not found");
-            return;
-        }
-        slot = ducknng_client_prepare_socket_raw_aio(ctx->rt, sock, timeout_ms, &errmsg);
+        slot = ducknng_client_prepare_socket_raw_aio(ctx->rt, socket_id, timeout_ms, &errmsg);
         if (!slot) {
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to prepare socket recv aio");
             if (errmsg) duckdb_free(errmsg);
@@ -3631,13 +3687,14 @@ static void ducknng_request_socket_bind(duckdb_bind_info info) {
     duckdb_destroy_value(&socket_val);
     duckdb_destroy_value(&payload_val);
     duckdb_destroy_value(&timeout_val);
-    sock = ctx && ctx->rt ? ducknng_runtime_find_client_socket(ctx->rt, socket_id) : NULL;
+    sock = ctx && ctx->rt ? ducknng_runtime_acquire_client_socket(ctx->rt, socket_id) : NULL;
     if (!sock || !sock->open || !sock->connected) {
         bind->ok = false;
         bind->error = ducknng_strdup("ducknng: connected client socket not found");
     } else {
         ducknng_request_bind_common_socket(bind, sock, (const uint8_t *)blob.data, (size_t)blob.size, timeout_ms);
     }
+    if (sock) ducknng_runtime_release_client_socket(sock);
     if (blob.data) duckdb_free(blob.data);
     type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
     duckdb_bind_add_result_column(info, "ok", type);

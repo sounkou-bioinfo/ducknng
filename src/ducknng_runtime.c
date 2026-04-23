@@ -112,6 +112,39 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
     return 1;
 }
 
+void ducknng_runtime_release_client_socket(ducknng_client_socket *sock) {
+    if (!sock || !sock->mu_initialized) return;
+    ducknng_mutex_lock(&sock->mu);
+    if (sock->refcount > 0) sock->refcount--;
+    if (sock->closing && sock->refcount == 0 && sock->cv_initialized) {
+        ducknng_cond_broadcast(&sock->cv);
+    }
+    ducknng_mutex_unlock(&sock->mu);
+}
+
+void ducknng_client_socket_destroy(ducknng_client_socket *sock) {
+    if (!sock) return;
+    if (sock->mu_initialized) {
+        ducknng_mutex_lock(&sock->mu);
+        sock->closing = 1;
+        while (sock->refcount > 0 && sock->cv_initialized) {
+            ducknng_cond_wait(&sock->cv, &sock->mu);
+        }
+        ducknng_mutex_unlock(&sock->mu);
+    }
+    if (sock->has_listener) ducknng_listener_close(sock->listener);
+    if (sock->has_ctx) ducknng_ctx_close(sock->ctx);
+    if (sock->open) ducknng_socket_close(sock->sock);
+    if (sock->protocol) duckdb_free(sock->protocol);
+    if (sock->url) duckdb_free(sock->url);
+    if (sock->listen_url) duckdb_free(sock->listen_url);
+    if (sock->pending_request) duckdb_free(sock->pending_request);
+    if (sock->pending_reply) duckdb_free(sock->pending_reply);
+    if (sock->cv_initialized) ducknng_cond_destroy(&sock->cv);
+    if (sock->mu_initialized) ducknng_mutex_destroy(&sock->mu);
+    duckdb_free(sock);
+}
+
 void ducknng_client_aio_destroy(ducknng_client_aio *aio) {
     if (!aio) return;
     if (aio->aio) {
@@ -128,6 +161,7 @@ void ducknng_client_aio_destroy(ducknng_client_aio *aio) {
     if (aio->reply_msg) nng_msg_free(aio->reply_msg);
     if (aio->has_ctx) ducknng_ctx_close(aio->ctx);
     if (aio->owns_socket && aio->open) ducknng_socket_close(aio->sock);
+    if (aio->socket_ref) ducknng_runtime_release_client_socket(aio->socket_ref);
     if (aio->error) duckdb_free(aio->error);
     duckdb_free(aio);
 }
@@ -165,15 +199,7 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
         for (i = 0; i < rt->client_socket_count; i++) {
             ducknng_client_socket *sock = rt->client_sockets[i];
             if (!sock) continue;
-            if (sock->has_listener) ducknng_listener_close(sock->listener);
-            if (sock->has_ctx) nng_ctx_close(sock->ctx);
-            if (sock->open) nng_close(sock->sock);
-            if (sock->protocol) duckdb_free(sock->protocol);
-            if (sock->url) duckdb_free(sock->url);
-            if (sock->listen_url) duckdb_free(sock->listen_url);
-            if (sock->pending_request) duckdb_free(sock->pending_request);
-            if (sock->pending_reply) duckdb_free(sock->pending_reply);
-            duckdb_free(sock);
+            ducknng_client_socket_destroy(sock);
         }
         duckdb_free(rt->client_sockets);
         rt->client_sockets = NULL;
@@ -274,6 +300,31 @@ ducknng_client_socket *ducknng_runtime_find_client_socket(ducknng_runtime *rt, u
         if (rt->client_sockets[i] && rt->client_sockets[i]->socket_id == socket_id) {
             sock = rt->client_sockets[i];
             break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    return sock;
+}
+
+ducknng_client_socket *ducknng_runtime_acquire_client_socket(ducknng_runtime *rt, uint64_t socket_id) {
+    size_t i;
+    ducknng_client_socket *sock = NULL;
+    if (!rt || socket_id == 0) return NULL;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->client_socket_count; i++) {
+        if (rt->client_sockets[i] && rt->client_sockets[i]->socket_id == socket_id) {
+            sock = rt->client_sockets[i];
+            break;
+        }
+    }
+    if (sock && sock->mu_initialized) {
+        ducknng_mutex_lock(&sock->mu);
+        if (sock->closing) {
+            ducknng_mutex_unlock(&sock->mu);
+            sock = NULL;
+        } else {
+            sock->refcount++;
+            ducknng_mutex_unlock(&sock->mu);
         }
     }
     ducknng_mutex_unlock(&rt->mu);

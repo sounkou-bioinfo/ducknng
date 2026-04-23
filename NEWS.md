@@ -10,6 +10,7 @@
 - Extended `ducknng_dial_socket(...)` to take `tls_config_id` and applied the same reusable TLS-handle model to generic socket dialing, including `wss://`.
 - Changed synchronous `ducknng_request_socket(...)` to use the already-connected req socket handle directly instead of silently re-dialing from the stored URL, so socket-handle dialing and TLS settings actually carry through to the request path.
 - Added sqllogictest coverage for the new HTTP server/routed-helper surface and for `ws://` / `wss://` transport use through both service and socket-handle paths.
+- Hardened client socket lifetime management with runtime-owned retain/release tracking so close/destroy waits for in-flight users, pending socket-bound aio operations keep their socket alive while they are actually pending, and terminal aio handles no longer block later socket close just because the caller has not dropped the collected aio row yet.
 - Added the first raw unary RPC aio wrappers: `ducknng_get_rpc_manifest_raw_aio(...)` and `ducknng_run_rpc_raw_aio(...)`.
 - Added a documented local NNG patch under `patches/nng/` so the vendored Windows clock fallback for DuckDB CI's Rtools42 MinGW environment is explicit rather than an undocumented edit inside `third_party/nng/`.
 - Fixed the next Windows MinGW portability blocker after the vendored NNG gate: self-signed TLS material generation now uses portable temp-directory helpers instead of calling `mkdtemp()` directly from `ducknng_sql_api.c`.

@@ -20,6 +20,12 @@ typedef struct ducknng_client_socket {
     int has_listener;
     int send_timeout_ms;
     int recv_timeout_ms;
+    ducknng_mutex mu;
+    ducknng_cond cv;
+    uint32_t refcount;
+    int closing;
+    int mu_initialized;
+    int cv_initialized;
     uint8_t *pending_request;
     size_t pending_request_len;
     uint8_t *pending_reply;
@@ -55,6 +61,7 @@ typedef struct ducknng_client_aio {
     struct ducknng_runtime *rt;
     uint64_t aio_id;
     uint64_t socket_id;
+    ducknng_client_socket *socket_ref;
     nng_socket sock;
     nng_ctx ctx;
     nng_aio *aio;
@@ -108,6 +115,9 @@ ducknng_service *ducknng_runtime_find_service(ducknng_runtime *rt, const char *n
 int ducknng_runtime_add_service(ducknng_runtime *rt, ducknng_service *svc, char **errmsg);
 ducknng_service *ducknng_runtime_remove_service(ducknng_runtime *rt, const char *name);
 ducknng_client_socket *ducknng_runtime_find_client_socket(ducknng_runtime *rt, uint64_t socket_id);
+ducknng_client_socket *ducknng_runtime_acquire_client_socket(ducknng_runtime *rt, uint64_t socket_id);
+void ducknng_runtime_release_client_socket(ducknng_client_socket *sock);
+void ducknng_client_socket_destroy(ducknng_client_socket *sock);
 int ducknng_runtime_add_client_socket(ducknng_runtime *rt, ducknng_client_socket *sock, char **errmsg);
 ducknng_client_socket *ducknng_runtime_remove_client_socket(ducknng_runtime *rt, uint64_t socket_id);
 int ducknng_runtime_add_client_aio(ducknng_runtime *rt, ducknng_client_aio *aio, char **errmsg);
