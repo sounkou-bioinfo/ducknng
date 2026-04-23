@@ -536,17 +536,17 @@ SELECT ducknng_drop_tls_config(1);
     ├──────────────────────────────────────────────────────────────────────────────────────┤
     │                                                                                    1 │
     └──────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬────────┬───────────┐
-    │   ok    │ status │ body_text │
-    │ boolean │ int32  │  varchar  │
-    ├─────────┼────────┼───────────┤
-    │ false   │   NULL │ NULL      │
-    └─────────┴────────┴───────────┘
+    ┌─────────┬────────┬──────────────────────────┐
+    │   ok    │ status │        body_text         │
+    │ boolean │ int32  │         varchar          │
+    ├─────────┼────────┼──────────────────────────┤
+    │ true    │    200 │ hello from ducknng https │
+    └─────────┴────────┴──────────────────────────┘
     ┌─────────┬────────┬──────────┬────────────┐
     │   ok    │ status │ body_hex │ has_header │
     │ boolean │ int32  │ varchar  │  boolean   │
     ├─────────┼────────┼──────────┼────────────┤
-    │ false   │   NULL │ NULL     │ NULL       │
+    │ true    │    200 │ 01020304 │ true       │
     └─────────┴────────┴──────────┴────────────┘
     ┌────────────────────────────┐
     │ ducknng_drop_tls_config(1) │
@@ -813,6 +813,115 @@ SELECT ducknng_close_socket(1);
     ├──────────────────────────────────────────────────────┤
     │ true                                                 │
     └──────────────────────────────────────────────────────┘
+    ┌─────────────────────────┐
+    │ ducknng_close_socket(2) │
+    │         boolean         │
+    ├─────────────────────────┤
+    │ true                    │
+    └─────────────────────────┘
+    ┌─────────────────────────┐
+    │ ducknng_close_socket(1) │
+    │         boolean         │
+    ├─────────────────────────┤
+    │ true                    │
+    └─────────────────────────┘
+
+### Exchange one survey and one response through `surveyor` / `respondent`
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Open one respondent listener and one surveyor peer.
+SELECT ducknng_open_socket('respondent');
+SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 134217728, 0::UBIGINT);
+SELECT ducknng_open_socket('surveyor');
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000);
+
+-- Receive the survey on the respondent side first.
+CREATE TEMP TABLE respondent_recv AS
+SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+
+SELECT ducknng_send_socket_raw(2::UBIGINT, from_hex('737572766579'), 1000) AS sent_survey;
+
+SELECT ok, hex(frame) = '737572766579' AS got_survey
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM respondent_recv), 1000);
+
+-- Then receive the respondent reply back on the surveyor side.
+CREATE TEMP TABLE surveyor_recv AS
+SELECT ducknng_recv_socket_raw_aio(2::UBIGINT, 1000) AS recv_aio;
+
+SELECT ducknng_send_socket_raw(1::UBIGINT, from_hex('726573706f6e7365'), 1000) AS sent_response;
+
+SELECT ok, hex(frame) = '726573706F6E7365' AS got_response
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM surveyor_recv), 1000);
+
+SELECT ducknng_aio_drop((SELECT recv_aio FROM respondent_recv));
+SELECT ducknng_aio_drop((SELECT recv_aio FROM surveyor_recv));
+DROP TABLE respondent_recv;
+DROP TABLE surveyor_recv;
+SELECT ducknng_close_socket(2);
+SELECT ducknng_close_socket(1);
+```
+
+    ┌───────────────────────────────────┐
+    │ ducknng_open_socket('respondent') │
+    │              uint64               │
+    ├───────────────────────────────────┤
+    │                                 1 │
+    └───────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 134217728, CAST(0 AS "UBIGINT")) │
+    │                                               boolean                                               │
+    ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────────────────────────────┐
+    │ ducknng_open_socket('surveyor') │
+    │             uint64              │
+    ├─────────────────────────────────┤
+    │                               2 │
+    └─────────────────────────────────┘
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000) │
+    │                                boolean                                 │
+    ├────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                   │
+    └────────────────────────────────────────────────────────────────────────┘
+    ┌─────────────┐
+    │ sent_survey │
+    │   boolean   │
+    ├─────────────┤
+    │ true        │
+    └─────────────┘
+    ┌─────────┬────────────┐
+    │   ok    │ got_survey │
+    │ boolean │  boolean   │
+    ├─────────┼────────────┤
+    │ true    │ true       │
+    └─────────┴────────────┘
+    ┌───────────────┐
+    │ sent_response │
+    │    boolean    │
+    ├───────────────┤
+    │ true          │
+    └───────────────┘
+    ┌─────────┬──────────────┐
+    │   ok    │ got_response │
+    │ boolean │   boolean    │
+    ├─────────┼──────────────┤
+    │ true    │ true         │
+    └─────────┴──────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │ ducknng_aio_drop((SELECT recv_aio FROM respondent_recv)) │
+    │                         boolean                          │
+    ├──────────────────────────────────────────────────────────┤
+    │ true                                                     │
+    └──────────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────────────────────┐
+    │ ducknng_aio_drop((SELECT recv_aio FROM surveyor_recv)) │
+    │                        boolean                         │
+    ├────────────────────────────────────────────────────────┤
+    │ true                                                   │
+    └────────────────────────────────────────────────────────┘
     ┌─────────────────────────┐
     │ ducknng_close_socket(2) │
     │         boolean         │
@@ -1448,7 +1557,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1c048465669ac2.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1c1db64979157a.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

@@ -378,6 +378,41 @@ SELECT ducknng_close_socket(2);
 SELECT ducknng_close_socket(1);
 ```
 
+### Exchange one survey and one response through `surveyor` / `respondent`
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Open one respondent listener and one surveyor peer.
+SELECT ducknng_open_socket('respondent');
+SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 134217728, 0::UBIGINT);
+SELECT ducknng_open_socket('surveyor');
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000);
+
+-- Receive the survey on the respondent side first.
+CREATE TEMP TABLE respondent_recv AS
+SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+
+SELECT ducknng_send_socket_raw(2::UBIGINT, from_hex('737572766579'), 1000) AS sent_survey;
+
+SELECT ok, hex(frame) = '737572766579' AS got_survey
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM respondent_recv), 1000);
+
+-- Then receive the respondent reply back on the surveyor side.
+CREATE TEMP TABLE surveyor_recv AS
+SELECT ducknng_recv_socket_raw_aio(2::UBIGINT, 1000) AS recv_aio;
+
+SELECT ducknng_send_socket_raw(1::UBIGINT, from_hex('726573706f6e7365'), 1000) AS sent_response;
+
+SELECT ok, hex(frame) = '726573706F6E7365' AS got_response
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM surveyor_recv), 1000);
+
+SELECT ducknng_aio_drop((SELECT recv_aio FROM respondent_recv));
+SELECT ducknng_aio_drop((SELECT recv_aio FROM surveyor_recv));
+DROP TABLE respondent_recv;
+DROP TABLE surveyor_recv;
+SELECT ducknng_close_socket(2);
+SELECT ducknng_close_socket(1);
+```
+
 ### Launch raw requests asynchronously and collect the reply frames later
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}

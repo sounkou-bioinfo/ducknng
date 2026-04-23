@@ -212,59 +212,135 @@ SELECT ducknng_close_socket(5)
 1
 
 query I
-SELECT ducknng_open_socket('bus')
+SELECT ducknng_open_socket('respondent')
 ----
 7
 
 query I
-SELECT ducknng_open_socket('poly')
+SELECT ducknng_listen_socket(7, 'ipc:///tmp/ducknng_socket_protocols_survey.ipc', 134217728, 0::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_open_socket('surveyor')
 ----
 8
 
 query I
-SELECT ducknng_open_socket('pub')
+SELECT ducknng_dial_socket(8, 'ipc:///tmp/ducknng_socket_protocols_survey.ipc', 1000)
+----
+1
+
+statement ok
+CREATE TEMP TABLE respondent_recv AS
+SELECT ducknng_recv_socket_raw_aio(7::UBIGINT, 1000) AS recv_aio
+
+query I
+SELECT ducknng_send_socket_raw(8::UBIGINT, from_hex('737572766579'), 1000)
+----
+1
+
+query II
+SELECT ok, hex(frame) = '737572766579'
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM respondent_recv), 1000)
+----
+1	1
+
+statement ok
+CREATE TEMP TABLE surveyor_recv AS
+SELECT ducknng_recv_socket_raw_aio(8::UBIGINT, 1000) AS recv_aio
+
+query I
+SELECT ducknng_send_socket_raw(7::UBIGINT, from_hex('726573706f6e7365'), 1000)
+----
+1
+
+query II
+SELECT ok, hex(frame) = '726573706F6E7365'
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM surveyor_recv), 1000)
+----
+1	1
+
+query I
+SELECT ducknng_aio_drop((SELECT recv_aio FROM respondent_recv))
+----
+1
+
+query I
+SELECT ducknng_aio_drop((SELECT recv_aio FROM surveyor_recv))
+----
+1
+
+statement ok
+DROP TABLE respondent_recv
+
+statement ok
+DROP TABLE surveyor_recv
+
+query I
+SELECT ducknng_close_socket(8)
+----
+1
+
+query I
+SELECT ducknng_close_socket(7)
+----
+1
+
+query I
+SELECT ducknng_open_socket('bus')
 ----
 9
 
 query I
-SELECT ducknng_open_socket('sub')
+SELECT ducknng_open_socket('poly')
 ----
 10
 
 query I
-SELECT ducknng_open_socket('push')
+SELECT ducknng_open_socket('pub')
 ----
 11
 
 query I
-SELECT ducknng_open_socket('pull')
+SELECT ducknng_open_socket('sub')
 ----
 12
 
 query I
-SELECT ducknng_open_socket('req')
+SELECT ducknng_open_socket('push')
 ----
 13
 
+query I
+SELECT ducknng_open_socket('pull')
+----
+14
+
+query I
+SELECT ducknng_open_socket('req')
+----
+15
+
 statement error
-SELECT ducknng_dial_socket(13, 'https://127.0.0.1:45447', 1000)
+SELECT ducknng_dial_socket(15, 'https://127.0.0.1:45447', 1000)
 ----
 ducknng: http:// and https:// URLs are reserved for future HTTP transport adapters
 
 query I
 SELECT ducknng_open_socket('rep')
 ----
-14
+16
 
 query I
 SELECT ducknng_open_socket('surveyor')
 ----
-15
+17
 
 query I
 SELECT ducknng_open_socket('respondent')
 ----
-16
+18
 
 query T
 SELECT protocol
@@ -283,9 +359,19 @@ surveyor
 respondent
 
 query II
-SELECT ducknng_subscribe_socket(10::UBIGINT, from_hex('')), ducknng_unsubscribe_socket(10::UBIGINT, from_hex(''))
+SELECT ducknng_subscribe_socket(12::UBIGINT, from_hex('')), ducknng_unsubscribe_socket(12::UBIGINT, from_hex(''))
 ----
 1	1
+
+query I
+SELECT ducknng_close_socket(18)
+----
+1
+
+query I
+SELECT ducknng_close_socket(17)
+----
+1
 
 query I
 SELECT ducknng_close_socket(16)
@@ -324,15 +410,5 @@ SELECT ducknng_close_socket(10)
 
 query I
 SELECT ducknng_close_socket(9)
-----
-1
-
-query I
-SELECT ducknng_close_socket(8)
-----
-1
-
-query I
-SELECT ducknng_close_socket(7)
 ----
 1
