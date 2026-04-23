@@ -102,7 +102,7 @@ typedef struct ducknng_runtime {
 } ducknng_runtime;
 
 int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info info,
-    struct duckdb_extension_access *access, ducknng_runtime **out_rt);
+    struct duckdb_extension_access *access, ducknng_runtime **out_rt, int *out_created);
 void ducknng_runtime_destroy(ducknng_runtime *rt);
 ducknng_service *ducknng_runtime_find_service(ducknng_runtime *rt, const char *name);
 int ducknng_runtime_add_service(ducknng_runtime *rt, ducknng_service *svc, char **errmsg);

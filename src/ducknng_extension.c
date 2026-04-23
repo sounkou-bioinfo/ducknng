@@ -6,6 +6,7 @@ DUCKDB_EXTENSION_ENTRYPOINT_CUSTOM(duckdb_extension_info info, struct duckdb_ext
     duckdb_connection connection = NULL;
     ducknng_runtime *rt = NULL;
     duckdb_database *db = NULL;
+    int created = 0;
     if (!access || !info) {
         return false;
     }
@@ -18,14 +19,21 @@ DUCKDB_EXTENSION_ENTRYPOINT_CUSTOM(duckdb_extension_info info, struct duckdb_ext
         access->set_error(info, "ducknng: failed to open init connection");
         return false;
     }
-    if (!ducknng_runtime_init(connection, info, access, &rt)) {
+    if (!ducknng_runtime_init(connection, info, access, &rt, &created)) {
         duckdb_disconnect(&connection);
         return false;
     }
     if (!ducknng_register_sql_api(connection, rt)) {
         access->set_error(info, "ducknng: failed to register sql api");
-        duckdb_disconnect(&connection);
+        if (created) {
+            ducknng_runtime_destroy(rt);
+        } else {
+            duckdb_disconnect(&connection);
+        }
         return false;
+    }
+    if (!created) {
+        duckdb_disconnect(&connection);
     }
     return true;
 }

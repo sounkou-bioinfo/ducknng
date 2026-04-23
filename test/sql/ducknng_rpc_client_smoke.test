@@ -133,7 +133,7 @@ SELECT ducknng_open_socket('req')
 1
 
 query I
-SELECT CASE WHEN ducknng_dial_socket(1, 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1000) THEN 1 ELSE 0 END
+SELECT CASE WHEN ducknng_dial_socket(1, 'ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1000, 0::UBIGINT) THEN 1 ELSE 0 END
 ----
 1
 

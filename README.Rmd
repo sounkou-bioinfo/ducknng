@@ -32,16 +32,17 @@ It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin, version
 
 Today the extension already includes:
 
-- server lifecycle control through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`
+- server lifecycle control through `ducknng_start_server()`, `ducknng_start_http_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`
 - generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`, `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
+- NNG transport schemes across `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`
 - raw socket send/recv primitives plus req-style raw request/reply helpers
 - raw aio helpers for socket send/recv, req-style request/reply futures, and the first raw unary RPC futures
-- a low-level HTTP/HTTPS client helper for transport-adapter work
+- a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS routing for the synchronous request/RPC/session helper family
 - explicit query-session helpers and TLS config handles
 
 `ducknng` is also intentionally low-level. Long-lived runtime handles are **manually managed**. In normal use that means you should stop servers, close sockets, drop aio handles, drop TLS config handles, and close query sessions explicitly rather than expecting a nanonext-style GC/finalizer layer.
 
-Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. The current server is still unauthenticated, so the session family is implemented and usable but should still be treated as experimental until session ownership is bound to a concrete multi-client identity model. HTTP/HTTPS are the only current web-carrier focus; `ws://` and `wss://` are intentionally deferred and are not enabled in the current build.
+Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`, while `ducknng_start_http_server(...)` and `ducknng_ncurl(...)` provide the separate HTTP/HTTPS carrier layer. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The synchronous request, RPC, and session helpers now route over `http://` and `https://` automatically, but the generic socket API stays NNG-only. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. The current server is still unauthenticated, so the session family is implemented and usable but should still be treated as experimental until session ownership is bound to a concrete multi-client identity model. WebSocket here means NNG's `ws://` and `wss://` transports, not a second HTTP-specific RPC surface.
 
 ## Getting started
 
@@ -171,7 +172,7 @@ SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELEC
 
 -- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');
-SELECT ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
+SELECT ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000, 0::UBIGINT);
 SELECT * FROM ducknng_list_sockets();
 
 -- Primitive transport layer: send the built-in manifest request frame.
@@ -226,7 +227,7 @@ SELECT ducknng_stop_server('sql_client_demo');
 
 ### Use `ducknng_ncurl()` against a local `nanonext` HTTPS server
 
-A tiny local R `nanonext` HTTPS server is started during README rendering so this example runs without depending on the public internet. The core server definition is shown below because the transport helper and its carrier behavior are part of the example rather than hidden setup. The hidden setup only launches the script in the background and manages the temporary PID, log, and CA files needed while rendering. `ducknng_ncurl(...)` is the low-level HTTP/HTTPS transport primitive; the higher-level request, RPC, and session helpers have not been auto-routed over `http://` and `https://` yet.
+A tiny local R `nanonext` HTTPS server is started during README rendering so this example runs without depending on the public internet. The core server definition is shown below because the transport helper and its carrier behavior are part of the example rather than hidden setup. The hidden setup only launches the script in the background and manages the temporary PID, log, and CA files needed while rendering. `ducknng_ncurl(...)` remains the low-level HTTP/HTTPS transport primitive even though the higher-level synchronous request, RPC, and session helpers now auto-route over `http://` and `https://` when the URL scheme selects that carrier.
 
 ```{r http-client-demo-setup, echo=FALSE, results='asis'}
 library(nanonext)
@@ -378,6 +379,40 @@ unlink(c(
 ))
 ```
 
+### Start `ducknng` on `http://` and use the routed helpers directly
+
+`ducknng_start_http_server(...)` mounts the existing framed RPC surface at the exact path encoded in the listen URL. The higher-level synchronous request, RPC, and session helpers use the same names they already use for NNG URLs and switch carriers automatically from the scheme.
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+SELECT ducknng_start_http_server(
+  'http_demo',
+  'http://127.0.0.1:18444/_ducknng',
+  134217728,
+  300000,
+  0::UBIGINT
+);
+
+SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
+FROM ducknng_get_rpc_manifest('http://127.0.0.1:18444/_ducknng', 0::UBIGINT);
+
+SET VARIABLE http_demo_frame = (
+  SELECT body
+  FROM ducknng_ncurl(
+    'http://127.0.0.1:18444/_ducknng',
+    'POST',
+    '[{"name":"Content-Type","value":"application/vnd.ducknng.frame"}]',
+    from_hex('01000000000000000000000000000000000000000000'),
+    2000,
+    0::UBIGINT
+  )
+);
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(getvariable('http_demo_frame'));
+
+SELECT ducknng_stop_server('http_demo');
+```
+
 ### Launch raw socket send/recv airos and inspect send status explicitly
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
@@ -385,7 +420,7 @@ unlink(c(
 SELECT ducknng_open_socket('pair');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('pair');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000, 0::UBIGINT);
 
 -- Start one async receive and one async send.
 CREATE TEMP TABLE pair_recv AS
@@ -422,7 +457,7 @@ SELECT ducknng_close_socket(1);
 SELECT ducknng_open_socket('pull');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('push');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000, 0::UBIGINT);
 
 -- Receive asynchronously on pull so the send side can return immediately.
 CREATE TEMP TABLE pushpull_recv AS
@@ -447,7 +482,7 @@ SELECT ducknng_open_socket('pub');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('sub');
 SELECT ducknng_subscribe_socket(2::UBIGINT, from_hex(''));
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000, 0::UBIGINT);
 
 CREATE TEMP TABLE pubsub_recv AS
 SELECT ducknng_recv_socket_raw_aio(2::UBIGINT, 1000) AS recv_aio;
@@ -470,7 +505,7 @@ SELECT ducknng_close_socket(1);
 SELECT ducknng_open_socket('respondent');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('surveyor');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000, 0::UBIGINT);
 
 -- Receive the survey on the respondent side first.
 CREATE TEMP TABLE respondent_recv AS
@@ -745,6 +780,59 @@ FROM ducknng_decode_frame(
 
 -- Clean up the file-backed TLS demo server and config handle.
 SELECT ducknng_stop_server('tls_demo_files');
+SELECT ducknng_drop_tls_config(1);
+```
+
+### `ws://` and `wss://` as NNG transports
+
+`ws://` and `wss://` are NNG transport schemes, not the HTTP carrier described in `docs/http.md`. They use `ducknng_start_server(...)`, the same framed manifest/RPC/session helpers, and the same TLS handle model as the other NNG transports.
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Plain WebSocket transport through the NNG service layer.
+SELECT ducknng_start_server(
+  'ws_demo',
+  'ws://127.0.0.1:45455/_ducknng',
+  1,
+  134217728,
+  300000,
+  0::UBIGINT
+);
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'ws://127.0.0.1:45455/_ducknng',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    0::UBIGINT
+  )
+);
+
+SELECT ducknng_stop_server('ws_demo');
+
+-- Secure WebSocket transport uses the same reusable TLS handle model.
+SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 0);
+
+SELECT ducknng_start_server(
+  'wss_demo',
+  'wss://127.0.0.1:45456/_ducknng',
+  1,
+  134217728,
+  300000,
+  1::UBIGINT
+);
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'wss://127.0.0.1:45456/_ducknng',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    1::UBIGINT
+  )
+);
+
+SELECT ducknng_stop_server('wss_demo');
 SELECT ducknng_drop_tls_config(1);
 ```
 

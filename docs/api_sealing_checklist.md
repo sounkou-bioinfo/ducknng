@@ -14,6 +14,8 @@ This checklist is narrower than `docs/design_review_checklist.md`. It tracks wha
 - the first raw unary RPC aio wrappers
 - query-session control helpers
 - TLS config handles
+- an HTTP/HTTPS server helper plus URL-routed synchronous request/RPC/session helpers
+- NNG WebSocket transport schemes through `ws://` and `wss://`
 - a low-level HTTP/HTTPS client helper
 
 That is enough for serious use and interop work, but it is not yet enough to call the full API sealed.
@@ -34,21 +36,18 @@ This means the project must choose and implement one coherent identity model:
 
 Until that lands, the session family should remain documented as experimental.
 
-### 2. HTTP server and URL-routed higher-level helpers
+### 2. Final HTTP async scope
 
-The HTTP transport direction is only partially complete.
+The synchronous HTTP transport direction is now in place:
 
-Before sealing, the project should implement:
+- `ducknng_start_http_server(...)` is implemented
+- the existing synchronous request/RPC/session helpers route over `http://` and `https://`
 
-- `ducknng_start_http_server(...)`
-- operation-oriented routing of existing request/RPC/session helpers over `http://` and `https://`
-- any HTTP aio helpers that are intended to be part of the stable async story
+Before sealing, the remaining HTTP question is whether any HTTP aio helpers are intended to be part of the stable async story. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules.
 
-The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules.
+### 3. Final generic socket transport coverage story
 
-### 3. Generic client socket TLS dialing
-
-Listener-side TLS and one-shot request helpers are already wired, but the broader socket-handle dial surface still needs a coherent TLS story before `tls+tcp://` can be considered equally complete across the supported protocol family.
+The generic socket dial surface now accepts an explicit `tls_config_id`, which makes `tls+tcp://` and `wss://` usable through the existing handle model. Before sealing, the remaining question is not whether TLS dialing exists, but whether the repo's examples and docs cover the intended supported transport matrix clearly enough across the broader protocol family.
 
 ### 4. Final async surface scope
 
@@ -83,9 +82,7 @@ At minimum, the project should keep the existing runnable examples green and dec
 
 ### 7. Explicit scope for `ws://` and `wss://`
 
-`ws://` and `wss://` should remain out of scope for the sealed API unless the project deliberately enables and documents them. Right now the build disables the NNG WS/WSS transports and the HTTP transport contract explicitly defers WebSocket work.
-
-That is a valid project boundary, but it should stay explicit.
+`ws://` and `wss://` are now explicit NNG transport schemes in scope for the public API. What still needs to stay explicit is the boundary: they belong to the NNG transport family, not to the HTTP carrier layer. The HTTP transport contract may still defer browser-style or HTTP-carrier WebSocket work even while NNG WebSocket transports are supported.
 
 ## Already addressed in the current pass
 

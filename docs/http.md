@@ -1,6 +1,6 @@
 # ducknng HTTP and HTTPS transport adapter contract
 
-This document defines the first concrete HTTP and HTTPS transport design for `ducknng`. It is binding for future work on `ducknng_start_http_server(...)` and for the already-landed `ducknng_ncurl(...)` client helper. The purpose of the document is to pin the intended SQL surface and carrier semantics now, before implementation pressure causes the project to grow a second RPC surface that drifts away from the existing manifest, session, and Arrow contracts.
+This document defines the first concrete HTTP and HTTPS transport design for `ducknng`. It is binding for the implemented `ducknng_start_http_server(...)` and `ducknng_ncurl(...)` helpers and for the URL-routed synchronous request, RPC, and session helpers that now use the same carrier automatically when the URL scheme is `http` or `https`. The purpose of the document is to keep that surface aligned with the manifest, session, and Arrow contracts instead of letting the project grow a second RPC API that drifts away from the existing method model.
 
 The governing rule is the same one stated in `docs/protocol.md` and `docs/transports.md`: HTTP is a transport adapter, not a second protocol. It changes how the bytes travel. It does not change the registry-backed method set, the query-session lifecycle, or the Arrow-versus-JSON payload contract.
 
@@ -8,9 +8,9 @@ The governing rule is the same one stated in `docs/protocol.md` and `docs/transp
 
 The initial HTTP adapter is deliberately narrow. It is a carrier for the existing `ducknng` envelope and method registry. It is not a generic web framework, not a browser asset server, not a WebSocket toolkit, and not an excuse to create path-specific copies of `manifest`, `exec`, `query_open`, `fetch`, `close`, or `cancel`. Anything broader than framed RPC carriage belongs to later work and must be justified separately.
 
-The current generic socket surface remains NNG-only. `ducknng_open_socket(...)`, `ducknng_listen_socket(...)`, `ducknng_send_socket_raw(...)`, `ducknng_recv_socket_raw(...)`, and the corresponding socket AIO helpers model NNG socket patterns and do not generalize to HTTP. The HTTP family instead gets its own low-level client helper, `ducknng_ncurl(...)`, while the existing request, RPC, and session helpers are expected to route by URL scheme once the HTTP adapter exists.
+The generic socket surface remains NNG-only. `ducknng_open_socket(...)`, `ducknng_listen_socket(...)`, `ducknng_send_socket_raw(...)`, `ducknng_recv_socket_raw(...)`, and the corresponding socket AIO helpers model NNG socket patterns and do not generalize to HTTP. The HTTP family instead gets its own low-level client helper, `ducknng_ncurl(...)`, plus the transport-local server helper `ducknng_start_http_server(...)`, while the existing synchronous request, RPC, and session helpers route by URL scheme on top of that adapter.
 
-## Current versus planned SQL surface
+## Current SQL surface
 
 The shipped low-level client entry point is:
 
@@ -37,7 +37,7 @@ TABLE(
 
 The request-side `headers_json` argument uses the same canonical JSON shape for symmetry. The preferred contract is an array of objects such as `[{"name":"Content-Type","value":"application/json"}]` rather than a plain JSON object, because HTTP header names may repeat and order sometimes matters operationally.
 
-The concrete planned server entry point is:
+The shipped server entry point is:
 
 ```sql
 ducknng_start_http_server(name, listen, recv_max_bytes, session_idle_ms, tls_config_id)
@@ -45,17 +45,17 @@ ducknng_start_http_server(name, listen, recv_max_bytes, session_idle_ms, tls_con
 
 The arguments intentionally stay close to `ducknng_start_server(...)`.
 
-`name` is the runtime service name. `listen` is a full HTTP or HTTPS endpoint URL such as `http://127.0.0.1:8080/_ducknng` or `https://127.0.0.1:8443/_ducknng`. For the HTTP adapter, the path component is semantically meaningful: it is the RPC mount path. `recv_max_bytes`, `session_idle_ms`, and `tls_config_id` retain their current meanings. `tls_config_id = 0::UBIGINT` means plaintext for `http://` and no explicit TLS configuration for `https://`; callers that need certificate validation or custom trust material should supply an explicit TLS handle.
+`name` is the runtime service name. `listen` is a full HTTP or HTTPS endpoint URL such as `http://127.0.0.1:8080/_ducknng` or `https://127.0.0.1:8443/_ducknng`. For the HTTP adapter, the path component is semantically meaningful: it is the RPC mount path. `recv_max_bytes`, `session_idle_ms`, and `tls_config_id` retain their current meanings. `tls_config_id = 0::UBIGINT` means plaintext for `http://`. HTTPS listeners require an explicit TLS handle because the server needs certificate material to terminate TLS correctly.
 
-The matching stop and introspection path should remain generic rather than adding HTTP-specific variants. The intended direction is that `ducknng_stop_server(name)` continues to stop a named service regardless of transport family, and `ducknng_list_servers()` becomes transport-family aware when the HTTP adapter is implemented. That keeps the public lifecycle surface compact.
+The matching stop and introspection path remains generic rather than adding HTTP-specific variants. `ducknng_stop_server(name)` stops a named service regardless of transport family, and `ducknng_list_servers()` reports the currently registered services without minting transport-specific lifecycle names. That keeps the public surface compact.
 
-`ducknng_ncurl(...)` is transport-local and not manifest-derived. It is meant for generic HTTP interactions, adapter debugging, and future interoperability helpers. It is not the only planned route to `ducknng` RPC over HTTP.
+`ducknng_ncurl(...)` is transport-local and not manifest-derived. It is meant for generic HTTP interactions, adapter debugging, and future interoperability helpers. It is not the only route to `ducknng` RPC over HTTP because the higher-level synchronous helpers already use the same carrier automatically.
 
 ## Operation-oriented routing by URL scheme
 
-Once HTTP transport is implemented, the existing request, RPC, and session helpers should remain operation-oriented and route by URL scheme instead of forcing callers to learn a second RPC client API.
+The existing synchronous request, RPC, and session helpers remain operation-oriented and route by URL scheme instead of forcing callers to learn a second RPC client API.
 
-That means URLs like `http://127.0.0.1:8080/_ducknng` and `https://127.0.0.1:8443/_ducknng` should eventually be accepted by the existing helpers:
+That means URLs like `http://127.0.0.1:8080/_ducknng` and `https://127.0.0.1:8443/_ducknng` are accepted by the existing synchronous helpers:
 
 - `ducknng_request(...)`
 - `ducknng_request_raw(...)`
@@ -70,7 +70,7 @@ That means URLs like `http://127.0.0.1:8080/_ducknng` and `https://127.0.0.1:844
 - `ducknng_cancel_query(...)`
 - later, the corresponding AIO request helpers
 
-In other words, `ducknng_ncurl(...)` is the generic HTTP primitive, while the higher-level `ducknng` RPC and session helpers keep their current names and learn to use the HTTP carrier automatically when the URL scheme is `http` or `https`.
+In other words, `ducknng_ncurl(...)` is the generic HTTP primitive, while the higher-level `ducknng` RPC and session helpers keep their current names and use the HTTP carrier automatically when the URL scheme is `http` or `https`.
 
 ## Initial HTTP carrier contract
 
@@ -118,6 +118,6 @@ The following are explicitly not part of the first HTTP adapter contract.
 
 Human-friendly convenience routes such as `GET /manifest` are deferred. They may later be added as transport conveniences that internally map onto the same registry-backed methods, but they are not part of the first binding.
 
-WebSocket, SSE, NDJSON, browser asset serving, and mixed HTTP-plus-static routing are deferred. They belong to broader web-toolkit work and should not be smuggled into the first RPC carrier implementation.
+HTTP-carrier WebSocket, SSE, NDJSON, browser asset serving, and mixed HTTP-plus-static routing are deferred. They belong to broader web-toolkit work and should not be smuggled into the first RPC carrier implementation. This does not conflict with the separate NNG `ws://` and `wss://` transport schemes, which remain part of the NNG adapter rather than this HTTP carrier.
 
 A dedicated `ducknng_ncurl_aio(...)` or persistent HTTP session handle surface is also deferred. The natural future direction is to offer them in a way that mirrors the already-landed `ducknng` AIO model and the `nanonext` ergonomic reference, but the first priority is a correct synchronous transport adapter that preserves the existing manifest, session, and Arrow contracts.

@@ -51,6 +51,13 @@ int ducknng_transport_url_parse(const char *url, ducknng_transport_url *out, cha
         parsed.family = DUCKNNG_TRANSPORT_FAMILY_NNG;
         parsed.scheme = DUCKNNG_TRANSPORT_SCHEME_TLS_TCP;
         parsed.uses_tls = 1;
+    } else if (ducknng_scheme_matches(url, scheme_len, "ws")) {
+        parsed.family = DUCKNNG_TRANSPORT_FAMILY_NNG;
+        parsed.scheme = DUCKNNG_TRANSPORT_SCHEME_WS;
+    } else if (ducknng_scheme_matches(url, scheme_len, "wss")) {
+        parsed.family = DUCKNNG_TRANSPORT_FAMILY_NNG;
+        parsed.scheme = DUCKNNG_TRANSPORT_SCHEME_WSS;
+        parsed.uses_tls = 1;
     } else if (ducknng_scheme_matches(url, scheme_len, "http")) {
         parsed.family = DUCKNNG_TRANSPORT_FAMILY_HTTP;
         parsed.scheme = DUCKNNG_TRANSPORT_SCHEME_HTTP;
@@ -88,6 +95,8 @@ const char *ducknng_transport_scheme_name(ducknng_transport_scheme scheme) {
     case DUCKNNG_TRANSPORT_SCHEME_IPC: return "ipc";
     case DUCKNNG_TRANSPORT_SCHEME_TCP: return "tcp";
     case DUCKNNG_TRANSPORT_SCHEME_TLS_TCP: return "tls+tcp";
+    case DUCKNNG_TRANSPORT_SCHEME_WS: return "ws";
+    case DUCKNNG_TRANSPORT_SCHEME_WSS: return "wss";
     case DUCKNNG_TRANSPORT_SCHEME_HTTP: return "http";
     case DUCKNNG_TRANSPORT_SCHEME_HTTPS: return "https";
     default: return "unknown";

@@ -51,7 +51,7 @@ FROM ducknng_list_tls_configs()
 statement error
 SELECT ducknng_start_server('bad_tls_cfg', 'ipc:///tmp/ducknng_bad_tls_cfg.ipc', 1, 134217728, 300000, 1)
 ----
-ducknng: TLS configuration requires a tls+tcp:// listen URL
+ducknng: TLS configuration requires a tls+tcp:// or wss:// listen URL
 
 statement error
 SELECT ducknng_start_server('bad_http_transport', 'https://127.0.0.1:45446', 1, 134217728, 300000, 0)

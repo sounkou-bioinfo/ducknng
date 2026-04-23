@@ -233,14 +233,18 @@ int ducknng_listener_validate_startup_url(const char *url, const ducknng_tls_opt
         rc = -1;
         goto done;
     }
-    if (parsed.scheme == DUCKNNG_TRANSPORT_SCHEME_TLS_TCP) {
+    if (parsed.scheme == DUCKNNG_TRANSPORT_SCHEME_TLS_TCP || parsed.scheme == DUCKNNG_TRANSPORT_SCHEME_WSS) {
         if (!tls_requested) {
-            if (errmsg) *errmsg = ducknng_strdup("ducknng: tls+tcp listeners require TLS configuration");
+            if (errmsg) {
+                *errmsg = ducknng_strdup(parsed.scheme == DUCKNNG_TRANSPORT_SCHEME_WSS
+                    ? "ducknng: wss listeners require TLS configuration"
+                    : "ducknng: tls+tcp listeners require TLS configuration");
+            }
             rc = -1;
             goto done;
         }
     } else if (tls_requested) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS configuration requires a tls+tcp:// listen URL");
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS configuration requires a tls+tcp:// or wss:// listen URL");
         rc = -1;
         goto done;
     }
@@ -268,7 +272,8 @@ char *ducknng_listener_resolve_url(nng_listener lst, const char *url) {
     if (!url) return NULL;
     if (nng_url_parse(&up, url) != 0 || !up) goto done;
     if (!up->u_port || strcmp(up->u_port, "0") != 0) goto done;
-    if (strcmp(up->u_scheme, "tcp") != 0 && strcmp(up->u_scheme, "tls+tcp") != 0) goto done;
+    if (strcmp(up->u_scheme, "tcp") != 0 && strcmp(up->u_scheme, "tls+tcp") != 0 &&
+        strcmp(up->u_scheme, "ws") != 0 && strcmp(up->u_scheme, "wss") != 0) goto done;
     if (nng_listener_get_int(lst, NNG_OPT_TCP_BOUND_PORT, &port) != 0 || port <= 0) goto done;
     resolved = ducknng_url_with_port(up, port);
 done:

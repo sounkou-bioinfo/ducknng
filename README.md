@@ -15,14 +15,18 @@ the thin-envelope + Arrow IPC direction is informed by projects such as
 Today the extension already includes:
 
 - server lifecycle control through `ducknng_start_server()`,
-  `ducknng_stop_server()`, and `ducknng_list_servers()`
+  `ducknng_start_http_server()`, `ducknng_stop_server()`, and
+  `ducknng_list_servers()`
 - generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`,
   `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
+- NNG transport schemes across `inproc://`, `ipc://`, `tcp://`,
+  `tls+tcp://`, `ws://`, and `wss://`
 - raw socket send/recv primitives plus req-style raw request/reply
   helpers
 - raw aio helpers for socket send/recv, req-style request/reply futures,
   and the first raw unary RPC futures
-- a low-level HTTP/HTTPS client helper for transport-adapter work
+- a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS routing
+  for the synchronous request/RPC/session helper family
 - explicit query-session helpers and TLS config handles
 
 `ducknng` is also intentionally low-level. Long-lived runtime handles
@@ -32,24 +36,26 @@ close query sessions explicitly rather than expecting a nanonext-style
 GC/finalizer layer.
 
 Transport is selected from the URL scheme. Today the NNG-facing
-operations work across `inproc://`, `ipc://`, `tcp://`, and
-`tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level
-HTTP/HTTPS client slice. The generic socket layer is explicitly modeled
-on `nanonext`: open a protocol-specific socket, dial or listen it, and
-then use raw send/recv or aio helpers as appropriate. The higher-level
-RPC helpers wrap manifest-declared request/reply methods, and the
-session helpers wrap the fixed `query_open` / `fetch` / `close` /
-`cancel` lifecycle over repeated request/reply exchanges rather than
-acting as a generic abstraction over all socket patterns. The current
-async RPC wrappers are also layered this way: they launch one ordinary
+operations work across `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`,
+`ws://`, and `wss://`, while `ducknng_start_http_server(...)` and
+`ducknng_ncurl(...)` provide the separate HTTP/HTTPS carrier layer. The
+generic socket layer is explicitly modeled on `nanonext`: open a
+protocol-specific socket, dial or listen it, and then use raw send/recv
+or aio helpers as appropriate. The higher-level RPC helpers wrap
+manifest-declared request/reply methods, and the session helpers wrap
+the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over
+repeated request/reply exchanges rather than acting as a generic
+abstraction over all socket patterns. The synchronous request, RPC, and
+session helpers now route over `http://` and `https://` automatically,
+but the generic socket API stays NNG-only. The current async RPC
+wrappers are also layered this way: they launch one ordinary
 request/reply method call asynchronously and later return the collected
 raw reply frame for decoding, rather than introducing a second
 background-job protocol. The current server is still unauthenticated, so
 the session family is implemented and usable but should still be treated
 as experimental until session ownership is bound to a concrete
-multi-client identity model. HTTP/HTTPS are the only current web-carrier
-focus; `ws://` and `wss://` are intentionally deferred and are not
-enabled in the current build.
+multi-client identity model. WebSocket here means NNG’s `ws://` and
+`wss://` transports, not a second HTTP-specific RPC surface.
 
 ## Getting started
 
@@ -148,10 +154,11 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Service Control
 
-| name                   | kind   | arguments                                                                | returns   | description                         |
-|------------------------|--------|--------------------------------------------------------------------------|-----------|-------------------------------------|
-| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng REP listener. |
-| `ducknng_stop_server`  | scalar | `name`                                                                   | `BOOLEAN` | Stop a named ducknng service.       |
+| name                        | kind   | arguments                                                                | returns   | description                                        |
+|-----------------------------|--------|--------------------------------------------------------------------------|-----------|----------------------------------------------------|
+| `ducknng_start_server`      | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng NNG listener.                |
+| `ducknng_start_http_server` | scalar | `name, listen, recv_max_bytes, session_idle_ms, tls_config_id`           | `BOOLEAN` | Start a named ducknng HTTP or HTTPS frame carrier. |
+| `ducknng_stop_server`       | scalar | `name`                                                                   | `BOOLEAN` | Stop a named ducknng service.                      |
 
 ## Introspection
 
@@ -173,7 +180,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | name                         | kind   | arguments                                       | returns                                                                                                                                                         | description                                                                                         |
 |------------------------------|--------|-------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
 | `ducknng_open_socket`        | scalar | `protocol`                                      | `UBIGINT`                                                                                                                                                       | Open a client socket handle for a supported NNG protocol.                                           |
-| `ducknng_dial_socket`        | scalar | `socket_id, url, timeout_ms`                    | `BOOLEAN`                                                                                                                                                       | Dial a URL using an opened socket handle.                                                           |
+| `ducknng_dial_socket`        | scalar | `socket_id, url, timeout_ms, tls_config_id`     | `BOOLEAN`                                                                                                                                                       | Dial a URL using an opened socket handle.                                                           |
 | `ducknng_listen_socket`      | scalar | `socket_id, url, recv_max_bytes, tls_config_id` | `BOOLEAN`                                                                                                                                                       | Bind a socket handle to a listen URL and start its NNG listener.                                    |
 | `ducknng_close_socket`       | scalar | `socket_id`                                     | `BOOLEAN`                                                                                                                                                       | Close a client socket handle.                                                                       |
 | `ducknng_send_socket_raw`    | scalar | `socket_id, frame, timeout_ms`                  | `BOOLEAN`                                                                                                                                                       | Send one raw frame through an active socket handle.                                                 |
@@ -351,7 +358,7 @@ SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELEC
 
 -- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');
-SELECT ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000);
+SELECT ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000, 0::UBIGINT);
 SELECT * FROM ducknng_list_sockets();
 
 -- Primitive transport layer: send the built-in manifest request frame.
@@ -474,12 +481,12 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├────────────────────────────┤
     │                          1 │
     └────────────────────────────┘
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000) │
-    │                                boolean                                 │
-    ├────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                   │
-    └────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000, CAST(0 AS "UBIGINT")) │
+    │                                           boolean                                            │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                         │
+    └──────────────────────────────────────────────────────────────────────────────────────────────┘
     ┌───────────┬──────────┬────────────────────────────────────────┬─────────┬───────────┬───────────┬─────────────────┬─────────────────┐
     │ socket_id │ protocol │                  url                   │  open   │ connected │ listening │ send_timeout_ms │ recv_timeout_ms │
     │  uint64   │ varchar  │                varchar                 │ boolean │  boolean  │  boolean  │      int32      │      int32      │
@@ -543,9 +550,10 @@ The core server definition is shown below because the transport helper
 and its carrier behavior are part of the example rather than hidden
 setup. The hidden setup only launches the script in the background and
 manages the temporary PID, log, and CA files needed while rendering.
-`ducknng_ncurl(...)` is the low-level HTTP/HTTPS transport primitive;
-the higher-level request, RPC, and session helpers have not been
-auto-routed over `http://` and `https://` yet.
+`ducknng_ncurl(...)` remains the low-level HTTP/HTTPS transport
+primitive even though the higher-level synchronous request, RPC, and
+session helpers now auto-route over `http://` and `https://` when the
+URL scheme selects that carrier.
 
 ``` r
 library(nanonext)
@@ -652,6 +660,70 @@ SELECT ducknng_drop_tls_config(1);
     │ true                       │
     └────────────────────────────┘
 
+### Start `ducknng` on `http://` and use the routed helpers directly
+
+`ducknng_start_http_server(...)` mounts the existing framed RPC surface
+at the exact path encoded in the listen URL. The higher-level
+synchronous request, RPC, and session helpers use the same names they
+already use for NNG URLs and switch carriers automatically from the
+scheme.
+
+``` sql
+LOAD 'build/release/ducknng.duckdb_extension';
+SELECT ducknng_start_http_server(
+  'http_demo',
+  'http://127.0.0.1:18444/_ducknng',
+  134217728,
+  300000,
+  0::UBIGINT
+);
+
+SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
+FROM ducknng_get_rpc_manifest('http://127.0.0.1:18444/_ducknng', 0::UBIGINT);
+
+SET VARIABLE http_demo_frame = (
+  SELECT body
+  FROM ducknng_ncurl(
+    'http://127.0.0.1:18444/_ducknng',
+    'POST',
+    '[{"name":"Content-Type","value":"application/vnd.ducknng.frame"}]',
+    from_hex('01000000000000000000000000000000000000000000'),
+    2000,
+    0::UBIGINT
+  )
+);
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(getvariable('http_demo_frame'));
+
+SELECT ducknng_stop_server('http_demo');
+```
+
+    ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_http_server('http_demo', 'http://127.0.0.1:18444/_ducknng', 134217728, 300000, CAST(0 AS "UBIGINT")) │
+    │                                                      boolean                                                       │
+    ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                               │
+    └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬──────────────┐
+    │   ok    │ has_manifest │
+    │ boolean │   boolean    │
+    ├─────────┼──────────────┤
+    │ true    │ true         │
+    └─────────┴──────────────┘
+    ┌─────────┬───────────┬──────────┐
+    │   ok    │ type_name │   name   │
+    │ boolean │  varchar  │ varchar  │
+    ├─────────┼───────────┼──────────┤
+    │ true    │ result    │ manifest │
+    └─────────┴───────────┴──────────┘
+    ┌──────────────────────────────────┐
+    │ ducknng_stop_server('http_demo') │
+    │             boolean              │
+    ├──────────────────────────────────┤
+    │ true                             │
+    └──────────────────────────────────┘
+
 ### Launch raw socket send/recv airos and inspect send status explicitly
 
 ``` sql
@@ -660,7 +732,7 @@ LOAD 'build/release/ducknng.duckdb_extension';
 SELECT ducknng_open_socket('pair');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('pair');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000, 0::UBIGINT);
 
 -- Start one async receive and one async send.
 CREATE TEMP TABLE pair_recv AS
@@ -708,12 +780,12 @@ SELECT ducknng_close_socket(1);
     ├─────────────────────────────┤
     │                           2 │
     └─────────────────────────────┘
-    ┌──────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000) │
-    │                                 boolean                                  │
-    ├──────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                     │
-    └──────────────────────────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000, CAST(0 AS "UBIGINT")) │
+    │                                            boolean                                             │
+    ├────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                           │
+    └────────────────────────────────────────────────────────────────────────────────────────────────┘
     ┌────────┬─────────┬──────────┐
     │ aio_id │   ok    │ no_frame │
     │ uint64 │ boolean │ boolean  │
@@ -765,7 +837,7 @@ LOAD 'build/release/ducknng.duckdb_extension';
 SELECT ducknng_open_socket('pull');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('push');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000, 0::UBIGINT);
 
 -- Receive asynchronously on pull so the send side can return immediately.
 CREATE TEMP TABLE pushpull_recv AS
@@ -800,12 +872,12 @@ SELECT ducknng_close_socket(1);
     ├─────────────────────────────┤
     │                           2 │
     └─────────────────────────────┘
-    ┌──────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000) │
-    │                                 boolean                                  │
-    ├──────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                     │
-    └──────────────────────────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000, CAST(0 AS "UBIGINT")) │
+    │                                            boolean                                             │
+    ├────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                           │
+    └────────────────────────────────────────────────────────────────────────────────────────────────┘
     ┌─────────┐
     │  sent   │
     │ boolean │
@@ -846,7 +918,7 @@ SELECT ducknng_open_socket('pub');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('sub');
 SELECT ducknng_subscribe_socket(2::UBIGINT, from_hex(''));
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000, 0::UBIGINT);
 
 CREATE TEMP TABLE pubsub_recv AS
 SELECT ducknng_recv_socket_raw_aio(2::UBIGINT, 1000) AS recv_aio;
@@ -886,12 +958,12 @@ SELECT ducknng_close_socket(1);
     ├──────────────────────────────────────────────────────────────┤
     │ true                                                         │
     └──────────────────────────────────────────────────────────────┘
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000) │
-    │                                boolean                                 │
-    ├────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                   │
-    └────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000, CAST(0 AS "UBIGINT")) │
+    │                                           boolean                                            │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                         │
+    └──────────────────────────────────────────────────────────────────────────────────────────────┘
     ┌─────────┐
     │  sent   │
     │ boolean │
@@ -931,7 +1003,7 @@ LOAD 'build/release/ducknng.duckdb_extension';
 SELECT ducknng_open_socket('respondent');
 SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 134217728, 0::UBIGINT);
 SELECT ducknng_open_socket('surveyor');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000);
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000, 0::UBIGINT);
 
 -- Receive the survey on the respondent side first.
 CREATE TEMP TABLE respondent_recv AS
@@ -977,12 +1049,12 @@ SELECT ducknng_close_socket(1);
     ├─────────────────────────────────┤
     │                               2 │
     └─────────────────────────────────┘
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000) │
-    │                                boolean                                 │
-    ├────────────────────────────────────────────────────────────────────────┤
-    │ true                                                                   │
-    └────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000, CAST(0 AS "UBIGINT")) │
+    │                                           boolean                                            │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                         │
+    └──────────────────────────────────────────────────────────────────────────────────────────────┘
     ┌─────────────┐
     │ sent_survey │
     │   boolean   │
@@ -1470,6 +1542,112 @@ SELECT ducknng_drop_tls_config(1);
     │ true                       │
     └────────────────────────────┘
 
+### `ws://` and `wss://` as NNG transports
+
+`ws://` and `wss://` are NNG transport schemes, not the HTTP carrier
+described in `docs/http.md`. They use `ducknng_start_server(...)`, the
+same framed manifest/RPC/session helpers, and the same TLS handle model
+as the other NNG transports.
+
+``` sql
+LOAD 'build/release/ducknng.duckdb_extension';
+-- Plain WebSocket transport through the NNG service layer.
+SELECT ducknng_start_server(
+  'ws_demo',
+  'ws://127.0.0.1:45455/_ducknng',
+  1,
+  134217728,
+  300000,
+  0::UBIGINT
+);
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'ws://127.0.0.1:45455/_ducknng',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    0::UBIGINT
+  )
+);
+
+SELECT ducknng_stop_server('ws_demo');
+
+-- Secure WebSocket transport uses the same reusable TLS handle model.
+SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 0);
+
+SELECT ducknng_start_server(
+  'wss_demo',
+  'wss://127.0.0.1:45456/_ducknng',
+  1,
+  134217728,
+  300000,
+  1::UBIGINT
+);
+
+SELECT ok, type_name, name
+FROM ducknng_decode_frame(
+  ducknng_request_raw(
+    'wss://127.0.0.1:45456/_ducknng',
+    from_hex('01000000000000000000000000000000000000000000'),
+    1000,
+    1::UBIGINT
+  )
+);
+
+SELECT ducknng_stop_server('wss_demo');
+SELECT ducknng_drop_tls_config(1);
+```
+
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_server('ws_demo', 'ws://127.0.0.1:45455/_ducknng', 1, 134217728, 300000, CAST(0 AS "UBIGINT")) │
+    │                                                   boolean                                                    │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                         │
+    └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬───────────┬──────────┐
+    │   ok    │ type_name │   name   │
+    │ boolean │  varchar  │ varchar  │
+    ├─────────┼───────────┼──────────┤
+    │ true    │ result    │ manifest │
+    └─────────┴───────────┴──────────┘
+    ┌────────────────────────────────┐
+    │ ducknng_stop_server('ws_demo') │
+    │            boolean             │
+    ├────────────────────────────────┤
+    │ true                           │
+    └────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────┐
+    │ ducknng_self_signed_tls_config('127.0.0.1', 365, 0) │
+    │                       uint64                        │
+    ├─────────────────────────────────────────────────────┤
+    │                                                   1 │
+    └─────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_start_server('wss_demo', 'wss://127.0.0.1:45456/_ducknng', 1, 134217728, 300000, CAST(1 AS "UBIGINT")) │
+    │                                                    boolean                                                     │
+    ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                           │
+    └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────┬───────────┬──────────┐
+    │   ok    │ type_name │   name   │
+    │ boolean │  varchar  │ varchar  │
+    ├─────────┼───────────┼──────────┤
+    │ true    │ result    │ manifest │
+    └─────────┴───────────┴──────────┘
+    ┌─────────────────────────────────┐
+    │ ducknng_stop_server('wss_demo') │
+    │             boolean             │
+    ├─────────────────────────────────┤
+    │ true                            │
+    └─────────────────────────────────┘
+    ┌────────────────────────────┐
+    │ ducknng_drop_tls_config(1) │
+    │          boolean           │
+    ├────────────────────────────┤
+    │ true                       │
+    └────────────────────────────┘
+
 ### REQ/REP `EXEC` via `nanonext` as an interop example
 
 This example is easier to follow as a short sequence: define the frame
@@ -1658,7 +1836,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1eb23657d3b691.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_20880f3b6be0a1.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

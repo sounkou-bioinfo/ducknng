@@ -1,6 +1,7 @@
 #include "ducknng_service.h"
 #include "ducknng_registry.h"
 #include "ducknng_runtime.h"
+#include "ducknng_transport.h"
 #include "ducknng_util.h"
 #include <stdlib.h>
 #include <string.h>
@@ -87,6 +88,11 @@ static void ducknng_rep_aio_cb(void *arg) {
         return;
     }
     if (rv != 0) {
+        nng_msg *pending_msg = nng_aio_get_msg(rc->aio);
+        if (pending_msg) {
+            nng_msg_free(pending_msg);
+            nng_aio_set_msg(rc->aio, NULL);
+        }
         rc->last_nng_err = rv;
         rc->event = DUCKNNG_EVT_NNG_ERROR;
         ducknng_cond_signal(&rc->cv);
@@ -121,6 +127,10 @@ static void ducknng_rep_ctx_teardown(ducknng_rep_ctx *rc) {
     }
     if (rc->aio) {
         ducknng_aio_wait(rc->aio);
+        if (nng_aio_get_msg(rc->aio)) {
+            nng_msg_free(nng_aio_get_msg(rc->aio));
+            nng_aio_set_msg(rc->aio, NULL);
+        }
     }
     if (rc->request_msg) {
         nng_msg_free(rc->request_msg);
@@ -242,6 +252,10 @@ void ducknng_service_destroy(ducknng_service *svc) {
         }
         duckdb_free(svc->sessions);
     }
+    if (svc->http_state) {
+        ducknng_http_server_stop(svc->http_state);
+        svc->http_state = NULL;
+    }
     if (svc->ctxs) duckdb_free(svc->ctxs);
     if (svc->mu_initialized) {
         ducknng_mutex_destroy(&svc->mu);
@@ -254,6 +268,8 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
     int rv;
     int i;
     ducknng_tls_opts tls_opts;
+    ducknng_transport_url transport;
+    char *parse_err = NULL;
     if (!svc) return -1;
 
     ducknng_tls_opts_init(&tls_opts);
@@ -275,6 +291,25 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: service is already running");
         return -1;
     }
+    if (ducknng_transport_url_parse(svc->listen_url, &transport, &parse_err) != 0) {
+        ducknng_tls_opts_reset(&tls_opts);
+        if (errmsg) *errmsg = parse_err;
+        else if (parse_err) duckdb_free(parse_err);
+        return -1;
+    }
+    svc->shutting_down = 0;
+
+    if (ducknng_transport_url_is_http(&transport)) {
+        char *resolved_url = NULL;
+        rv = ducknng_http_server_start(svc, &svc->http_state, &resolved_url, errmsg);
+        ducknng_tls_opts_reset(&tls_opts);
+        if (rv != 0) return -1;
+        if (svc->resolved_listen_url) duckdb_free(svc->resolved_listen_url);
+        svc->resolved_listen_url = resolved_url;
+        svc->running = 1;
+        return 0;
+    }
+
     if (ducknng_listener_validate_startup_url(svc->listen_url, &tls_opts, errmsg) != 0) {
         ducknng_tls_opts_reset(&tls_opts);
         return -1;
@@ -366,6 +401,10 @@ int ducknng_service_stop(ducknng_service *svc, char **errmsg) {
     if (svc->rep_sock.id != 0) {
         ducknng_socket_close(svc->rep_sock);
         memset(&svc->rep_sock, 0, sizeof(svc->rep_sock));
+    }
+    if (svc->http_state) {
+        ducknng_http_server_stop(svc->http_state);
+        svc->http_state = NULL;
     }
     if (svc->ctxs) {
         for (i = 0; i < svc->ncontexts; i++) {

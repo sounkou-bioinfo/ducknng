@@ -19,7 +19,7 @@ SELECT ducknng_open_socket('pair')
 2
 
 query I
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_socket_protocols_pair.ipc', 1000)
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_socket_protocols_pair.ipc', 1000, 0::UBIGINT)
 ----
 1
 
@@ -111,7 +111,7 @@ SELECT ducknng_open_socket('push')
 4
 
 query I
-SELECT ducknng_dial_socket(4, 'ipc:///tmp/ducknng_socket_protocols_pushpull.ipc', 1000)
+SELECT ducknng_dial_socket(4, 'ipc:///tmp/ducknng_socket_protocols_pushpull.ipc', 1000, 0::UBIGINT)
 ----
 1
 
@@ -169,7 +169,7 @@ SELECT ducknng_subscribe_socket(6::UBIGINT, from_hex(''))
 1
 
 query I
-SELECT ducknng_dial_socket(6, 'ipc:///tmp/ducknng_socket_protocols_pubsub.ipc', 1000)
+SELECT ducknng_dial_socket(6, 'ipc:///tmp/ducknng_socket_protocols_pubsub.ipc', 1000, 0::UBIGINT)
 ----
 1
 
@@ -227,7 +227,7 @@ SELECT ducknng_open_socket('surveyor')
 8
 
 query I
-SELECT ducknng_dial_socket(8, 'ipc:///tmp/ducknng_socket_protocols_survey.ipc', 1000)
+SELECT ducknng_dial_socket(8, 'ipc:///tmp/ducknng_socket_protocols_survey.ipc', 1000, 0::UBIGINT)
 ----
 1
 
@@ -323,7 +323,7 @@ SELECT ducknng_open_socket('req')
 15
 
 statement error
-SELECT ducknng_dial_socket(15, 'https://127.0.0.1:45447', 1000)
+SELECT ducknng_dial_socket(15, 'https://127.0.0.1:45447', 1000, 0::UBIGINT)
 ----
 ducknng: http:// and https:// URLs are reserved for future HTTP transport adapters
 

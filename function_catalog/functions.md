@@ -6,7 +6,8 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng REP listener. |
+| `ducknng_start_server` | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng NNG listener. |
+| `ducknng_start_http_server` | scalar | `name, listen, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng HTTP or HTTPS frame carrier. |
 | `ducknng_stop_server` | scalar | `name` | `BOOLEAN` | Stop a named ducknng service. |
 
 ## Introspection
@@ -29,7 +30,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
 | `ducknng_open_socket` | scalar | `protocol` | `UBIGINT` | Open a client socket handle for a supported NNG protocol. |
-| `ducknng_dial_socket` | scalar | `socket_id, url, timeout_ms` | `BOOLEAN` | Dial a URL using an opened socket handle. |
+| `ducknng_dial_socket` | scalar | `socket_id, url, timeout_ms, tls_config_id` | `BOOLEAN` | Dial a URL using an opened socket handle. |
 | `ducknng_listen_socket` | scalar | `socket_id, url, recv_max_bytes, tls_config_id` | `BOOLEAN` | Bind a socket handle to a listen URL and start its NNG listener. |
 | `ducknng_close_socket` | scalar | `socket_id` | `BOOLEAN` | Close a client socket handle. |
 | `ducknng_send_socket_raw` | scalar | `socket_id, frame, timeout_ms` | `BOOLEAN` | Send one raw frame through an active socket handle. |

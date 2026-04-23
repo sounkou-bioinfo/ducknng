@@ -114,11 +114,13 @@ static int ducknng_method_query_open_handler(ducknng_service *svc,
     }
     ducknng_mutex_lock(&svc->mu);
     if (duckdb_query(svc->rt->init_con, open_req.sql, &result) == DuckDBError) {
-        const char *detail = duckdb_result_error(&result);
+        char *detail = ducknng_strdup(duckdb_result_error(&result));
         duckdb_destroy_result(&result);
         ducknng_mutex_unlock(&svc->mu);
         ducknng_query_open_request_destroy(&open_req);
-        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR, detail && detail[0] ? detail : "ducknng: query_open failed");
+        ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
+            detail && detail[0] ? detail : "ducknng: query_open failed");
+        if (detail) duckdb_free(detail);
         return -1;
     }
     if (duckdb_result_return_type(result) != DUCKDB_RESULT_TYPE_QUERY_RESULT) {
@@ -302,12 +304,13 @@ static int ducknng_method_exec_handler(ducknng_service *svc,
     } else {
         ducknng_mutex_lock(&svc->mu);
         if (duckdb_query(svc->rt->init_con, exec_req.sql, &result) == DuckDBError) {
-            const char *exec_err = duckdb_result_error(&result);
+            char *exec_err = ducknng_strdup(duckdb_result_error(&result));
             duckdb_destroy_result(&result);
             ducknng_mutex_unlock(&svc->mu);
             ducknng_exec_request_destroy(&exec_req);
             ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_SQL_ERROR,
                 exec_err && exec_err[0] ? exec_err : "ducknng: exec failed");
+            if (exec_err) duckdb_free(exec_err);
             return -1;
         }
 

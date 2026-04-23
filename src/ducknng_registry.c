@@ -244,8 +244,10 @@ static int append_text(char **buf, size_t *len, size_t *cap, const char *text) {
     }
     *cap = *cap ? *cap * 2 : 1024;
     while (*cap < want) *cap *= 2;
-    next = (char *)realloc(*buf, *cap);
+    next = (char *)duckdb_malloc(*cap);
     if (!next) return 0;
+    if (*buf && *len) memcpy(next, *buf, *len);
+    if (*buf) duckdb_free(*buf);
     *buf = next;
     memcpy(*buf + *len, text, add + 1);
     *len += add;
@@ -359,7 +361,7 @@ char *ducknng_method_registry_manifest_json(const ducknng_method_registry *regis
     return buf;
 
 oom:
-    if (buf) free(buf);
+    if (buf) duckdb_free(buf);
     if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory generating manifest json");
     return NULL;
 }

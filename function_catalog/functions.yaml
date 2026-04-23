@@ -8,13 +8,30 @@
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Start a named ducknng REP listener.",
+      "description": "Start a named ducknng NNG listener.",
       "notes": [
-        "Transport is selected by the listen URL scheme. Pass tls_config_id = 0 for plaintext URLs such as inproc://, ipc://, or tcp://.",
-        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for tls+tcp:// listeners."
+        "Transport is selected by the NNG listen URL scheme. Supported listener schemes now include inproc://, ipc://, tcp://, tls+tcp://, ws://, and wss://.",
+        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for tls+tcp:// and wss:// listeners."
       ],
       "examples": [
         "SELECT ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, 0);"
+      ]
+    },
+    {
+      "name": "ducknng_start_http_server",
+      "kind": "scalar",
+      "category": "Service Control",
+      "signature": "ducknng_start_http_server(name, listen, recv_max_bytes, session_idle_ms, tls_config_id)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Start a named ducknng HTTP or HTTPS frame carrier.",
+      "notes": [
+        "listen must be an http:// or https:// URL whose path becomes the mounted RPC endpoint.",
+        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for https:// listeners."
+      ],
+      "examples": [
+        "SELECT ducknng_start_http_server('http0', 'http://127.0.0.1:8080/_ducknng', 134217728, 300000, 0::UBIGINT);"
       ]
     },
     {
@@ -133,17 +150,18 @@
       "name": "ducknng_dial_socket",
       "kind": "scalar",
       "category": "Primitive Transport",
-      "signature": "ducknng_dial_socket(socket_id, url, timeout_ms)",
+      "signature": "ducknng_dial_socket(socket_id, url, timeout_ms, tls_config_id)",
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
       "description": "Dial a URL using an opened socket handle.",
       "notes": [
-        "Transport is still selected by the URL scheme.",
+        "Transport is selected by the URL scheme.",
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp:// and wss:// dial targets.",
         "This is the generic dial verb for the supported socket protocols."
       ],
       "examples": [
-        "SELECT ducknng_dial_socket(ducknng_open_socket('req'), 'ipc:///tmp/ducknng_sql0.ipc', 1000);"
+        "SELECT ducknng_dial_socket(ducknng_open_socket('req'), 'ipc:///tmp/ducknng_sql0.ipc', 1000, 0::UBIGINT);"
       ]
     },
     {
@@ -156,7 +174,7 @@
       "implemented": true,
       "description": "Bind a socket handle to a listen URL and start its NNG listener.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext URLs or a registered TLS handle for tls+tcp:// listeners.",
+        "Pass tls_config_id = 0::UBIGINT for plaintext URLs or a registered TLS handle for tls+tcp:// and wss:// listeners.",
         "Use this for the generic socket surface rather than the RPC service lifecycle surface."
       ],
       "examples": [
@@ -352,7 +370,7 @@
       "implemented": true,
       "description": "Perform a one-shot raw request and return a structured result row.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "This is the preferred low-level primitive for one-shot req/rep from SQL.",
         "Use ducknng_request_raw() only when a bare BLOB return is specifically needed."
       ],
@@ -601,7 +619,7 @@
       "implemented": true,
       "description": "Request the RPC manifest and return a structured result row.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "Built on top of the primitive request layer and ducknng RPC envelope."
       ],
       "examples": [
@@ -618,7 +636,7 @@
       "implemented": true,
       "description": "Request the RPC manifest and return the raw reply frame as BLOB.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "This is a raw helper: it returns the full reply frame and yields NULL on local request failure.",
         "Use ducknng_decode_frame() to inspect the envelope and payload from SQL."
       ],
@@ -636,7 +654,7 @@
       "implemented": true,
       "description": "Execute a metadata-oriented RPC call and return a structured result row.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "These helpers require the remote server to have explicitly registered the exec method."
       ],
       "examples": [
@@ -653,7 +671,7 @@
       "implemented": true,
       "description": "Execute the exec RPC and return the raw reply frame as BLOB.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "This is a raw helper: it returns the full reply frame and yields NULL on local request failure.",
         "Use ducknng_decode_frame() or a payload-specific decoder after inspection.",
         "These helpers require the remote server to have explicitly registered the exec method."
@@ -672,7 +690,7 @@
       "implemented": true,
       "description": "Execute a row-returning RPC query and expose the unary Arrow IPC row reply as a DuckDB table.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "This is the current unary row path, not the future session streaming path.",
         "These helpers require the remote server to have explicitly registered the exec method."
       ],
@@ -690,7 +708,7 @@
       "implemented": true,
       "description": "Open a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "batch_rows and batch_bytes are optional fetch-hint fields carried in the query_open payload.",
         "This surface is still development scaffolding until session ownership is bound to a real client identity model."
       ],
@@ -708,7 +726,7 @@
       "implemented": true,
       "description": "Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "When a row batch is returned, payload contains one Arrow IPC batch and control_json is NULL.",
         "When the session is exhausted, payload is NULL, state is usually exhausted, and end_of_stream is TRUE."
       ],
@@ -726,7 +744,7 @@
       "implemented": true,
       "description": "Close a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "This is the normal explicit cleanup path after fetch reaches end-of-stream."
       ],
       "examples": [
@@ -743,7 +761,7 @@
       "implemented": true,
       "description": "Request cancellation for a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "This is best-effort cancellation and does not replace the normal explicit close path unless the server reports that the session is already closed.",
         "This is still part of the development session surface."
       ],
@@ -761,7 +779,7 @@
       "implemented": true,
       "description": "Perform a one-shot raw request and return the raw reply frame bytes.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "Returns NULL on local request failure instead of throwing.",
         "Use ducknng_decode_frame() to inspect the envelope and textual payload from SQL."
       ],

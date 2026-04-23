@@ -4,6 +4,12 @@
 
 ### Latest additions
 
+- Implemented `ducknng_start_http_server(...)` as the first real HTTP/HTTPS server slice over the existing registry-backed framed RPC surface, including adapter-level `405` / `415` / `400` handling and `200 OK` frame replies for protocol-level success and failure.
+- Taught the synchronous request, RPC, and session helper family to route by URL scheme so `ducknng_request(...)`, `ducknng_request_raw(...)`, `ducknng_get_rpc_manifest(...)`, `ducknng_get_rpc_manifest_raw(...)`, `ducknng_run_rpc(...)`, `ducknng_run_rpc_raw(...)`, `ducknng_query_rpc(...)`, `ducknng_open_query(...)`, `ducknng_fetch_query(...)`, `ducknng_close_query(...)`, and `ducknng_cancel_query(...)` now work over `http://` and `https://` without minting a second RPC surface.
+- Enabled the vendored NNG `ws://` and `wss://` transports and documented them as part of the NNG transport family rather than as part of the HTTP carrier layer.
+- Extended `ducknng_dial_socket(...)` to take `tls_config_id` and applied the same reusable TLS-handle model to generic socket dialing, including `wss://`.
+- Changed synchronous `ducknng_request_socket(...)` to use the already-connected req socket handle directly instead of silently re-dialing from the stored URL, so socket-handle dialing and TLS settings actually carry through to the request path.
+- Added sqllogictest coverage for the new HTTP server/routed-helper surface and for `ws://` / `wss://` transport use through both service and socket-handle paths.
 - Added the first raw unary RPC aio wrappers: `ducknng_get_rpc_manifest_raw_aio(...)` and `ducknng_run_rpc_raw_aio(...)`.
 - Added a documented local NNG patch under `patches/nng/` so the vendored Windows clock fallback for DuckDB CI's Rtools42 MinGW environment is explicit rather than an undocumented edit inside `third_party/nng/`.
 - Fixed the next Windows MinGW portability blocker after the vendored NNG gate: self-signed TLS material generation now uses portable temp-directory helpers instead of calling `mkdtemp()` directly from `ducknng_sql_api.c`.
@@ -19,7 +25,7 @@
 - Cleaned README wording so the lifetime section states the contract directly without clunky meta-labels, clarified that the HTTPS hello example is a `ducknng_ncurl()` call against a local `nanonext` HTTPS server, made that README HTTPS setup more robust by polling the local server before the SQL example runs instead of relying on a fixed one-second sleep, and reformatted the visible README code so long lines do not force unnecessary horizontal scrolling.
 - Removed the stale `docs/design_review.md` snapshot instead of leaving it in the repo as if it were current documentation, and updated `docs/design_review_checklist.md` to stand on its own.
 - Clarified the README and protocol docs so the layering is explicit: the generic socket layer is the transport substrate, higher-level RPC helpers wrap manifest-declared request/reply methods, session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle, aio launch `timeout_ms` is distinct from later `ducknng_aio_collect(..., wait_ms)` polling, and the current server is explicitly documented as unauthenticated.
-- Clarified in the README and transport docs that `ws://` and `wss://` are intentionally deferred and are not enabled in the current build.
+- Reframed the README and transport docs so `ws://` and `wss://` are documented as enabled NNG transports, while browser-style or HTTP-carrier WebSocket work remains explicitly deferred.
 - Switched the README HTTP client illustration to a visible local `nanonext` HTTPS server so the example shows the real carrier and TLS story rather than hiding it behind generic setup prose.
 - Implemented `ducknng_ncurl(...)` as the first low-level HTTP/HTTPS client slice, returning in-band `ok`, `status`, `error`, `headers_json`, `body`, and `body_text` columns.
 - Added `make http_smoke` and a local Python-stdlib smoke harness to validate real HTTP GET and POST roundtrips without depending on the public internet.
@@ -69,8 +75,7 @@
 
 ## Planned next steps
 
-- Implement `ducknng_start_http_server(...)` and route existing request/RPC/session helpers over `http://` and `https://` without creating a second RPC surface.
-- Extend the async RPC wrapper family beyond the first raw unary slice where that can be done honestly on top of the existing aio substrate.
-- Add a coherent TLS-config story for generic client socket dialing so `tls+tcp://` is as complete there as it is for listeners and one-shot request helpers.
+- Extend the async RPC wrapper family beyond the first raw unary slice only where that can be done honestly on top of the existing aio substrate, and decide whether any HTTP aio helpers belong in the sealed public story.
 - Continue broader Arrow type coverage and add a clean SQL-side decoder path for fetched Arrow payloads if richer session ergonomics are desired.
 - Bind session ownership to a concrete multi-client identity model so the session family can stop being documented as experimental.
+- Keep tightening lifetime and concurrency behavior around runtime-owned sockets, sessions, and aio handles now that the transport matrix is broader.

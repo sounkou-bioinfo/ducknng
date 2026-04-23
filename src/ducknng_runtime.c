@@ -53,12 +53,13 @@ static void reg_remove(duckdb_database *db) {
 }
 
 int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info info,
-    struct duckdb_extension_access *access, ducknng_runtime **out_rt) {
+    struct duckdb_extension_access *access, ducknng_runtime **out_rt, int *out_created) {
     duckdb_database *db = NULL;
     ducknng_runtime *rt = NULL;
     long idx;
     char *errmsg = NULL;
     if (!access || !info || !out_rt) return 0;
+    if (out_created) *out_created = 0;
     db = access->get_database(info);
     if (!db || !*db) {
         access->set_error(info, "ducknng: missing database handle");
@@ -106,6 +107,7 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
     g_entries[g_entry_count].rt = rt;
     g_entry_count++;
     *out_rt = rt;
+    if (out_created) *out_created = 1;
     reg_unlock();
     return 1;
 }
@@ -116,6 +118,10 @@ void ducknng_client_aio_destroy(ducknng_client_aio *aio) {
         if (aio->state == DUCKNNG_CLIENT_AIO_PENDING) {
             ducknng_aio_cancel(aio->aio);
             ducknng_aio_wait(aio->aio);
+        }
+        if (ducknng_aio_get_msg(aio->aio)) {
+            nng_msg_free(ducknng_aio_get_msg(aio->aio));
+            ducknng_aio_set_msg(aio->aio, NULL);
         }
         ducknng_aio_free(aio->aio);
     }

@@ -1,4 +1,5 @@
 #pragma once
+#include "ducknng_http_compat.h"
 #include "ducknng_nng_compat.h"
 #include "ducknng_session.h"
 #include "ducknng_thread.h"
@@ -39,6 +40,7 @@ struct ducknng_service {
     nng_socket rep_sock;
     nng_listener listener;
     ducknng_rep_ctx *ctxs;
+    ducknng_http_server_state *http_state;
     int ncontexts;
     ducknng_mutex mu;
     int mu_initialized;
