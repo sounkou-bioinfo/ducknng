@@ -604,7 +604,7 @@ padding-top: 0px;
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
 <h1 id="ducknng">ducknng</h1>
-<p><code>ducknng</code> is a pure C DuckDB extension for DuckDB + <a href="https://nng.nanomsg.org/">NNG</a> REQ/REP interop.</p>
+<p><code>ducknng</code> is a pure C DuckDB extension for DuckDB + <a href="https://nng.nanomsg.org/">NNG</a> interop.</p>
 <p>It gives DuckDB SQL a <code>nanonext</code>-like messaging surface
 and uses a thin, versioned RPC envelope with Arrow IPC payloads. The SQL
 ergonomics are inspired by <a href="https://github.com/r-lib/nanonext"><code>r-lib/nanonext</code></a>,
@@ -1507,17 +1507,17 @@ have not been auto-routed over <code>http://</code> and
 ├──────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                    1 │
 └──────────────────────────────────────────────────────────────────────────────────────┘
-┌─────────┬────────┬───────────┐
-│   ok    │ status │ body_text │
-│ boolean │ int32  │  varchar  │
-├─────────┼────────┼───────────┤
-│ false   │   NULL │ NULL      │
-└─────────┴────────┴───────────┘
+┌─────────┬────────┬──────────────────────────┐
+│   ok    │ status │        body_text         │
+│ boolean │ int32  │         varchar          │
+├─────────┼────────┼──────────────────────────┤
+│ true    │    200 │ hello from ducknng https │
+└─────────┴────────┴──────────────────────────┘
 ┌─────────┬────────┬──────────┬────────────┐
 │   ok    │ status │ body_hex │ has_header │
 │ boolean │ int32  │ varchar  │  boolean   │
 ├─────────┼────────┼──────────┼────────────┤
-│ false   │   NULL │ NULL     │ NULL       │
+│ true    │    200 │ 01020304 │ true       │
 └─────────┴────────┴──────────┴────────────┘
 ┌────────────────────────────┐
 │ ducknng_drop_tls_config(1) │
@@ -2482,7 +2482,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb31-21"><a href="#cb31-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb31-22"><a href="#cb31-22" tabindex="-1"></a>  )</span>
 <span id="cb31-23"><a href="#cb31-23" tabindex="-1"></a>)</span>
-<span id="cb31-24"><a href="#cb31-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_1d16d378e1f153.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb31-24"><a href="#cb31-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_1d448451961057.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb31-25"><a href="#cb31-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb31-26"><a href="#cb31-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb31-27"><a href="#cb31-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
@@ -2539,7 +2539,7 @@ table locally through DuckDB</h4>
 <h2 id="references">References</h2>
 <ul>
 <li><a href="https://nng.nanomsg.org/">NNG</a> for the underlying
-messaging library and REQ/REP transport model.</li>
+messaging library and transport family.</li>
 <li><a href="https://github.com/r-lib/nanonext"><code>r-lib/nanonext</code></a>
 for the main client/server ergonomics reference.</li>
 <li><a href="https://github.com/sounkou-bioinfo/mangoro"><code>sounkou-bioinfo/mangoro</code></a>

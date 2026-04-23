@@ -4,7 +4,7 @@
 # ducknng
 
 `ducknng` is a pure C DuckDB extension for DuckDB +
-[NNG](https://nng.nanomsg.org/) REQ/REP interop.
+[NNG](https://nng.nanomsg.org/) interop.
 
 It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin,
 versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are
@@ -537,17 +537,17 @@ SELECT ducknng_drop_tls_config(1);
     ├──────────────────────────────────────────────────────────────────────────────────────┤
     │                                                                                    1 │
     └──────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬────────┬───────────┐
-    │   ok    │ status │ body_text │
-    │ boolean │ int32  │  varchar  │
-    ├─────────┼────────┼───────────┤
-    │ false   │   NULL │ NULL      │
-    └─────────┴────────┴───────────┘
+    ┌─────────┬────────┬──────────────────────────┐
+    │   ok    │ status │        body_text         │
+    │ boolean │ int32  │         varchar          │
+    ├─────────┼────────┼──────────────────────────┤
+    │ true    │    200 │ hello from ducknng https │
+    └─────────┴────────┴──────────────────────────┘
     ┌─────────┬────────┬──────────┬────────────┐
     │   ok    │ status │ body_hex │ has_header │
     │ boolean │ int32  │ varchar  │  boolean   │
     ├─────────┼────────┼──────────┼────────────┤
-    │ false   │   NULL │ NULL     │ NULL       │
+    │ true    │    200 │ 01020304 │ true       │
     └─────────┴────────┴──────────┴────────────┘
     ┌────────────────────────────┐
     │ ducknng_drop_tls_config(1) │
@@ -1558,7 +1558,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1d16d378e1f153.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1d448451961057.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
@@ -1630,7 +1630,7 @@ unlink(ipc_path)
 ## References
 
 - [NNG](https://nng.nanomsg.org/) for the underlying messaging library
-  and REQ/REP transport model.
+  and transport family.
 - [`r-lib/nanonext`](https://github.com/r-lib/nanonext) for the main
   client/server ergonomics reference.
 - [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro)

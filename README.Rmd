@@ -24,7 +24,7 @@ knitr::knit_engines$set(sql = function(options) {
 
 # ducknng
 
-`ducknng` is a pure C DuckDB extension for DuckDB + [NNG](https://nng.nanomsg.org/) REQ/REP interop.
+`ducknng` is a pure C DuckDB extension for DuckDB + [NNG](https://nng.nanomsg.org/) interop.
 
 It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin, versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are inspired by [`r-lib/nanonext`](https://github.com/r-lib/nanonext), and the thin-envelope + Arrow IPC direction is informed by projects such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro).
 
@@ -896,7 +896,7 @@ unlink(ipc_path)
 
 ## References
 
-- [NNG](https://nng.nanomsg.org/) for the underlying messaging library and REQ/REP transport model.
+- [NNG](https://nng.nanomsg.org/) for the underlying messaging library and transport family.
 - [`r-lib/nanonext`](https://github.com/r-lib/nanonext) for the main client/server ergonomics reference.
 - [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro) for the thin-envelope + Arrow IPC RPC direction.
 - [DuckDB C API](https://duckdb.org/docs/stable/clients/c/api) for the extension and SQL integration boundary.

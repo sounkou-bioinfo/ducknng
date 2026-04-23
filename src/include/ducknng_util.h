@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 char *ducknng_strdup(const char *s);
+char *ducknng_make_temp_dir(const char *prefix);
+int ducknng_remove_file(const char *path);
+int ducknng_remove_dir(const char *path);
 uint64_t ducknng_now_ms(void);
 void ducknng_sleep_ms(uint64_t ms);
 uint16_t ducknng_le16_read(const uint8_t *p);

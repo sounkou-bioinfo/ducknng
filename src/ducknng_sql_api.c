@@ -332,12 +332,18 @@ static char *ducknng_read_text_file(const char *path) {
 }
 static int ducknng_generate_self_signed_material(const char *cn, int32_t valid_days,
     char **cert_pem, char **key_pem, char **ca_pem, char **errmsg) {
-    char templ[] = "/tmp/ducknng-cert-XXXXXX";
     char cmd[2048];
     char cert_path[512];
     char key_path[512];
     char *dir;
     int status;
+#ifdef _WIN32
+    const char *path_sep = "\\";
+    const char *null_sink = "NUL";
+#else
+    const char *path_sep = "/";
+    const char *null_sink = "/dev/null";
+#endif
     if (cert_pem) *cert_pem = NULL;
     if (key_pem) *key_pem = NULL;
     if (ca_pem) *ca_pem = NULL;
@@ -346,28 +352,30 @@ static int ducknng_generate_self_signed_material(const char *cn, int32_t valid_d
         return -1;
     }
     if (valid_days <= 0) valid_days = 365;
-    dir = mkdtemp(templ);
+    dir = ducknng_make_temp_dir("ducknng-cert-");
     if (!dir) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to create temp directory for certificate generation");
         return -1;
     }
-    snprintf(cert_path, sizeof(cert_path), "%s/cert.pem", dir);
-    snprintf(key_path, sizeof(key_path), "%s/key.pem", dir);
-    snprintf(cmd, sizeof(cmd), "openssl req -x509 -newkey rsa:2048 -keyout '%s' -out '%s' -sha256 -days %d -nodes -subj '/CN=%s' >/dev/null 2>&1", key_path, cert_path, (int)valid_days, cn);
+    snprintf(cert_path, sizeof(cert_path), "%s%scert.pem", dir, path_sep);
+    snprintf(key_path, sizeof(key_path), "%s%skey.pem", dir, path_sep);
+    snprintf(cmd, sizeof(cmd), "openssl req -x509 -newkey rsa:2048 -keyout '%s' -out '%s' -sha256 -days %d -nodes -subj '/CN=%s' >%s 2>&1", key_path, cert_path, (int)valid_days, cn, null_sink);
     status = system(cmd);
     if (status != 0) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: openssl certificate generation failed");
-        unlink(cert_path);
-        unlink(key_path);
-        rmdir(dir);
+        ducknng_remove_file(cert_path);
+        ducknng_remove_file(key_path);
+        ducknng_remove_dir(dir);
+        duckdb_free(dir);
         return -1;
     }
     if (cert_pem) *cert_pem = ducknng_read_text_file(cert_path);
     if (key_pem) *key_pem = ducknng_read_text_file(key_path);
     if (ca_pem) *ca_pem = ducknng_read_text_file(cert_path);
-    unlink(cert_path);
-    unlink(key_path);
-    rmdir(dir);
+    ducknng_remove_file(cert_path);
+    ducknng_remove_file(key_path);
+    ducknng_remove_dir(dir);
+    duckdb_free(dir);
     if ((cert_pem && !*cert_pem) || (key_pem && !*key_pem) || (ca_pem && !*ca_pem)) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to read generated certificate material");
         if (cert_pem && *cert_pem) duckdb_free(*cert_pem);
