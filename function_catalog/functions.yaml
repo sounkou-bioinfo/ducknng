@@ -741,10 +741,11 @@
       "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Cancel and close a server-side query session and return the JSON control metadata as a structured row.",
+      "description": "Request cancellation for a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
         "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
-        "This is best-effort cancellation and still part of the development session surface."
+        "This is best-effort cancellation and does not replace the normal explicit close path unless the server reports that the session is already closed.",
+        "This is still part of the development session surface."
       ],
       "examples": [
         "SELECT * FROM ducknng_cancel_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, 0::UBIGINT);"

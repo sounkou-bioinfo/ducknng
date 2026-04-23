@@ -25,6 +25,12 @@ Today the extension already includes:
 - a low-level HTTP/HTTPS client helper for transport-adapter work
 - explicit query-session helpers and TLS config handles
 
+`ducknng` is also intentionally low-level. Long-lived runtime handles
+are **manually managed**. In normal use that means you should stop
+servers, close sockets, drop aio handles, drop TLS config handles, and
+close query sessions explicitly rather than expecting a nanonext-style
+GC/finalizer layer.
+
 Transport is selected from the URL scheme. Today the NNG-facing
 operations work across `inproc://`, `ipc://`, `tcp://`, and
 `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level
@@ -94,12 +100,11 @@ SELECT ducknng_stop_server('sql0');
 
 ## Lifetime and manual cleanup
 
-`ducknng` is a low-level library. DuckDB’s extension API gives `ducknng`
-destroy callbacks for internal function-registration, bind, and init
-state, but it does not give the SQL surface a general-purpose
-GC/finalizer model for user-visible runtime handles like R external
-pointer finalizers. In practice that means long-lived handles are
-manually managed.
+DuckDB’s extension API does give `ducknng` destroy callbacks for
+internal function-registration, bind, and init state. What DuckDB SQL
+does **not** give this project is a general-purpose GC/finalizer model
+for long-lived SQL handles like R external pointer finalizers. So at the
+public SQL surface, long-lived handles are manually managed.
 
 You should explicitly clean up what you create:
 
@@ -109,21 +114,23 @@ You should explicitly clean up what you create:
 - drop TLS config handles with `ducknng_drop_tls_config(...)`
 - close query sessions with `ducknng_close_query(...)`
 
-`ducknng_aio_cancel(...)` is cancellation control, not the destructor.
-`ducknng_cancel_query(...)` is best-effort session control, not a
-replacement for the normal explicit close path. Runtime teardown is
-still important, but it is fallback cleanup rather than the primary API
-contract for a long-lived DuckDB process.
+Important details:
 
-See `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`,
-`docs/registry.md`, `docs/transports.md`, `docs/http.md`,
-`docs/types.md`, and `docs/lifetime.md` for the authoritative protocol,
-transport, TLS, HTTP-adapter, lifetime, and session/query-family
-contract. `NEWS.md` summarizes notable landed changes,
-`docs/api_sealing_checklist.md` tracks what still blocks calling the
-public API sealed, and `docs/design_review_checklist.md` is the broader
-implementation-gap checklist. TLS already supports both file-backed and
-in-memory PEM material through helpers such as
+- `ducknng_aio_cancel(...)` is cancellation control, not the destructor
+- `ducknng_cancel_query(...)` is best-effort session control, not a
+  replacement for the normal explicit close path
+- runtime teardown is fallback cleanup, not the primary lifecycle model
+  for a long-lived DuckDB process
+
+The README should be enough to understand the public lifecycle
+expectations. The files under `docs/` are mostly deeper
+protocol/reference material and project design notes. If you want the
+more detailed lifetime write-up, see `docs/lifetime.md`. For protocol
+and transport reference details, see `docs/protocol.md`,
+`docs/manifest.md`, `docs/security.md`, `docs/registry.md`,
+`docs/transports.md`, `docs/http.md`, and `docs/types.md`. `NEWS.md`
+summarizes notable landed changes. TLS already supports both file-backed
+and in-memory PEM material through helpers such as
 `ducknng_tls_config_from_files(...)`,
 `ducknng_tls_config_from_pem(...)`, and
 `ducknng_self_signed_tls_config(...)`.
@@ -224,12 +231,12 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## RPC Session
 
-| name                   | kind  | arguments                                                 | returns                                                                                                                                               | description                                                                                            |
-|------------------------|-------|-----------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
-| `ducknng_open_query`   | table | `url, sql, batch_rows, batch_bytes, tls_config_id`        | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Open a server-side query session and return the JSON control metadata as a structured row.             |
-| `ducknng_fetch_query`  | table | `url, session_id, batch_rows, batch_bytes, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)` | Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.    |
-| `ducknng_close_query`  | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Close a server-side query session and return the JSON control metadata as a structured row.            |
-| `ducknng_cancel_query` | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Cancel and close a server-side query session and return the JSON control metadata as a structured row. |
+| name                   | kind  | arguments                                                 | returns                                                                                                                                               | description                                                                                                    |
+|------------------------|-------|-----------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| `ducknng_open_query`   | table | `url, sql, batch_rows, batch_bytes, tls_config_id`        | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Open a server-side query session and return the JSON control metadata as a structured row.                     |
+| `ducknng_fetch_query`  | table | `url, session_id, batch_rows, batch_bytes, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)` | Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.            |
+| `ducknng_close_query`  | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Close a server-side query session and return the JSON control metadata as a structured row.                    |
+| `ducknng_cancel_query` | table | `url, session_id, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Request cancellation for a server-side query session and return the JSON control metadata as a structured row. |
 
 </details>
 
@@ -543,8 +550,6 @@ auto-routed over `http://` and `https://` yet.
 ``` r
 library(nanonext)
 
-`%||%` <- function(x, y) if (is.null(x) || !length(x) || !nzchar(x)) y else x
-
 cert <- write_cert(cn = '127.0.0.1')
 writeLines(cert$client[[1]], "/tmp/ducknng_readme_http_demo_ca.pem")
 
@@ -552,7 +557,7 @@ server <- http_server(
   url = 'https://127.0.0.1:18443',
   handlers = list(
     handler('/hello', function(req) {
-      list(status = 200L, headers = c('Content-Type' = 'text/plain', 'X-Test' = 'hello'), body = 'hello from ducknng https')
+      list(status = 200L, headers = c('Content-Type' = 'text/plain', 'X-Test' = 'hello'), body = 'hello from nanonext https server')
     }),
     handler('/echo', function(req) {
       list(
@@ -576,8 +581,8 @@ SELECT ducknng_tls_config_from_files(
   2                                         -- auth_mode = require certificate validation
 );
 
--- GET defaults are allowed: NULL method means GET and NULL body means no request body.
-SELECT ok, status, body_text
+-- Call /hello through ducknng_ncurl(): NULL method means GET and NULL body means no request body.
+SELECT ok, status, error, body_text
 FROM ducknng_ncurl(
   'https://127.0.0.1:18443/hello', -- url
   NULL,                            -- method
@@ -588,7 +593,7 @@ FROM ducknng_ncurl(
 );
 
 -- POST can send raw bytes while still exposing HTTP headers and status in-band.
-SELECT ok, status, hex(body) AS body_hex, position('X-Test' IN headers_json) > 0 AS has_header
+SELECT ok, status, error, hex(body) AS body_hex, position('X-Test' IN headers_json) > 0 AS has_header
 FROM ducknng_ncurl(
   'https://127.0.0.1:18443/echo',                        -- url
   'POST',                                                -- method
@@ -608,18 +613,18 @@ SELECT ducknng_drop_tls_config(1);
     ├──────────────────────────────────────────────────────────────────────────────────────┤
     │                                                                                    1 │
     └──────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬────────┬───────────┐
-    │   ok    │ status │ body_text │
-    │ boolean │ int32  │  varchar  │
-    ├─────────┼────────┼───────────┤
-    │ false   │   NULL │ NULL      │
-    └─────────┴────────┴───────────┘
-    ┌─────────┬────────┬──────────┬────────────┐
-    │   ok    │ status │ body_hex │ has_header │
-    │ boolean │ int32  │ varchar  │  boolean   │
-    ├─────────┼────────┼──────────┼────────────┤
-    │ false   │   NULL │ NULL     │ NULL       │
-    └─────────┴────────┴──────────┴────────────┘
+    ┌─────────┬────────┬─────────┬──────────────────────────────────┐
+    │   ok    │ status │  error  │            body_text             │
+    │ boolean │ int32  │ varchar │             varchar              │
+    ├─────────┼────────┼─────────┼──────────────────────────────────┤
+    │ true    │    200 │ NULL    │ hello from nanonext https server │
+    └─────────┴────────┴─────────┴──────────────────────────────────┘
+    ┌─────────┬────────┬─────────┬──────────┬────────────┐
+    │   ok    │ status │  error  │ body_hex │ has_header │
+    │ boolean │ int32  │ varchar │ varchar  │  boolean   │
+    ├─────────┼────────┼─────────┼──────────┼────────────┤
+    │ true    │    200 │ NULL    │ 01020304 │ true       │
+    └─────────┴────────┴─────────┴──────────┴────────────┘
     ┌────────────────────────────┐
     │ ducknng_drop_tls_config(1) │
     │          boolean           │
@@ -1230,20 +1235,24 @@ SELECT ducknng_start_server(
 
 -- Open one server-owned query session.
 -- batch_rows = 0 and batch_bytes = 0 mean "use the server defaults" for this demo.
-SELECT *
-FROM ducknng_open_query(
-  'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id', -- SQL text to run remotely
-  0::UBIGINT,                                -- batch_rows
-  0::UBIGINT,                                -- batch_bytes
-  0::UBIGINT                                 -- tls_config_id
+SET VARIABLE session_id = (
+  SELECT session_id
+  FROM ducknng_open_query(
+    'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
+    'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id', -- SQL text to run remotely
+    0::UBIGINT,                                -- batch_rows
+    0::UBIGINT,                                -- batch_bytes
+    0::UBIGINT                                 -- tls_config_id
+  )
 );
+
+SELECT getvariable('session_id') AS opened_session_id;
 
 -- The first fetch returns one Arrow IPC batch in payload.
 SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
 FROM ducknng_fetch_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  1::UBIGINT,                                -- session_id
+  getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
   0::UBIGINT,                                -- batch_rows override
   0::UBIGINT,                                -- batch_bytes override
   0::UBIGINT                                 -- tls_config_id
@@ -1253,7 +1262,7 @@ FROM ducknng_fetch_query(
 SELECT ok, session_id, state, payload IS NULL AS no_payload, end_of_stream
 FROM ducknng_fetch_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  1::UBIGINT,                                -- session_id
+  getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
   0::UBIGINT,                                -- batch_rows override
   0::UBIGINT,                                -- batch_bytes override
   0::UBIGINT                                 -- tls_config_id
@@ -1263,7 +1272,7 @@ FROM ducknng_fetch_query(
 SELECT *
 FROM ducknng_close_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  1::UBIGINT,                                -- session_id
+  getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
   0::UBIGINT                                 -- tls_config_id
 );
 
@@ -1277,12 +1286,12 @@ SELECT ducknng_stop_server('sql_session_demo');
     ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
     │ true                                                                                                         │
     └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬─────────┬────────────┬─────────┬─────────────┬───────────────────────────────────────────────────────┐
-    │   ok    │  error  │ session_id │  state  │ next_method │                     control_json                      │
-    │ boolean │ varchar │   uint64   │ varchar │   varchar   │                        varchar                        │
-    ├─────────┼─────────┼────────────┼─────────┼─────────────┼───────────────────────────────────────────────────────┤
-    │ true    │ NULL    │          1 │ open    │ fetch       │ {"session_id":1,"state":"open","next_method":"fetch"} │
-    └─────────┴─────────┴────────────┴─────────┴─────────────┴───────────────────────────────────────────────────────┘
+    ┌───────────────────┐
+    │ opened_session_id │
+    │      uint64       │
+    ├───────────────────┤
+    │                 1 │
+    └───────────────────┘
     ┌─────────┬────────────┬───────────────┬─────────────┬───────────────┐
     │   ok    │ session_id │ state_is_null │ has_payload │ end_of_stream │
     │ boolean │   uint64   │    boolean    │   boolean   │    boolean    │
@@ -1629,8 +1638,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1da2b5744cb9b9.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                              TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1e938c81a8714.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

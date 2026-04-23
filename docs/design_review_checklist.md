@@ -1,6 +1,6 @@
 # ducknng design review checklist
 
-This checklist tracks the implementation status of the recommendations in `docs/design_review.md`. It separates work that is already landed, work completed in the current pass, and items blocked by deeper architectural replacement work.
+This checklist tracks the implementation status of the main architecture, transport, Arrow, session, and async hardening items for `ducknng`. It separates work that is already landed, work completed in this running line of development, and items blocked by deeper architectural replacement work.
 
 ## Completed before this pass
 
@@ -90,7 +90,7 @@ This checklist tracks the implementation status of the recommendations in `docs/
   - Remaining work:
     - decide whether a future non-deprecated DuckDB Arrow seam exists that would justify another re-plumb
     - until then, keep the manual mappings careful, documented, and fully tested instead of mixing in unstable or deprecated DuckDB entrypoints
-- [~] Expose the session query family through SQL helpers.
+- [~] Harden the session query family now that SQL helpers exist.
   - Current state:
     - server-side `query_open` / `fetch` / `close` / `cancel` methods are registered
     - SQL-visible wrappers now exist as `ducknng_open_query()`, `ducknng_fetch_query()`, `ducknng_close_query()`, and `ducknng_cancel_query()`

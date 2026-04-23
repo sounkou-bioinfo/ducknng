@@ -1,6 +1,6 @@
 # ducknng API sealing checklist
 
-This checklist is narrower than `docs/design_review_checklist.md`. It tracks what still blocks calling the current public API sealed or stable enough that user-facing names, contracts, and examples should stop changing casually.
+This checklist is narrower than `docs/design_review_checklist.md`. It tracks what still blocks calling the current public API sealed or stable enough that public names, contracts, and examples should stop changing casually.
 
 ## Current position
 

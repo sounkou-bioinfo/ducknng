@@ -39,6 +39,8 @@ Today the extension already includes:
 - a low-level HTTP/HTTPS client helper for transport-adapter work
 - explicit query-session helpers and TLS config handles
 
+`ducknng` is also intentionally low-level. Long-lived runtime handles are **manually managed**. In normal use that means you should stop servers, close sockets, drop aio handles, drop TLS config handles, and close query sessions explicitly rather than expecting a nanonext-style GC/finalizer layer.
+
 Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. The current server is still unauthenticated, so the session family is implemented and usable but should still be treated as experimental until session ownership is bound to a concrete multi-client identity model. HTTP/HTTPS are the only current web-carrier focus; `ws://` and `wss://` are intentionally deferred and are not enabled in the current build.
 
 ## Getting started
@@ -70,7 +72,7 @@ SELECT ducknng_stop_server('sql0');
 
 ## Lifetime and manual cleanup
 
-`ducknng` is a low-level library. DuckDB's extension API gives `ducknng` destroy callbacks for internal function-registration, bind, and init state, but it does not give the SQL surface a general-purpose GC/finalizer model for user-visible runtime handles like R external pointer finalizers. In practice that means long-lived handles are manually managed.
+DuckDB's extension API does give `ducknng` destroy callbacks for internal function-registration, bind, and init state. What DuckDB SQL does **not** give this project is a general-purpose GC/finalizer model for long-lived SQL handles like R external pointer finalizers. So at the public SQL surface, long-lived handles are manually managed.
 
 You should explicitly clean up what you create:
 
@@ -80,9 +82,13 @@ You should explicitly clean up what you create:
 - drop TLS config handles with `ducknng_drop_tls_config(...)`
 - close query sessions with `ducknng_close_query(...)`
 
-`ducknng_aio_cancel(...)` is cancellation control, not the destructor. `ducknng_cancel_query(...)` is best-effort session control, not a replacement for the normal explicit close path. Runtime teardown is still important, but it is fallback cleanup rather than the primary API contract for a long-lived DuckDB process.
+Important details:
 
-See `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, `docs/types.md`, and `docs/lifetime.md` for the authoritative protocol, transport, TLS, HTTP-adapter, lifetime, and session/query-family contract. `NEWS.md` summarizes notable landed changes, `docs/api_sealing_checklist.md` tracks what still blocks calling the public API sealed, and `docs/design_review_checklist.md` is the broader implementation-gap checklist. TLS already supports both file-backed and in-memory PEM material through helpers such as `ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, and `ducknng_self_signed_tls_config(...)`.
+- `ducknng_aio_cancel(...)` is cancellation control, not the destructor
+- `ducknng_cancel_query(...)` is best-effort session control, not a replacement for the normal explicit close path
+- runtime teardown is fallback cleanup, not the primary lifecycle model for a long-lived DuckDB process
+
+The README should be enough to understand the public lifecycle expectations. The files under `docs/` are mostly deeper protocol/reference material and project design notes. If you want the more detailed lifetime write-up, see `docs/lifetime.md`. For protocol and transport reference details, see `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, and `docs/types.md`. `NEWS.md` summarizes notable landed changes. TLS already supports both file-backed and in-memory PEM material through helpers such as `ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, and `ducknng_self_signed_tls_config(...)`.
 
 ## Function catalog
 
@@ -223,6 +229,7 @@ SELECT ducknng_stop_server('sql_client_demo');
 A tiny local R `nanonext` HTTPS server is started during README rendering so this example runs without depending on the public internet. The core server definition is shown below because the transport helper and its carrier behavior are part of the example rather than hidden setup. The hidden setup only launches the script in the background and manages the temporary PID, log, and CA files needed while rendering. `ducknng_ncurl(...)` is the low-level HTTP/HTTPS transport primitive; the higher-level request, RPC, and session helpers have not been auto-routed over `http://` and `https://` yet.
 
 ```{r http-client-demo-setup, echo=FALSE, results='asis'}
+library(nanonext)
 pidfile <- "/tmp/ducknng_readme_http_demo.pid"
 script <- "/tmp/ducknng_readme_http_demo.R"
 logfile <- "/tmp/ducknng_readme_http_demo.log"
@@ -235,8 +242,6 @@ if (file.exists(pidfile)) {
 http_demo_code <- paste(
   "library(nanonext)",
   "",
-  "`%||%` <- function(x, y) if (is.null(x) || !length(x) || !nzchar(x)) y else x",
-  "",
   "cert <- write_cert(cn = '127.0.0.1')",
   sprintf("writeLines(cert$client[[1]], %s)", deparse(cafile)),
   "",
@@ -244,7 +249,7 @@ http_demo_code <- paste(
   "  url = 'https://127.0.0.1:18443',",
   "  handlers = list(",
   "    handler('/hello', function(req) {",
-  "      list(status = 200L, headers = c('Content-Type' = 'text/plain', 'X-Test' = 'hello'), body = 'hello from ducknng https')",
+  "      list(status = 200L, headers = c('Content-Type' = 'text/plain', 'X-Test' = 'hello'), body = 'hello from nanonext https server')",
   "    }),",
   "    handler('/echo', function(req) {",
   "      list(",
@@ -277,11 +282,30 @@ status <- system(sprintf(
 if (status != 0 || !file.exists(pidfile)) {
   stop("failed to start the README HTTP demo server")
 }
-Sys.sleep(1)
 pid <- suppressWarnings(as.integer(readLines(pidfile, warn = FALSE)))
 if (is.na(pid) || system(sprintf("kill -0 %d >/dev/null 2>&1", pid)) != 0) {
   log_text <- if (file.exists(logfile)) paste(readLines(logfile, warn = FALSE), collapse = "\n") else ""
   stop("README HTTP demo server did not stay running\n", log_text)
+}
+ready <- FALSE
+for (attempt in seq_len(20)) {
+  client_tls <- tryCatch(
+    if (file.exists(cafile)) tls_config(client = cafile) else NULL,
+    error = function(e) NULL
+  )
+  probe <- tryCatch(
+    if (!is.null(client_tls)) ncurl("https://127.0.0.1:18443/hello", timeout = 500L, tls = client_tls) else NULL,
+    error = function(e) NULL
+  )
+  if (!is.null(probe) && identical(probe$status, 200L)) {
+    ready <- TRUE
+    break
+  }
+  Sys.sleep(0.25)
+}
+if (!ready) {
+  log_text <- if (file.exists(logfile)) paste(readLines(logfile, warn = FALSE), collapse = "\n") else ""
+  stop("README HTTP demo server did not become ready\n", log_text)
 }
 ```
 
@@ -294,8 +318,8 @@ SELECT ducknng_tls_config_from_files(
   2                                         -- auth_mode = require certificate validation
 );
 
--- GET defaults are allowed: NULL method means GET and NULL body means no request body.
-SELECT ok, status, body_text
+-- Call /hello through ducknng_ncurl(): NULL method means GET and NULL body means no request body.
+SELECT ok, status, error, body_text
 FROM ducknng_ncurl(
   'https://127.0.0.1:18443/hello', -- url
   NULL,                            -- method
@@ -306,7 +330,7 @@ FROM ducknng_ncurl(
 );
 
 -- POST can send raw bytes while still exposing HTTP headers and status in-band.
-SELECT ok, status, hex(body) AS body_hex, position('X-Test' IN headers_json) > 0 AS has_header
+SELECT ok, status, error, hex(body) AS body_hex, position('X-Test' IN headers_json) > 0 AS has_header
 FROM ducknng_ncurl(
   'https://127.0.0.1:18443/echo',                        -- url
   'POST',                                                -- method
@@ -590,20 +614,24 @@ SELECT ducknng_start_server(
 
 -- Open one server-owned query session.
 -- batch_rows = 0 and batch_bytes = 0 mean "use the server defaults" for this demo.
-SELECT *
-FROM ducknng_open_query(
-  'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id', -- SQL text to run remotely
-  0::UBIGINT,                                -- batch_rows
-  0::UBIGINT,                                -- batch_bytes
-  0::UBIGINT                                 -- tls_config_id
+SET VARIABLE session_id = (
+  SELECT session_id
+  FROM ducknng_open_query(
+    'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
+    'SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id', -- SQL text to run remotely
+    0::UBIGINT,                                -- batch_rows
+    0::UBIGINT,                                -- batch_bytes
+    0::UBIGINT                                 -- tls_config_id
+  )
 );
+
+SELECT getvariable('session_id') AS opened_session_id;
 
 -- The first fetch returns one Arrow IPC batch in payload.
 SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
 FROM ducknng_fetch_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  1::UBIGINT,                                -- session_id
+  getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
   0::UBIGINT,                                -- batch_rows override
   0::UBIGINT,                                -- batch_bytes override
   0::UBIGINT                                 -- tls_config_id
@@ -613,7 +641,7 @@ FROM ducknng_fetch_query(
 SELECT ok, session_id, state, payload IS NULL AS no_payload, end_of_stream
 FROM ducknng_fetch_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  1::UBIGINT,                                -- session_id
+  getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
   0::UBIGINT,                                -- batch_rows override
   0::UBIGINT,                                -- batch_bytes override
   0::UBIGINT                                 -- tls_config_id
@@ -623,7 +651,7 @@ FROM ducknng_fetch_query(
 SELECT *
 FROM ducknng_close_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
-  1::UBIGINT,                                -- session_id
+  getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
   0::UBIGINT                                 -- tls_config_id
 );
 

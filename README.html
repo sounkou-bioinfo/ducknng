@@ -629,6 +629,11 @@ futures, and the first raw unary RPC futures</li>
 <li>a low-level HTTP/HTTPS client helper for transport-adapter work</li>
 <li>explicit query-session helpers and TLS config handles</li>
 </ul>
+<p><code>ducknng</code> is also intentionally low-level. Long-lived
+runtime handles are <strong>manually managed</strong>. In normal use
+that means you should stop servers, close sockets, drop aio handles,
+drop TLS config handles, and close query sessions explicitly rather than
+expecting a nanonext-style GC/finalizer layer.</p>
 <p>Transport is selected from the URL scheme. Today the NNG-facing
 operations work across <code>inproc://</code>, <code>ipc://</code>,
 <code>tcp://</code>, and <code>tls+tcp://</code>, and
@@ -688,12 +693,12 @@ manifest, and stop it again:</p>
 │ true                        │
 └─────────────────────────────┘</code></pre>
 <h2 id="lifetime-and-manual-cleanup">Lifetime and manual cleanup</h2>
-<p><code>ducknng</code> is a low-level library. DuckDB’s extension API
-gives <code>ducknng</code> destroy callbacks for internal
-function-registration, bind, and init state, but it does not give the
-SQL surface a general-purpose GC/finalizer model for user-visible
-runtime handles like R external pointer finalizers. In practice that
-means long-lived handles are manually managed.</p>
+<p>DuckDB’s extension API does give <code>ducknng</code> destroy
+callbacks for internal function-registration, bind, and init state. What
+DuckDB SQL does <strong>not</strong> give this project is a
+general-purpose GC/finalizer model for long-lived SQL handles like R
+external pointer finalizers. So at the public SQL surface, long-lived
+handles are manually managed.</p>
 <p>You should explicitly clean up what you create:</p>
 <ul>
 <li>stop servers with <code>ducknng_stop_server(...)</code></li>
@@ -703,22 +708,26 @@ means long-lived handles are manually managed.</p>
 <code>ducknng_drop_tls_config(...)</code></li>
 <li>close query sessions with <code>ducknng_close_query(...)</code></li>
 </ul>
-<p><code>ducknng_aio_cancel(...)</code> is cancellation control, not the
-destructor. <code>ducknng_cancel_query(...)</code> is best-effort
-session control, not a replacement for the normal explicit close path.
-Runtime teardown is still important, but it is fallback cleanup rather
-than the primary API contract for a long-lived DuckDB process.</p>
-<p>See <code>docs/protocol.md</code>, <code>docs/manifest.md</code>,
+<p>Important details:</p>
+<ul>
+<li><code>ducknng_aio_cancel(...)</code> is cancellation control, not
+the destructor</li>
+<li><code>ducknng_cancel_query(...)</code> is best-effort session
+control, not a replacement for the normal explicit close path</li>
+<li>runtime teardown is fallback cleanup, not the primary lifecycle
+model for a long-lived DuckDB process</li>
+</ul>
+<p>The README should be enough to understand the public lifecycle
+expectations. The files under <code>docs/</code> are mostly deeper
+protocol/reference material and project design notes. If you want the
+more detailed lifetime write-up, see <code>docs/lifetime.md</code>. For
+protocol and transport reference details, see
+<code>docs/protocol.md</code>, <code>docs/manifest.md</code>,
 <code>docs/security.md</code>, <code>docs/registry.md</code>,
-<code>docs/transports.md</code>, <code>docs/http.md</code>,
-<code>docs/types.md</code>, and <code>docs/lifetime.md</code> for the
-authoritative protocol, transport, TLS, HTTP-adapter, lifetime, and
-session/query-family contract. <code>NEWS.md</code> summarizes notable
-landed changes, <code>docs/api_sealing_checklist.md</code> tracks what
-still blocks calling the public API sealed, and
-<code>docs/design_review_checklist.md</code> is the broader
-implementation-gap checklist. TLS already supports both file-backed and
-in-memory PEM material through helpers such as
+<code>docs/transports.md</code>, <code>docs/http.md</code>, and
+<code>docs/types.md</code>. <code>NEWS.md</code> summarizes notable
+landed changes. TLS already supports both file-backed and in-memory PEM
+material through helpers such as
 <code>ducknng_tls_config_from_files(...)</code>,
 <code>ducknng_tls_config_from_pem(...)</code>, and
 <code>ducknng_self_signed_tls_config(...)</code>.</p>
@@ -1208,8 +1217,8 @@ metadata as a structured row.</td>
 <td>table</td>
 <td><code>url, session_id, tls_config_id</code></td>
 <td><code>TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)</code></td>
-<td>Cancel and close a server-side query session and return the JSON
-control metadata as a structured row.</td>
+<td>Request cancellation for a server-side query session and return the
+JSON control metadata as a structured row.</td>
 </tr>
 </tbody>
 </table>
@@ -1512,27 +1521,25 @@ have not been auto-routed over <code>http://</code> and
 <code>https://</code> yet.</p>
 <div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="fu">library</span>(nanonext)</span>
 <span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a></span>
-<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="st">`</span><span class="at">%||%</span><span class="st">`</span> <span class="ot">&lt;-</span> <span class="cf">function</span>(x, y) <span class="cf">if</span> (<span class="fu">is.null</span>(x) <span class="sc">||</span> <span class="sc">!</span><span class="fu">length</span>(x) <span class="sc">||</span> <span class="sc">!</span><span class="fu">nzchar</span>(x)) y <span class="cf">else</span> x</span>
-<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a></span>
-<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>cert <span class="ot">&lt;-</span> <span class="fu">write_cert</span>(<span class="at">cn =</span> <span class="st">&#39;127.0.0.1&#39;</span>)</span>
-<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a><span class="fu">writeLines</span>(cert<span class="sc">$</span>client[[<span class="dv">1</span>]], <span class="st">&quot;/tmp/ducknng_readme_http_demo_ca.pem&quot;</span>)</span>
-<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a></span>
-<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>server <span class="ot">&lt;-</span> <span class="fu">http_server</span>(</span>
-<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a>  <span class="at">url =</span> <span class="st">&#39;https://127.0.0.1:18443&#39;</span>,</span>
-<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>  <span class="at">handlers =</span> <span class="fu">list</span>(</span>
-<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>    <span class="fu">handler</span>(<span class="st">&#39;/hello&#39;</span>, <span class="cf">function</span>(req) {</span>
-<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a>      <span class="fu">list</span>(<span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>, <span class="at">headers =</span> <span class="fu">c</span>(<span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> <span class="st">&#39;text/plain&#39;</span>, <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;hello&#39;</span>), <span class="at">body =</span> <span class="st">&#39;hello from ducknng https&#39;</span>)</span>
-<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>    }),</span>
-<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a>    <span class="fu">handler</span>(<span class="st">&#39;/echo&#39;</span>, <span class="cf">function</span>(req) {</span>
-<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>      <span class="fu">list</span>(</span>
-<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a>        <span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>,</span>
-<span id="cb10-17"><a href="#cb10-17" tabindex="-1"></a>        <span class="at">headers =</span> <span class="fu">c</span>(<span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> (req<span class="sc">$</span>headers[[<span class="st">&#39;Content-Type&#39;</span>]] <span class="sc">%||%</span> <span class="st">&#39;application/octet-stream&#39;</span>), <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;echo&#39;</span>),</span>
-<span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a>        <span class="at">body =</span> req<span class="sc">$</span>body</span>
-<span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a>      )</span>
-<span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a>    }, <span class="at">method =</span> <span class="st">&#39;POST&#39;</span>)</span>
-<span id="cb10-21"><a href="#cb10-21" tabindex="-1"></a>  ),</span>
-<span id="cb10-22"><a href="#cb10-22" tabindex="-1"></a>  <span class="at">tls =</span> <span class="fu">tls_config</span>(<span class="at">server =</span> cert<span class="sc">$</span>server)</span>
-<span id="cb10-23"><a href="#cb10-23" tabindex="-1"></a>)</span></code></pre></div>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>cert <span class="ot">&lt;-</span> <span class="fu">write_cert</span>(<span class="at">cn =</span> <span class="st">&#39;127.0.0.1&#39;</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a><span class="fu">writeLines</span>(cert<span class="sc">$</span>client[[<span class="dv">1</span>]], <span class="st">&quot;/tmp/ducknng_readme_http_demo_ca.pem&quot;</span>)</span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a></span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>server <span class="ot">&lt;-</span> <span class="fu">http_server</span>(</span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a>  <span class="at">url =</span> <span class="st">&#39;https://127.0.0.1:18443&#39;</span>,</span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>  <span class="at">handlers =</span> <span class="fu">list</span>(</span>
+<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a>    <span class="fu">handler</span>(<span class="st">&#39;/hello&#39;</span>, <span class="cf">function</span>(req) {</span>
+<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>      <span class="fu">list</span>(<span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>, <span class="at">headers =</span> <span class="fu">c</span>(<span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> <span class="st">&#39;text/plain&#39;</span>, <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;hello&#39;</span>), <span class="at">body =</span> <span class="st">&#39;hello from nanonext https server&#39;</span>)</span>
+<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>    }),</span>
+<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a>    <span class="fu">handler</span>(<span class="st">&#39;/echo&#39;</span>, <span class="cf">function</span>(req) {</span>
+<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>      <span class="fu">list</span>(</span>
+<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a>        <span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>,</span>
+<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>        <span class="at">headers =</span> <span class="fu">c</span>(<span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> (req<span class="sc">$</span>headers[[<span class="st">&#39;Content-Type&#39;</span>]] <span class="sc">%||%</span> <span class="st">&#39;application/octet-stream&#39;</span>), <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;echo&#39;</span>),</span>
+<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a>        <span class="at">body =</span> req<span class="sc">$</span>body</span>
+<span id="cb10-17"><a href="#cb10-17" tabindex="-1"></a>      )</span>
+<span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a>    }, <span class="at">method =</span> <span class="st">&#39;POST&#39;</span>)</span>
+<span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a>  ),</span>
+<span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a>  <span class="at">tls =</span> <span class="fu">tls_config</span>(<span class="at">server =</span> cert<span class="sc">$</span>server)</span>
+<span id="cb10-21"><a href="#cb10-21" tabindex="-1"></a>)</span></code></pre></div>
 <div class="sourceCode" id="cb11"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>LOAD <span class="st">&#39;build/release/ducknng.duckdb_extension&#39;</span>;</span>
 <span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="co">-- Register a client TLS handle that trusts the self-signed HTTPS demo server.</span></span>
 <span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_tls_config_from_files(</span>
@@ -1542,8 +1549,8 @@ have not been auto-routed over <code>http://</code> and
 <span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>  <span class="dv">2</span>                                         <span class="co">-- auth_mode = require certificate validation</span></span>
 <span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a>);</span>
 <span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a></span>
-<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a><span class="co">-- GET defaults are allowed: NULL method means GET and NULL body means no request body.</span></span>
-<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a><span class="kw">SELECT</span> ok, status, body_text</span>
+<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a><span class="co">-- Call /hello through ducknng_ncurl(): NULL method means GET and NULL body means no request body.</span></span>
+<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a><span class="kw">SELECT</span> ok, status, error, body_text</span>
 <span id="cb11-12"><a href="#cb11-12" tabindex="-1"></a><span class="kw">FROM</span> ducknng_ncurl(</span>
 <span id="cb11-13"><a href="#cb11-13" tabindex="-1"></a>  <span class="st">&#39;https://127.0.0.1:18443/hello&#39;</span>, <span class="co">-- url</span></span>
 <span id="cb11-14"><a href="#cb11-14" tabindex="-1"></a>  <span class="kw">NULL</span>,                            <span class="co">-- method</span></span>
@@ -1554,7 +1561,7 @@ have not been auto-routed over <code>http://</code> and
 <span id="cb11-19"><a href="#cb11-19" tabindex="-1"></a>);</span>
 <span id="cb11-20"><a href="#cb11-20" tabindex="-1"></a></span>
 <span id="cb11-21"><a href="#cb11-21" tabindex="-1"></a><span class="co">-- POST can send raw bytes while still exposing HTTP headers and status in-band.</span></span>
-<span id="cb11-22"><a href="#cb11-22" tabindex="-1"></a><span class="kw">SELECT</span> ok, status, hex(<span class="kw">body</span>) <span class="kw">AS</span> body_hex, position(<span class="st">&#39;X-Test&#39;</span> <span class="kw">IN</span> headers_json) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_header</span>
+<span id="cb11-22"><a href="#cb11-22" tabindex="-1"></a><span class="kw">SELECT</span> ok, status, error, hex(<span class="kw">body</span>) <span class="kw">AS</span> body_hex, position(<span class="st">&#39;X-Test&#39;</span> <span class="kw">IN</span> headers_json) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_header</span>
 <span id="cb11-23"><a href="#cb11-23" tabindex="-1"></a><span class="kw">FROM</span> ducknng_ncurl(</span>
 <span id="cb11-24"><a href="#cb11-24" tabindex="-1"></a>  <span class="st">&#39;https://127.0.0.1:18443/echo&#39;</span>,                        <span class="co">-- url</span></span>
 <span id="cb11-25"><a href="#cb11-25" tabindex="-1"></a>  <span class="st">&#39;POST&#39;</span>,                                                <span class="co">-- method</span></span>
@@ -1572,18 +1579,18 @@ have not been auto-routed over <code>http://</code> and
 ├──────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                    1 │
 └──────────────────────────────────────────────────────────────────────────────────────┘
-┌─────────┬────────┬───────────┐
-│   ok    │ status │ body_text │
-│ boolean │ int32  │  varchar  │
-├─────────┼────────┼───────────┤
-│ false   │   NULL │ NULL      │
-└─────────┴────────┴───────────┘
-┌─────────┬────────┬──────────┬────────────┐
-│   ok    │ status │ body_hex │ has_header │
-│ boolean │ int32  │ varchar  │  boolean   │
-├─────────┼────────┼──────────┼────────────┤
-│ false   │   NULL │ NULL     │ NULL       │
-└─────────┴────────┴──────────┴────────────┘
+┌─────────┬────────┬─────────┬──────────────────────────────────┐
+│   ok    │ status │  error  │            body_text             │
+│ boolean │ int32  │ varchar │             varchar              │
+├─────────┼────────┼─────────┼──────────────────────────────────┤
+│ true    │    200 │ NULL    │ hello from nanonext https server │
+└─────────┴────────┴─────────┴──────────────────────────────────┘
+┌─────────┬────────┬─────────┬──────────┬────────────┐
+│   ok    │ status │  error  │ body_hex │ has_header │
+│ boolean │ int32  │ varchar │ varchar  │  boolean   │
+├─────────┼────────┼─────────┼──────────┼────────────┤
+│ true    │    200 │ NULL    │ 01020304 │ true       │
+└─────────┴────────┴─────────┴──────────┴────────────┘
 ┌────────────────────────────┐
 │ ducknng_drop_tls_config(1) │
 │          boolean           │
@@ -2168,57 +2175,61 @@ and close a query session explicitly</h3>
 <span id="cb25-11"><a href="#cb25-11" tabindex="-1"></a></span>
 <span id="cb25-12"><a href="#cb25-12" tabindex="-1"></a><span class="co">-- Open one server-owned query session.</span></span>
 <span id="cb25-13"><a href="#cb25-13" tabindex="-1"></a><span class="co">-- batch_rows = 0 and batch_bytes = 0 mean &quot;use the server defaults&quot; for this demo.</span></span>
-<span id="cb25-14"><a href="#cb25-14" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
-<span id="cb25-15"><a href="#cb25-15" tabindex="-1"></a><span class="kw">FROM</span> ducknng_open_query(</span>
-<span id="cb25-16"><a href="#cb25-16" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
-<span id="cb25-17"><a href="#cb25-17" tabindex="-1"></a>  <span class="st">&#39;SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id&#39;</span>, <span class="co">-- SQL text to run remotely</span></span>
-<span id="cb25-18"><a href="#cb25-18" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows</span></span>
-<span id="cb25-19"><a href="#cb25-19" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes</span></span>
-<span id="cb25-20"><a href="#cb25-20" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
-<span id="cb25-21"><a href="#cb25-21" tabindex="-1"></a>);</span>
-<span id="cb25-22"><a href="#cb25-22" tabindex="-1"></a></span>
-<span id="cb25-23"><a href="#cb25-23" tabindex="-1"></a><span class="co">-- The first fetch returns one Arrow IPC batch in payload.</span></span>
-<span id="cb25-24"><a href="#cb25-24" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> state_is_null, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload, end_of_stream</span>
-<span id="cb25-25"><a href="#cb25-25" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
-<span id="cb25-26"><a href="#cb25-26" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
-<span id="cb25-27"><a href="#cb25-27" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- session_id</span></span>
-<span id="cb25-28"><a href="#cb25-28" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
-<span id="cb25-29"><a href="#cb25-29" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
-<span id="cb25-30"><a href="#cb25-30" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
-<span id="cb25-31"><a href="#cb25-31" tabindex="-1"></a>);</span>
-<span id="cb25-32"><a href="#cb25-32" tabindex="-1"></a></span>
-<span id="cb25-33"><a href="#cb25-33" tabindex="-1"></a><span class="co">-- The second fetch returns JSON control metadata saying the session is exhausted.</span></span>
-<span id="cb25-34"><a href="#cb25-34" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state, payload <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> no_payload, end_of_stream</span>
-<span id="cb25-35"><a href="#cb25-35" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
-<span id="cb25-36"><a href="#cb25-36" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
-<span id="cb25-37"><a href="#cb25-37" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- session_id</span></span>
-<span id="cb25-38"><a href="#cb25-38" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
-<span id="cb25-39"><a href="#cb25-39" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
-<span id="cb25-40"><a href="#cb25-40" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
-<span id="cb25-41"><a href="#cb25-41" tabindex="-1"></a>);</span>
-<span id="cb25-42"><a href="#cb25-42" tabindex="-1"></a></span>
-<span id="cb25-43"><a href="#cb25-43" tabindex="-1"></a><span class="co">-- Close the exhausted session explicitly.</span></span>
-<span id="cb25-44"><a href="#cb25-44" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
-<span id="cb25-45"><a href="#cb25-45" tabindex="-1"></a><span class="kw">FROM</span> ducknng_close_query(</span>
-<span id="cb25-46"><a href="#cb25-46" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
-<span id="cb25-47"><a href="#cb25-47" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- session_id</span></span>
-<span id="cb25-48"><a href="#cb25-48" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
-<span id="cb25-49"><a href="#cb25-49" tabindex="-1"></a>);</span>
-<span id="cb25-50"><a href="#cb25-50" tabindex="-1"></a></span>
-<span id="cb25-51"><a href="#cb25-51" tabindex="-1"></a><span class="co">-- Stop the demo listener after the session is closed.</span></span>
-<span id="cb25-52"><a href="#cb25-52" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_session_demo&#39;</span>);</span></code></pre></div>
+<span id="cb25-14"><a href="#cb25-14" tabindex="-1"></a><span class="kw">SET</span> VARIABLE session_id <span class="op">=</span> (</span>
+<span id="cb25-15"><a href="#cb25-15" tabindex="-1"></a>  <span class="kw">SELECT</span> session_id</span>
+<span id="cb25-16"><a href="#cb25-16" tabindex="-1"></a>  <span class="kw">FROM</span> ducknng_open_query(</span>
+<span id="cb25-17"><a href="#cb25-17" tabindex="-1"></a>    <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb25-18"><a href="#cb25-18" tabindex="-1"></a>    <span class="st">&#39;SELECT 1 AS id UNION ALL SELECT 2 AS id ORDER BY id&#39;</span>, <span class="co">-- SQL text to run remotely</span></span>
+<span id="cb25-19"><a href="#cb25-19" tabindex="-1"></a>    <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows</span></span>
+<span id="cb25-20"><a href="#cb25-20" tabindex="-1"></a>    <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes</span></span>
+<span id="cb25-21"><a href="#cb25-21" tabindex="-1"></a>    <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
+<span id="cb25-22"><a href="#cb25-22" tabindex="-1"></a>  )</span>
+<span id="cb25-23"><a href="#cb25-23" tabindex="-1"></a>);</span>
+<span id="cb25-24"><a href="#cb25-24" tabindex="-1"></a></span>
+<span id="cb25-25"><a href="#cb25-25" tabindex="-1"></a><span class="kw">SELECT</span> getvariable(<span class="st">&#39;session_id&#39;</span>) <span class="kw">AS</span> opened_session_id;</span>
+<span id="cb25-26"><a href="#cb25-26" tabindex="-1"></a></span>
+<span id="cb25-27"><a href="#cb25-27" tabindex="-1"></a><span class="co">-- The first fetch returns one Arrow IPC batch in payload.</span></span>
+<span id="cb25-28"><a href="#cb25-28" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> state_is_null, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload, end_of_stream</span>
+<span id="cb25-29"><a href="#cb25-29" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
+<span id="cb25-30"><a href="#cb25-30" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb25-31"><a href="#cb25-31" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
+<span id="cb25-32"><a href="#cb25-32" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
+<span id="cb25-33"><a href="#cb25-33" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
+<span id="cb25-34"><a href="#cb25-34" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
+<span id="cb25-35"><a href="#cb25-35" tabindex="-1"></a>);</span>
+<span id="cb25-36"><a href="#cb25-36" tabindex="-1"></a></span>
+<span id="cb25-37"><a href="#cb25-37" tabindex="-1"></a><span class="co">-- The second fetch returns JSON control metadata saying the session is exhausted.</span></span>
+<span id="cb25-38"><a href="#cb25-38" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state, payload <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> no_payload, end_of_stream</span>
+<span id="cb25-39"><a href="#cb25-39" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
+<span id="cb25-40"><a href="#cb25-40" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb25-41"><a href="#cb25-41" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
+<span id="cb25-42"><a href="#cb25-42" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
+<span id="cb25-43"><a href="#cb25-43" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
+<span id="cb25-44"><a href="#cb25-44" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
+<span id="cb25-45"><a href="#cb25-45" tabindex="-1"></a>);</span>
+<span id="cb25-46"><a href="#cb25-46" tabindex="-1"></a></span>
+<span id="cb25-47"><a href="#cb25-47" tabindex="-1"></a><span class="co">-- Close the exhausted session explicitly.</span></span>
+<span id="cb25-48"><a href="#cb25-48" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
+<span id="cb25-49"><a href="#cb25-49" tabindex="-1"></a><span class="kw">FROM</span> ducknng_close_query(</span>
+<span id="cb25-50"><a href="#cb25-50" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb25-51"><a href="#cb25-51" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
+<span id="cb25-52"><a href="#cb25-52" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
+<span id="cb25-53"><a href="#cb25-53" tabindex="-1"></a>);</span>
+<span id="cb25-54"><a href="#cb25-54" tabindex="-1"></a></span>
+<span id="cb25-55"><a href="#cb25-55" tabindex="-1"></a><span class="co">-- Stop the demo listener after the session is closed.</span></span>
+<span id="cb25-56"><a href="#cb25-56" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_session_demo&#39;</span>);</span></code></pre></div>
 <pre><code>┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ ducknng_start_server(&#39;sql_session_demo&#39;, &#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;, 1, 134217728, 300000, 0) │
 │                                                   boolean                                                    │
 ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ true                                                                                                         │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌─────────┬─────────┬────────────┬─────────┬─────────────┬───────────────────────────────────────────────────────┐
-│   ok    │  error  │ session_id │  state  │ next_method │                     control_json                      │
-│ boolean │ varchar │   uint64   │ varchar │   varchar   │                        varchar                        │
-├─────────┼─────────┼────────────┼─────────┼─────────────┼───────────────────────────────────────────────────────┤
-│ true    │ NULL    │          1 │ open    │ fetch       │ {&quot;session_id&quot;:1,&quot;state&quot;:&quot;open&quot;,&quot;next_method&quot;:&quot;fetch&quot;} │
-└─────────┴─────────┴────────────┴─────────┴─────────────┴───────────────────────────────────────────────────────┘
+┌───────────────────┐
+│ opened_session_id │
+│      uint64       │
+├───────────────────┤
+│                 1 │
+└───────────────────┘
 ┌─────────┬────────────┬───────────────┬─────────────┬───────────────┐
 │   ok    │ session_id │ state_is_null │ has_payload │ end_of_stream │
 │ boolean │   uint64   │    boolean    │   boolean   │    boolean    │
@@ -2547,8 +2558,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb33-21"><a href="#cb33-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb33-22"><a href="#cb33-22" tabindex="-1"></a>  )</span>
 <span id="cb33-23"><a href="#cb33-23" tabindex="-1"></a>)</span>
-<span id="cb33-24"><a href="#cb33-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_1da2b5744cb9b9.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb33-25"><a href="#cb33-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
+<span id="cb33-24"><a href="#cb33-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_1e938c81a8714.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb33-25"><a href="#cb33-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb33-26"><a href="#cb33-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb33-27"><a href="#cb33-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb33-28"><a href="#cb33-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>
