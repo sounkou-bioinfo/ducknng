@@ -179,9 +179,9 @@ SELECT ducknng_stop_server('sql_client_demo');
 
 ### Use `ducknng_ncurl()` as a low-level HTTP client
 
-A tiny local R `servr` server is started during README rendering so this example runs without depending on the public internet. This helper is the low-level HTTP/HTTPS transport primitive; the higher-level RPC and session helpers have not been auto-routed over `http://` and `https://` yet.
+A tiny local R `servr` server is started during README rendering so this example runs without depending on the public internet. The exact script used for the demo is shown below because the transport helper and its carrier behavior are part of the example, not hidden setup. This helper is the low-level HTTP/HTTPS transport primitive; the higher-level RPC and session helpers have not been auto-routed over `http://` and `https://` yet.
 
-```{r http-client-demo-setup, include=FALSE}
+```{r http-client-demo-setup, echo=FALSE, results='asis'}
 pidfile <- "/tmp/ducknng_readme_http_demo.pid"
 script <- "/tmp/ducknng_readme_http_demo.R"
 logfile <- "/tmp/ducknng_readme_http_demo.log"
@@ -190,9 +190,11 @@ if (file.exists(pidfile)) {
   if (!is.na(pid)) tools::pskill(pid)
   unlink(pidfile)
 }
-writeLines(c(
+http_demo_code <- paste(
   "library(servr)",
+  "",
   "`%||%` <- function(x, y) if (is.null(x) || !length(x) || !nzchar(x)) y else x",
+  "",
   "servr::create_server(",
   "  host = '127.0.0.1',",
   "  port = 18081L,",
@@ -218,8 +220,11 @@ writeLines(c(
   "    }",
   "    list(status = 404L, headers = list('Content-Type' = 'text/plain'), body = 'not found')",
   "  }",
-  ")"
-), script)
+  ")",
+  sep = "\n"
+)
+cat("```r\n", http_demo_code, "\n```\n\n", sep = "")
+writeLines(http_demo_code, script)
 status <- system(sprintf(
   "Rscript %s > %s 2>&1 & echo $! > %s",
   shQuote(script),

@@ -447,10 +447,45 @@ SELECT ducknng_stop_server('sql_client_demo');
 ### Use `ducknng_ncurl()` as a low-level HTTP client
 
 A tiny local R `servr` server is started during README rendering so this
-example runs without depending on the public internet. This helper is
-the low-level HTTP/HTTPS transport primitive; the higher-level RPC and
-session helpers have not been auto-routed over `http://` and `https://`
-yet.
+example runs without depending on the public internet. The exact script
+used for the demo is shown below because the transport helper and its
+carrier behavior are part of the example, not hidden setup. This helper
+is the low-level HTTP/HTTPS transport primitive; the higher-level RPC
+and session helpers have not been auto-routed over `http://` and
+`https://` yet.
+
+``` r
+library(servr)
+
+`%||%` <- function(x, y) if (is.null(x) || !length(x) || !nzchar(x)) y else x
+
+servr::create_server(
+  host = '127.0.0.1',
+  port = 18081L,
+  browser = FALSE,
+  daemon = FALSE,
+  verbose = FALSE,
+  handler = function(req) {
+    method <- req$REQUEST_METHOD
+    path <- req$PATH_INFO
+    if (identical(method, 'GET') && identical(path, '/hello')) {
+      return(list(status = 200L, headers = list('Content-Type' = 'text/plain', 'X-Test' = 'hello'), body = 'hello from ducknng http'))
+    }
+    if (identical(method, 'POST') && identical(path, '/echo')) {
+      body <- raw(0)
+      input <- req$rook.input
+      repeat {
+        chunk <- input$read()
+        if (length(chunk) == 0) break
+        body <- c(body, chunk)
+      }
+      ctype <- req$CONTENT_TYPE %||% req$HTTP_CONTENT_TYPE %||% 'application/octet-stream'
+      return(list(status = 200L, headers = list('Content-Type' = ctype, 'X-Test' = 'echo'), body = body))
+    }
+    list(status = 404L, headers = list('Content-Type' = 'text/plain'), body = 'not found')
+  }
+)
+```
 
 ``` sql
 LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
@@ -1101,7 +1136,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1a34523bc3fb8a.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1a863b37c23985.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

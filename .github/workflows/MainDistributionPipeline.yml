@@ -21,3 +21,6 @@ jobs:
       ci_tools_version: v1.5.1
       extension_name: ducknng
       extra_toolchains: python3,R
+      # Keep this in sync with description.yml; the reusable DuckDB workflow
+      # does not read excluded_platforms from extension metadata automatically.
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_arm64'
