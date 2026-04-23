@@ -80,8 +80,8 @@ This checklist tracks the implementation status of the recommendations in `docs/
   - Current state: signatures were unified and transport reach no longer diverges.
   - Remaining work: decide whether to delete the raw or structured twins entirely.
 - [~] Prepare HTTP / HTTPS transport adapters without inventing a second RPC surface.
-  - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, the planned SQL signatures, and the frame-over-HTTP carrier rule, and the codebase has a transport-family parser above the NNG shim.
-  - Remaining work: implement `ducknng_start_http_server(...)`, `ducknng_ncurl(...)`, and any future HTTP aio helpers as transport-local entry points over the existing registry-backed methods.
+  - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, the planned SQL signatures, and the frame-over-HTTP carrier rule, the codebase has a transport-family parser above the NNG shim, and `ducknng_ncurl(...)` is now implemented as the first low-level HTTP/HTTPS client slice.
+  - Remaining work: implement `ducknng_start_http_server(...)` and any future HTTP aio helpers as transport-local entry points over the existing registry-backed methods, then teach existing request/RPC/session helpers to route by URL scheme.
 
 ## Blocked by larger architectural replacement work
 
@@ -117,6 +117,6 @@ This checklist tracks the implementation status of the recommendations in `docs/
 
 1. **Current DuckDB-facing Arrow work stays on manual nanoarrow mappings.** The implementation no longer compiles unstable or deprecated DuckDB Arrow entrypoints, so any future Arrow re-plumb must wait for a non-deprecated seam or be abandoned in favor of maintaining the explicit mappings.
 2. **Session-family work is only partially complete.** This pass already has real service-owned query session scaffolding, registry-visible `query_open` / `fetch` / `close` / `cancel` methods, and SQL-visible wrappers, but a bare `session_id` protocol without concrete owner rules is still not acceptable as the final multi-client design.
-3. **HTTP / HTTPS transport adapters remain planned, not implemented.** The transport-family boundary is now explicit in docs and code, but `ducknng_start_http_server(...)`, `ducknng_ncurl(...)`, and any future HTTP aio helpers still need a dedicated adapter layer.
+3. **HTTP / HTTPS transport adapters are only partially implemented.** The transport-family boundary is now explicit in docs and code and `ducknng_ncurl(...)` exists as a low-level client helper, but `ducknng_start_http_server(...)`, URL-routed RPC/session helpers over HTTP, and any future HTTP aio helpers still need a dedicated adapter layer.
 4. **Codec work should not be built on undocumented mapping behavior.** If the project continues using the current manual nanoarrow route, codec decisions should sit on top of explicit tested mappings rather than implicit assumptions about a future Arrow helper path.
 5. **Generic client socket TLS dialing is still incomplete.** Listener-side TLS and one-shot req/rep TLS are wired, but the broader socket-handle dial surface still needs a coherent TLS-config story before `tls+tcp://` can be treated as equally complete across all protocol families.

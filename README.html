@@ -619,20 +619,24 @@ and <code>ducknng_list_servers()</code></li>
 <code>poly</code>, <code>push</code>, <code>pull</code>,
 <code>pub</code>, <code>sub</code>, <code>req</code>, <code>rep</code>,
 <code>surveyor</code>, and <code>respondent</code></li>
-<li>raw socket send/recv primitives plus req-specific raw request/reply
+<li>raw socket send/recv primitives plus req-style raw request/reply
 helpers</li>
-<li>raw aio helpers for socket send/recv and req-specific request/reply
+<li>raw aio helpers for socket send/recv and req-style request/reply
 futures</li>
+<li>a low-level HTTP/HTTPS client helper for transport-adapter work</li>
 <li>explicit query-session helpers and TLS config handles</li>
 </ul>
-<p>Transport is selected from the URL scheme, so the same SQL-facing
+<p>Transport is selected from the URL scheme. Today the NNG-facing
 operations work across <code>inproc://</code>, <code>ipc://</code>,
-<code>tcp://</code>, and <code>tls+tcp://</code>. The socket layer is
-explicitly modeled on <code>nanonext</code>: open a protocol-specific
-socket, dial or listen it, and then use raw send/recv or aio helpers as
-appropriate. The higher-level request helpers remain req-specific, and
-the session family should still be treated as development scaffolding
-until multi-client ownership is hardened.</p>
+<code>tcp://</code>, and <code>tls+tcp://</code>, and
+<code>ducknng_ncurl(...)</code> provides the first low-level HTTP/HTTPS
+client slice. The socket layer is explicitly modeled on
+<code>nanonext</code>: open a protocol-specific socket, dial or listen
+it, and then use raw send/recv or aio helpers as appropriate. The
+higher-level RPC and session helpers are still one-roundtrip
+method-layer helpers rather than generic socket-pattern helpers, and the
+session family should still be treated as development scaffolding until
+multi-client ownership is hardened.</p>
 <h2 id="functions">Functions</h2>
 <h1 id="function-catalog">Function Catalog</h1>
 <p>This file is generated from
@@ -900,6 +904,28 @@ material.</td>
 </tr>
 </tbody>
 </table>
+<h2 id="http-transport">HTTP Transport</h2>
+<table>
+<thead>
+<tr class="header">
+<th>name</th>
+<th>kind</th>
+<th>arguments</th>
+<th>returns</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>ducknng_ncurl</code></td>
+<td>table</td>
+<td><code>url, method, headers_json, body, timeout_ms, tls_config_id</code></td>
+<td><code>TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)</code></td>
+<td>Perform one HTTP or HTTPS request and return an in-band result
+row.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="async-io">Async I/O</h2>
 <table>
 <thead>
@@ -1087,12 +1113,14 @@ control metadata as a structured row.</td>
 <p>See also <code>NEWS.md</code> for the current implementation status
 and planned next steps, and <code>docs/protocol.md</code>,
 <code>docs/manifest.md</code>, <code>docs/security.md</code>,
-<code>docs/registry.md</code>, and <code>docs/types.md</code> for the
-binding transport, TLS, and session/query-family contract. Those design
-docs also define the current TLS direction: certificate and key material
-can be accepted either from files or from in-memory PEM content, with
-helper utilities for development certificate generation and
-client/server TLS configuration rather than a file-only setup path.</p>
+<code>docs/registry.md</code>, <code>docs/transports.md</code>,
+<code>docs/http.md</code>, and <code>docs/types.md</code> for the
+binding transport, TLS, HTTP-adapter, and session/query-family contract.
+Those design docs also define the current TLS direction: certificate and
+key material can be accepted either from files or from in-memory PEM
+content, with helper utilities for development certificate generation
+and client/server TLS configuration rather than a file-only setup
+path.</p>
 <h2 id="examples">Examples</h2>
 <h3 id="start-an-ipc-listener-and-inspect-the-registry">Start an IPC
 listener and inspect the registry</h3>
@@ -1957,8 +1985,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb20-21"><a href="#cb20-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb20-22"><a href="#cb20-22" tabindex="-1"></a>  )</span>
 <span id="cb20-23"><a href="#cb20-23" tabindex="-1"></a>)</span>
-<span id="cb20-24"><a href="#cb20-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_17ae0cb578b95.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb20-25"><a href="#cb20-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
+<span id="cb20-24"><a href="#cb20-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_19551231fb2d66.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb20-25"><a href="#cb20-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb20-26"><a href="#cb20-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb20-27"><a href="#cb20-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb20-28"><a href="#cb20-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>

@@ -32,11 +32,12 @@ Today the extension already includes:
 
 - server lifecycle control through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`
 - generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`, `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
-- raw socket send/recv primitives plus req-specific raw request/reply helpers
-- raw aio helpers for socket send/recv and req-specific request/reply futures
+- raw socket send/recv primitives plus req-style raw request/reply helpers
+- raw aio helpers for socket send/recv and req-style request/reply futures
+- a low-level HTTP/HTTPS client helper for transport-adapter work
 - explicit query-session helpers and TLS config handles
 
-Transport is selected from the URL scheme, so the same SQL-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`. The socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level request helpers remain req-specific, and the session family should still be treated as development scaffolding until multi-client ownership is hardened.
+Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level HTTP/HTTPS client slice. The socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC and session helpers are still one-roundtrip method-layer helpers rather than generic socket-pattern helpers, and the session family should still be treated as development scaffolding until multi-client ownership is hardened.
 
 ## Functions
 
@@ -51,7 +52,7 @@ make configure
 make release
 ```
 
-See also `NEWS.md` for the current implementation status and planned next steps, and `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, and `docs/types.md` for the binding transport, TLS, and session/query-family contract. Those design docs also define the current TLS direction: certificate and key material can be accepted either from files or from in-memory PEM content, with helper utilities for development certificate generation and client/server TLS configuration rather than a file-only setup path.
+See also `NEWS.md` for the current implementation status and planned next steps, and `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, and `docs/types.md` for the binding transport, TLS, HTTP-adapter, and session/query-family contract. Those design docs also define the current TLS direction: certificate and key material can be accepted either from files or from in-memory PEM content, with helper utilities for development certificate generation and client/server TLS configuration rather than a file-only setup path.
 
 ## Examples
 

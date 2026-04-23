@@ -18,19 +18,22 @@ Today the extension already includes:
   `ducknng_stop_server()`, and `ducknng_list_servers()`
 - generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`,
   `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
-- raw socket send/recv primitives plus req-specific raw request/reply
+- raw socket send/recv primitives plus req-style raw request/reply
   helpers
-- raw aio helpers for socket send/recv and req-specific request/reply
+- raw aio helpers for socket send/recv and req-style request/reply
   futures
+- a low-level HTTP/HTTPS client helper for transport-adapter work
 - explicit query-session helpers and TLS config handles
 
-Transport is selected from the URL scheme, so the same SQL-facing
+Transport is selected from the URL scheme. Today the NNG-facing
 operations work across `inproc://`, `ipc://`, `tcp://`, and
-`tls+tcp://`. The socket layer is explicitly modeled on `nanonext`: open
-a protocol-specific socket, dial or listen it, and then use raw
-send/recv or aio helpers as appropriate. The higher-level request
-helpers remain req-specific, and the session family should still be
-treated as development scaffolding until multi-client ownership is
+`tls+tcp://`, and `ducknng_ncurl(...)` provides the first low-level
+HTTP/HTTPS client slice. The socket layer is explicitly modeled on
+`nanonext`: open a protocol-specific socket, dial or listen it, and then
+use raw send/recv or aio helpers as appropriate. The higher-level RPC
+and session helpers are still one-roundtrip method-layer helpers rather
+than generic socket-pattern helpers, and the session family should still
+be treated as development scaffolding until multi-client ownership is
 hardened.
 
 ## Functions
@@ -90,6 +93,12 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_tls_config_from_pem`    | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from in-memory PEM material.                              |
 | `ducknng_tls_config_from_files`  | scalar | `cert_key_file, ca_file, password, auth_mode`    | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from file-backed certificate material.                    |
 
+## HTTP Transport
+
+| name            | kind  | arguments                                                    | returns                                                                                                | description                                                         |
+|-----------------|-------|--------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `ducknng_ncurl` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Perform one HTTP or HTTPS request and return an in-band result row. |
+
 ## Async I/O
 
 | name                             | kind   | arguments                               | returns                                                                                                                                                                                                               | description                                                                                                   |
@@ -132,12 +141,13 @@ make release
 
 See also `NEWS.md` for the current implementation status and planned
 next steps, and `docs/protocol.md`, `docs/manifest.md`,
-`docs/security.md`, `docs/registry.md`, and `docs/types.md` for the
-binding transport, TLS, and session/query-family contract. Those design
-docs also define the current TLS direction: certificate and key material
-can be accepted either from files or from in-memory PEM content, with
-helper utilities for development certificate generation and
-client/server TLS configuration rather than a file-only setup path.
+`docs/security.md`, `docs/registry.md`, `docs/transports.md`,
+`docs/http.md`, and `docs/types.md` for the binding transport, TLS,
+HTTP-adapter, and session/query-family contract. Those design docs also
+define the current TLS direction: certificate and key material can be
+accepted either from files or from in-memory PEM content, with helper
+utilities for development certificate generation and client/server TLS
+configuration rather than a file-only setup path.
 
 ## Examples
 
@@ -1045,8 +1055,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_17ae0cb578b95.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_19551231fb2d66.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

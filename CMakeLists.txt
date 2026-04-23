@@ -34,7 +34,7 @@ add_subdirectory(third_party/mbedtls EXCLUDE_FROM_ALL)
 set(NNG_DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
 set(NNG_TESTS OFF CACHE BOOL "" FORCE)
 set(NNG_TOOLS OFF CACHE BOOL "" FORCE)
-set(NNG_ENABLE_HTTP OFF CACHE BOOL "" FORCE)
+set(NNG_ENABLE_HTTP ON CACHE BOOL "" FORCE)
 set(NNG_ENABLE_TLS ON CACHE BOOL "" FORCE)
 set(NNG_TLS_ENGINE "mbed" CACHE STRING "" FORCE)
 set(NNG_TRANSPORT_IPC ON CACHE BOOL "" FORCE)
@@ -68,6 +68,7 @@ set(EXTENSION_SOURCES
     src/ducknng_ipc_in.c
     src/ducknng_ipc_out.c
     src/ducknng_transport.c
+    src/ducknng_http_compat.c
     src/ducknng_nng_compat.c
     src/ducknng_util.c
     third_party/nanoarrow/src/nanoarrow/common/array.c

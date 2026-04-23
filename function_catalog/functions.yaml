@@ -378,6 +378,25 @@
       ]
     },
     {
+      "name": "ducknng_ncurl",
+      "kind": "table",
+      "category": "HTTP Transport",
+      "signature": "ducknng_ncurl(url, method, headers_json, body, timeout_ms, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Perform one HTTP or HTTPS request and return an in-band result row.",
+      "notes": [
+        "This is the low-level HTTP/HTTPS client primitive for future ducknng transport-adapter work.",
+        "ok means the HTTP transport operation completed and a response was received; status carries the HTTP status code and may still be 4xx or 5xx.",
+        "headers_json uses the canonical array-of-objects form such as [{\"name\":\"Content-Type\",\"value\":\"application/json\"}].",
+        "body contains the raw response body bytes and body_text is a best-effort text decoding when the payload looks textual."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_ncurl('http://127.0.0.1:8080/_ducknng', 'POST', '[{\"name\":\"Content-Type\",\"value\":\"application/vnd.ducknng.frame\"}]', from_hex('01000000000000000000000000000000000000000000'), 2000, 0::UBIGINT);"
+      ]
+    },
+    {
       "name": "ducknng_request_raw_aio",
       "kind": "scalar",
       "category": "Async I/O",
