@@ -10,11 +10,14 @@ typedef struct ducknng_client_socket {
     uint64_t socket_id;
     char *protocol;
     char *url;
+    char *listen_url;
     nng_socket sock;
     nng_ctx ctx;
+    nng_listener listener;
     int open;
     int connected;
     int has_ctx;
+    int has_listener;
     int send_timeout_ms;
     int recv_timeout_ms;
     uint8_t *pending_request;
@@ -32,6 +35,12 @@ typedef struct ducknng_tls_config {
 enum ducknng_client_aio_phase {
     DUCKNNG_CLIENT_AIO_PHASE_SEND = 1,
     DUCKNNG_CLIENT_AIO_PHASE_RECV = 2
+};
+
+enum ducknng_client_aio_kind {
+    DUCKNNG_CLIENT_AIO_KIND_REQUEST = 1,
+    DUCKNNG_CLIENT_AIO_KIND_SEND = 2,
+    DUCKNNG_CLIENT_AIO_KIND_RECV = 3
 };
 
 enum ducknng_client_aio_state {
@@ -53,9 +62,14 @@ typedef struct ducknng_client_aio {
     int owns_socket;
     int open;
     int has_ctx;
+    int kind;
     int phase;
     int state;
     int timeout_ms;
+    int send_done;
+    int recv_done;
+    int send_result;
+    int recv_result;
     uint64_t started_ms;
     uint64_t finished_ms;
     char *error;

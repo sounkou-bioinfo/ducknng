@@ -36,8 +36,10 @@
 - Added non-throwing raw request companions `ducknng_request_result(url, payload, timeout_ms)` and `ducknng_request_socket_result(socket_id, payload, timeout_ms)`.
 - Added `ducknng_remote(url, sql)` as the current unary row-reply client table function, exposing Arrow IPC row replies as DuckDB tables for the currently supported unary row subset.
 - Added SQL-visible session wrappers `ducknng_open_query()`, `ducknng_fetch_query()`, `ducknng_close_query()`, and `ducknng_cancel_query()` over the existing `query_open` / `fetch` / `close` / `cancel` RPC family.
-- Added a runtime-owned aio registry and SQL-visible raw request aio helpers: `ducknng_request_raw_aio()`, `ducknng_request_socket_raw_aio()`, `ducknng_aio_ready()`, `ducknng_aio_collect()`, `ducknng_aio_cancel()`, and `ducknng_aio_drop()`.
-- `ducknng_aio_collect()` is now exposed as a SQL macro over internal scalar helpers so dynamic LIST expressions and scalar subqueries can drive collection without relying on lateral-capable table-function parameters from the stable C API.
+- Expanded the generic socket surface to the broader nanonext-style NNG protocol family: `bus`, `pair`, `poly`, `push`, `pull`, `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`.
+- Added generic raw socket verbs `ducknng_listen_socket()`, `ducknng_send_socket_raw()`, `ducknng_recv_socket_raw()`, `ducknng_subscribe_socket()`, and `ducknng_unsubscribe_socket()`.
+- Added a runtime-owned aio registry and SQL-visible raw aio helpers for both request/reply and generic socket operations: `ducknng_request_raw_aio()`, `ducknng_request_socket_raw_aio()`, `ducknng_send_socket_raw_aio()`, `ducknng_recv_socket_raw_aio()`, `ducknng_aio_ready()`, `ducknng_aio_status()`, `ducknng_aio_collect()`, `ducknng_aio_cancel()`, and `ducknng_aio_drop()`.
+- `ducknng_aio_collect()` and `ducknng_aio_status()` are now exposed as SQL macros over internal scalar helpers so dynamic arguments can work without relying on lateral-capable stable-C-API table-function parameters.
 - Wider row-result type coverage, SQL-side Arrow batch decoding for session fetches, and the remaining session-ownership hardening work are still pending.
 - The docs contract for the session query family now fixes the intended lifecycle: `query_open` returns JSON control metadata and a session id, `fetch` is the only row-bearing method, `close` is the normal cleanup path, and `cancel` is best-effort until the implementation can bind sessions to a concrete owner identity.
 

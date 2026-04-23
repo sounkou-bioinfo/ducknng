@@ -28,10 +28,15 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_open_socket` | scalar | `protocol` | `UBIGINT` | Open a client socket handle for a supported protocol. |
+| `ducknng_open_socket` | scalar | `protocol` | `UBIGINT` | Open a client socket handle for a supported NNG protocol. |
 | `ducknng_dial_socket` | scalar | `socket_id, url, timeout_ms` | `BOOLEAN` | Dial a URL using an opened socket handle. |
+| `ducknng_listen_socket` | scalar | `socket_id, url, recv_max_bytes, tls_config_id` | `BOOLEAN` | Bind a socket handle to a listen URL and start its NNG listener. |
 | `ducknng_close_socket` | scalar | `socket_id` | `BOOLEAN` | Close a client socket handle. |
-| `ducknng_list_sockets` | table |  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | List client socket handles in the runtime. |
+| `ducknng_send_socket_raw` | scalar | `socket_id, frame, timeout_ms` | `BOOLEAN` | Send one raw frame through an active socket handle. |
+| `ducknng_recv_socket_raw` | scalar | `socket_id, timeout_ms` | `BLOB` | Receive one raw frame from an active socket handle. |
+| `ducknng_subscribe_socket` | scalar | `socket_id, topic` | `BOOLEAN` | Register a raw topic prefix on a sub socket. |
+| `ducknng_unsubscribe_socket` | scalar | `socket_id, topic` | `BOOLEAN` | Remove a raw topic prefix from a sub socket. |
+| `ducknng_list_sockets` | table |  | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, listening BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | List client socket handles in the runtime. |
 | `ducknng_request` | table | `url, payload, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)` | Perform a one-shot raw request and return a structured result row. |
 | `ducknng_request_socket` | table | `socket_id, payload, timeout_ms` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)` | Perform a raw request through a previously dialed socket handle and return a structured result row. |
 | `ducknng_request_raw` | scalar | `url, payload, timeout_ms, tls_config_id` | `BLOB` | Perform a one-shot raw request and return the raw reply frame bytes. |
@@ -53,8 +58,11 @@ This file is generated from `function_catalog/functions.yaml`.
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
 | `ducknng_request_raw_aio` | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT` | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id. |
-| `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms` | `UBIGINT` | Launch one raw req/rep roundtrip asynchronously on an existing socket handle and return an aio handle id. |
+| `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms` | `UBIGINT` | Launch one raw req/rep roundtrip asynchronously on an existing req socket handle and return an aio handle id. |
+| `ducknng_send_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms` | `UBIGINT` | Launch one raw socket send asynchronously and return an aio handle id. |
+| `ducknng_recv_socket_raw_aio` | scalar | `socket_id, timeout_ms` | `UBIGINT` | Launch one raw socket receive asynchronously and return an aio handle id. |
 | `ducknng_aio_ready` | scalar | `aio_id` | `BOOLEAN` | Return whether an aio handle has reached a terminal state. |
+| `ducknng_aio_status` | table | `aio_id` | `TABLE(aio_id UBIGINT, exists BOOLEAN, kind VARCHAR, state VARCHAR, phase VARCHAR, terminal BOOLEAN, send_done BOOLEAN, send_ok BOOLEAN, recv_done BOOLEAN, recv_ok BOOLEAN, has_reply_frame BOOLEAN, error VARCHAR)` | Inspect the current or terminal status of one aio handle, including send-phase and recv-phase completion. |
 | `ducknng_aio_collect` | table | `aio_ids, wait_ms` | `TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)` | Wait for any requested aio handles to finish and return one row per newly collected terminal result. |
 | `ducknng_aio_cancel` | scalar | `aio_id` | `BOOLEAN` | Request cancellation of a pending aio handle. |
 | `ducknng_aio_drop` | scalar | `aio_id` | `BOOLEAN` | Release a terminal aio handle from the runtime registry. |

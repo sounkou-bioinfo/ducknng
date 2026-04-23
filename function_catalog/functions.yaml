@@ -117,13 +117,16 @@
       "returns": "UBIGINT",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Open a client socket handle for a supported protocol.",
+      "description": "Open a client socket handle for a supported NNG protocol.",
       "notes": [
-        "This is the primitive transport entry point. Currently only req is implemented.",
-        "Currently only req is implemented."
+        "Supported protocols now follow the nanonext-facing model: bus, pair, pair0, pair1, poly, push, pull, pub, sub, req, rep, surveyor, and respondent.",
+        "pair is the nanonext-compatible alias for pair0, and poly opens pair1 in polyamorous mode.",
+        "request-oriented helpers such as ducknng_request_socket_raw() still require a req socket."
       ],
       "examples": [
-        "SELECT ducknng_open_socket('req');"
+        "SELECT ducknng_open_socket('req');",
+        "SELECT ducknng_open_socket('pair');",
+        "SELECT ducknng_open_socket('surveyor');"
       ]
     },
     {
@@ -136,10 +139,28 @@
       "implemented": true,
       "description": "Dial a URL using an opened socket handle.",
       "notes": [
-        "Preferred primitive transport verb."
+        "Transport is still selected by the URL scheme.",
+        "This is the generic dial verb for the supported socket protocols."
       ],
       "examples": [
         "SELECT ducknng_dial_socket(ducknng_open_socket('req'), 'ipc:///tmp/ducknng_sql0.ipc', 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_listen_socket",
+      "kind": "scalar",
+      "category": "Primitive Transport",
+      "signature": "ducknng_listen_socket(socket_id, url, recv_max_bytes, tls_config_id)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Bind a socket handle to a listen URL and start its NNG listener.",
+      "notes": [
+        "Pass tls_config_id = 0::UBIGINT for plaintext URLs or a registered TLS handle for tls+tcp:// listeners.",
+        "Use this for the generic socket surface rather than the RPC service lifecycle surface."
+      ],
+      "examples": [
+        "SELECT ducknng_listen_socket(ducknng_open_socket('pair'), 'ipc:///tmp/ducknng_pair.ipc', 134217728, 0::UBIGINT);"
       ]
     },
     {
@@ -157,15 +178,83 @@
       ]
     },
     {
+      "name": "ducknng_send_socket_raw",
+      "kind": "scalar",
+      "category": "Primitive Transport",
+      "signature": "ducknng_send_socket_raw(socket_id, frame, timeout_ms)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Send one raw frame through an active socket handle.",
+      "notes": [
+        "This is the raw socket-level send primitive modeled on nanonext send(..., mode = 'raw').",
+        "A TRUE result means the send operation completed successfully at the NNG socket layer."
+      ],
+      "examples": [
+        "SELECT ducknng_send_socket_raw(1::UBIGINT, from_hex('68656c6c6f'), 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_recv_socket_raw",
+      "kind": "scalar",
+      "category": "Primitive Transport",
+      "signature": "ducknng_recv_socket_raw(socket_id, timeout_ms)",
+      "returns": "BLOB",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Receive one raw frame from an active socket handle.",
+      "notes": [
+        "This is the raw socket-level receive primitive modeled on nanonext recv(..., mode = 'raw')."
+      ],
+      "examples": [
+        "SELECT hex(ducknng_recv_socket_raw(1::UBIGINT, 1000));"
+      ]
+    },
+    {
+      "name": "ducknng_subscribe_socket",
+      "kind": "scalar",
+      "category": "Primitive Transport",
+      "signature": "ducknng_subscribe_socket(socket_id, topic)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Register a raw topic prefix on a sub socket.",
+      "notes": [
+        "Pass from_hex('') to subscribe to all topics.",
+        "This is only valid for sockets opened with protocol = 'sub'."
+      ],
+      "examples": [
+        "SELECT ducknng_subscribe_socket(1::UBIGINT, from_hex(''));"
+      ]
+    },
+    {
+      "name": "ducknng_unsubscribe_socket",
+      "kind": "scalar",
+      "category": "Primitive Transport",
+      "signature": "ducknng_unsubscribe_socket(socket_id, topic)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Remove a raw topic prefix from a sub socket.",
+      "notes": [
+        "Pass from_hex('') to remove the all-topics subscription.",
+        "This is only valid for sockets opened with protocol = 'sub'."
+      ],
+      "examples": [
+        "SELECT ducknng_unsubscribe_socket(1::UBIGINT, from_hex(''));"
+      ]
+    },
+    {
       "name": "ducknng_list_sockets",
       "kind": "table",
       "category": "Primitive Transport",
       "signature": "ducknng_list_sockets()",
-      "returns": "TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)",
+      "returns": "TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, listening BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List client socket handles in the runtime.",
       "notes": [
+        "url reports the current dial URL or listen URL tracked on the socket handle.",
         "Primitive transport introspection."
       ],
       "examples": [
@@ -300,6 +389,7 @@
       "notes": [
         "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
         "The returned handle represents one pending request operation backed by NNG aio state.",
+        "Use ducknng_aio_status() to inspect whether the send phase has completed successfully.",
         "Use ducknng_aio_collect() to retrieve the full reply frame later."
       ],
       "examples": [
@@ -314,13 +404,47 @@
       "returns": "UBIGINT",
       "since": "0.1.0",
       "implemented": true,
-      "description": "Launch one raw req/rep roundtrip asynchronously on an existing socket handle and return an aio handle id.",
+      "description": "Launch one raw req/rep roundtrip asynchronously on an existing req socket handle and return an aio handle id.",
       "notes": [
-        "The socket must already be opened, dialed, and connected.",
+        "The socket must already be opened, dialed, connected, and use protocol = req.",
         "Use ducknng_aio_collect() to retrieve the full reply frame later."
       ],
       "examples": [
         "SELECT ducknng_request_socket_raw_aio(1::UBIGINT, from_hex('01000000000000000000000000000000000000000000'), 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_send_socket_raw_aio",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_send_socket_raw_aio(socket_id, frame, timeout_ms)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Launch one raw socket send asynchronously and return an aio handle id.",
+      "notes": [
+        "This is the nanonext-like send_aio analogue for the raw SQL socket surface.",
+        "A successful collected result has ok = TRUE and frame = NULL because send-only operations do not produce reply frames."
+      ],
+      "examples": [
+        "SELECT ducknng_send_socket_raw_aio(1::UBIGINT, from_hex('68656c6c6f'), 1000);"
+      ]
+    },
+    {
+      "name": "ducknng_recv_socket_raw_aio",
+      "kind": "scalar",
+      "category": "Async I/O",
+      "signature": "ducknng_recv_socket_raw_aio(socket_id, timeout_ms)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Launch one raw socket receive asynchronously and return an aio handle id.",
+      "notes": [
+        "This is the nanonext-like recv_aio analogue for the raw SQL socket surface.",
+        "Collect the aio later to retrieve the received raw frame."
+      ],
+      "examples": [
+        "SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000);"
       ]
     },
     {
@@ -341,6 +465,24 @@
       ]
     },
     {
+      "name": "ducknng_aio_status",
+      "kind": "table",
+      "category": "Async I/O",
+      "signature": "ducknng_aio_status(aio_id)",
+      "returns": "TABLE(aio_id UBIGINT, exists BOOLEAN, kind VARCHAR, state VARCHAR, phase VARCHAR, terminal BOOLEAN, send_done BOOLEAN, send_ok BOOLEAN, recv_done BOOLEAN, recv_ok BOOLEAN, has_reply_frame BOOLEAN, error VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Inspect the current or terminal status of one aio handle, including send-phase and recv-phase completion.",
+      "notes": [
+        "Use this to answer whether a send-only or request aio has completed its send phase successfully.",
+        "Unknown handles return exists = FALSE and NULL metadata fields.",
+        "This is exposed as a SQL macro over an internal volatile scalar so dynamic aio ids work under the stable DuckDB C API."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_aio_status(1::UBIGINT);"
+      ]
+    },
+    {
       "name": "ducknng_aio_collect",
       "kind": "table",
       "category": "Async I/O",
@@ -353,7 +495,7 @@
         "Pass a LIST<UBIGINT> of aio handle ids, for example list_value(aio1, aio2).",
         "Dynamic list expressions are supported through the SQL macro wrapper, including scalar subqueries that produce one list value.",
         "wait_ms = 0 performs a pure poll.",
-        "frame contains the full reply frame when transport-level request/reply succeeded; decode it with ducknng_decode_frame()."
+        "For send-only airos, frame is NULL on success. For recv/request airos, frame contains the collected raw frame when present."
       ],
       "examples": [
         "SELECT * FROM ducknng_aio_collect(list_value(1::UBIGINT, 2::UBIGINT), 1000);"

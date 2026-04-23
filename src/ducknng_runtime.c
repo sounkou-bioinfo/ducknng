@@ -120,10 +120,12 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
         for (i = 0; i < rt->client_socket_count; i++) {
             ducknng_client_socket *sock = rt->client_sockets[i];
             if (!sock) continue;
+            if (sock->has_listener) ducknng_listener_close(sock->listener);
             if (sock->has_ctx) nng_ctx_close(sock->ctx);
             if (sock->open) nng_close(sock->sock);
             if (sock->protocol) duckdb_free(sock->protocol);
             if (sock->url) duckdb_free(sock->url);
+            if (sock->listen_url) duckdb_free(sock->listen_url);
             if (sock->pending_request) duckdb_free(sock->pending_request);
             if (sock->pending_reply) duckdb_free(sock->pending_reply);
             duckdb_free(sock);

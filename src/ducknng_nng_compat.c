@@ -126,6 +126,36 @@ fail:
 
 int ducknng_rep_socket_open(nng_socket *out) { return nng_rep0_open(out); }
 int ducknng_req_socket_open(nng_socket *out) { return nng_req0_open(out); }
+int ducknng_socket_open_protocol(const char *protocol, nng_socket *out, char **errmsg) {
+    int rv = NNG_EINVAL;
+    if (errmsg) *errmsg = NULL;
+    if (!protocol || !protocol[0] || !out) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: socket protocol is required");
+        return -1;
+    }
+    if (strcmp(protocol, "bus") == 0) rv = nng_bus0_open(out);
+    else if (strcmp(protocol, "pair") == 0 || strcmp(protocol, "pair0") == 0) rv = nng_pair0_open(out);
+    else if (strcmp(protocol, "poly") == 0) rv = nng_pair1_open_poly(out);
+    else if (strcmp(protocol, "pair1") == 0) rv = nng_pair1_open(out);
+    else if (strcmp(protocol, "push") == 0) rv = nng_push0_open(out);
+    else if (strcmp(protocol, "pull") == 0) rv = nng_pull0_open(out);
+    else if (strcmp(protocol, "pub") == 0) rv = nng_pub0_open(out);
+    else if (strcmp(protocol, "sub") == 0) rv = nng_sub0_open(out);
+    else if (strcmp(protocol, "req") == 0) rv = nng_req0_open(out);
+    else if (strcmp(protocol, "rep") == 0) rv = nng_rep0_open(out);
+    else if (strcmp(protocol, "surveyor") == 0) rv = nng_surveyor0_open(out);
+    else if (strcmp(protocol, "respondent") == 0) rv = nng_respondent0_open(out);
+    else {
+        if (errmsg) *errmsg = ducknng_strdup(
+            "ducknng: protocol must be one of bus, pair, pair0, pair1, poly, push, pull, pub, sub, req, rep, surveyor, respondent");
+        return -1;
+    }
+    if (rv != 0) {
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));
+        return -1;
+    }
+    return 0;
+}
 int ducknng_socket_set_timeout_ms(nng_socket sock, int send_timeout_ms, int recv_timeout_ms) {
     int rv;
     if (send_timeout_ms > 0) {
@@ -141,6 +171,12 @@ int ducknng_socket_set_timeout_ms(nng_socket sock, int send_timeout_ms, int recv
 int ducknng_socket_dial(nng_socket sock, const char *url) { return nng_dial(sock, url, NULL, 0); }
 int ducknng_socket_send(nng_socket sock, nng_msg *msg) { return nng_sendmsg(sock, msg, 0); }
 int ducknng_socket_recv(nng_socket sock, nng_msg **msg) { return nng_recvmsg(sock, msg, 0); }
+int ducknng_socket_subscribe(nng_socket sock, const void *topic, size_t len) {
+    return nng_socket_set(sock, NNG_OPT_SUB_SUBSCRIBE, topic, len);
+}
+int ducknng_socket_unsubscribe(nng_socket sock, const void *topic, size_t len) {
+    return nng_socket_set(sock, NNG_OPT_SUB_UNSUBSCRIBE, topic, len);
+}
 int ducknng_ctx_send(nng_ctx ctx, nng_msg *msg) { return nng_ctx_sendmsg(ctx, msg, 0); }
 int ducknng_ctx_recv(nng_ctx ctx, nng_msg **msg) { return nng_ctx_recvmsg(ctx, msg, 0); }
 int ducknng_req_dial(nng_socket sock, const char *url, int timeout_ms) {
@@ -224,6 +260,8 @@ int ducknng_ctx_open(nng_ctx *out, nng_socket sock) { return nng_ctx_open(out, s
 int ducknng_ctx_close(nng_ctx ctx) { return nng_ctx_close(ctx); }
 void ducknng_ctx_recv_aio(nng_ctx ctx, nng_aio *aio) { nng_ctx_recv(ctx, aio); }
 void ducknng_ctx_send_aio(nng_ctx ctx, nng_aio *aio) { nng_ctx_send(ctx, aio); }
+void ducknng_socket_recv_aio(nng_socket sock, nng_aio *aio) { nng_recv_aio(sock, aio); }
+void ducknng_socket_send_aio(nng_socket sock, nng_aio *aio) { nng_send_aio(sock, aio); }
 int ducknng_aio_alloc(nng_aio **out, void (*cb)(void *), void *arg, int timeout_ms) {
     int rv = nng_aio_alloc(out, cb, arg);
     if (rv == 0 && timeout_ms > 0) {

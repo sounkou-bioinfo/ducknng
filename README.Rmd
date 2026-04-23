@@ -24,19 +24,19 @@ knitr::knit_engines$set(sql = function(options) {
 
 # ducknng
 
-`ducknng` is a pure C DuckDB extension for DuckDB + NNG REQ/REP interop.
+`ducknng` is a pure C DuckDB extension for DuckDB + [NNG](https://nng.nanomsg.org/) REQ/REP interop.
 
 It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin, versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are inspired by [`r-lib/nanonext`](https://github.com/r-lib/nanonext), and the thin-envelope + Arrow IPC direction is informed by projects such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro).
 
 Today the extension already includes:
 
 - server lifecycle control through `ducknng_start_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`
-- req client sockets plus raw request/reply helpers
-- RPC helpers for manifest discovery, opt-in `exec`, and unary query execution
-- raw aio helpers for request/reply futures
+- generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`, `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
+- raw socket send/recv primitives plus req-specific raw request/reply helpers
+- raw aio helpers for socket send/recv and req-specific request/reply futures
 - explicit query-session helpers and TLS config handles
 
-Transport is selected from the URL scheme, so the same SQL-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`. The current socket-handle layer is intentionally honest but still narrow: `ducknng_open_socket()` supports `req` today, and the session family should still be treated as development scaffolding until multi-client ownership is hardened.
+Transport is selected from the URL scheme, so the same SQL-facing operations work across `inproc://`, `ipc://`, `tcp://`, and `tls+tcp://`. The socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level request helpers remain req-specific, and the session family should still be treated as development scaffolding until multi-client ownership is hardened.
 
 ## Functions
 
@@ -174,6 +174,43 @@ FROM ducknng_decode_frame(
 -- Close the client socket handle and stop the demo server.
 SELECT ducknng_close_socket(1);
 SELECT ducknng_stop_server('sql_client_demo');
+```
+
+### Launch raw socket send/recv airos and inspect send status explicitly
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Open one listening pair socket and one dialed peer.
+SELECT ducknng_open_socket('pair');
+SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 134217728, 0::UBIGINT);
+SELECT ducknng_open_socket('pair');
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000);
+
+-- Start one async receive and one async send.
+CREATE TEMP TABLE pair_recv AS
+SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+
+CREATE TEMP TABLE pair_send AS
+SELECT ducknng_send_socket_raw_aio(2::UBIGINT, from_hex('6173796e632072657175657374'), 1000) AS send_aio;
+
+-- Collect the terminal send result. Send-only airos succeed with frame = NULL.
+SELECT aio_id, ok, frame IS NULL AS no_frame
+FROM ducknng_aio_collect((SELECT list_value(send_aio) FROM pair_send), 1000);
+
+-- Collect the received raw frame from the peer side.
+SELECT aio_id, ok, hex(frame) = '6173796E632072657175657374' AS got_payload
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM pair_recv), 1000);
+
+-- Inspect whether the send phase completed successfully.
+SELECT kind, state, phase, send_done, send_ok, recv_done, recv_ok IS NULL AS recv_ok_is_null
+FROM ducknng_aio_status((SELECT send_aio FROM pair_send));
+
+-- Clean up the terminal aio handles, temp state, and socket handles.
+SELECT ducknng_aio_drop((SELECT send_aio FROM pair_send));
+SELECT ducknng_aio_drop((SELECT recv_aio FROM pair_recv));
+DROP TABLE pair_send;
+DROP TABLE pair_recv;
+SELECT ducknng_close_socket(2);
+SELECT ducknng_close_socket(1);
 ```
 
 ### Launch raw requests asynchronously and collect the reply frames later
@@ -587,4 +624,12 @@ close(req)
 DBI::dbDisconnect(db_con)
 unlink(ipc_path)
 ```
+
+## References
+
+- [NNG](https://nng.nanomsg.org/) for the underlying messaging library and REQ/REP transport model.
+- [`r-lib/nanonext`](https://github.com/r-lib/nanonext) for the main client/server ergonomics reference.
+- [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro) for the thin-envelope + Arrow IPC RPC direction.
+- [DuckDB C API](https://duckdb.org/docs/stable/clients/c/api) for the extension and SQL integration boundary.
+- [Apache Arrow IPC](https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc) for the tabular payload format.
 

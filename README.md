@@ -3,7 +3,8 @@
 
 # ducknng
 
-`ducknng` is a pure C DuckDB extension for DuckDB + NNG REQ/REP interop.
+`ducknng` is a pure C DuckDB extension for DuckDB +
+[NNG](https://nng.nanomsg.org/) REQ/REP interop.
 
 It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin,
 versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are
@@ -15,18 +16,22 @@ Today the extension already includes:
 
 - server lifecycle control through `ducknng_start_server()`,
   `ducknng_stop_server()`, and `ducknng_list_servers()`
-- req client sockets plus raw request/reply helpers
-- RPC helpers for manifest discovery, opt-in `exec`, and unary query
-  execution
-- raw aio helpers for request/reply futures
+- generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`,
+  `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
+- raw socket send/recv primitives plus req-specific raw request/reply
+  helpers
+- raw aio helpers for socket send/recv and req-specific request/reply
+  futures
 - explicit query-session helpers and TLS config handles
 
 Transport is selected from the URL scheme, so the same SQL-facing
 operations work across `inproc://`, `ipc://`, `tcp://`, and
-`tls+tcp://`. The current socket-handle layer is intentionally honest
-but still narrow: `ducknng_open_socket()` supports `req` today, and the
-session family should still be treated as development scaffolding until
-multi-client ownership is hardened.
+`tls+tcp://`. The socket layer is explicitly modeled on `nanonext`: open
+a protocol-specific socket, dial or listen it, and then use raw
+send/recv or aio helpers as appropriate. The higher-level request
+helpers remain req-specific, and the session family should still be
+treated as development scaffolding until multi-client ownership is
+hardened.
 
 ## Functions
 
@@ -58,17 +63,22 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Primitive Transport
 
-| name                         | kind   | arguments                                 | returns                                                                                                                                                  | description                                                                                         |
-|------------------------------|--------|-------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
-| `ducknng_open_socket`        | scalar | `protocol`                                | `UBIGINT`                                                                                                                                                | Open a client socket handle for a supported protocol.                                               |
-| `ducknng_dial_socket`        | scalar | `socket_id, url, timeout_ms`              | `BOOLEAN`                                                                                                                                                | Dial a URL using an opened socket handle.                                                           |
-| `ducknng_close_socket`       | scalar | `socket_id`                               | `BOOLEAN`                                                                                                                                                | Close a client socket handle.                                                                       |
-| `ducknng_list_sockets`       | table  |                                           | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)`             | List client socket handles in the runtime.                                                          |
-| `ducknng_request`            | table  | `url, payload, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a one-shot raw request and return a structured result row.                                  |
-| `ducknng_request_socket`     | table  | `socket_id, payload, timeout_ms`          | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                         | Perform a raw request through a previously dialed socket handle and return a structured result row. |
-| `ducknng_request_raw`        | scalar | `url, payload, timeout_ms, tls_config_id` | `BLOB`                                                                                                                                                   | Perform a one-shot raw request and return the raw reply frame bytes.                                |
-| `ducknng_request_socket_raw` | scalar | `socket_id, payload, timeout_ms`          | `BLOB`                                                                                                                                                   | Perform a raw request through a dialed socket handle and return the raw reply frame bytes.          |
-| `ducknng_decode_frame`       | table  | `frame`                                   | `TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)` | Decode a raw ducknng frame into envelope fields and extracted payload columns.                      |
+| name                         | kind   | arguments                                       | returns                                                                                                                                                         | description                                                                                         |
+|------------------------------|--------|-------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `ducknng_open_socket`        | scalar | `protocol`                                      | `UBIGINT`                                                                                                                                                       | Open a client socket handle for a supported NNG protocol.                                           |
+| `ducknng_dial_socket`        | scalar | `socket_id, url, timeout_ms`                    | `BOOLEAN`                                                                                                                                                       | Dial a URL using an opened socket handle.                                                           |
+| `ducknng_listen_socket`      | scalar | `socket_id, url, recv_max_bytes, tls_config_id` | `BOOLEAN`                                                                                                                                                       | Bind a socket handle to a listen URL and start its NNG listener.                                    |
+| `ducknng_close_socket`       | scalar | `socket_id`                                     | `BOOLEAN`                                                                                                                                                       | Close a client socket handle.                                                                       |
+| `ducknng_send_socket_raw`    | scalar | `socket_id, frame, timeout_ms`                  | `BOOLEAN`                                                                                                                                                       | Send one raw frame through an active socket handle.                                                 |
+| `ducknng_recv_socket_raw`    | scalar | `socket_id, timeout_ms`                         | `BLOB`                                                                                                                                                          | Receive one raw frame from an active socket handle.                                                 |
+| `ducknng_subscribe_socket`   | scalar | `socket_id, topic`                              | `BOOLEAN`                                                                                                                                                       | Register a raw topic prefix on a sub socket.                                                        |
+| `ducknng_unsubscribe_socket` | scalar | `socket_id, topic`                              | `BOOLEAN`                                                                                                                                                       | Remove a raw topic prefix from a sub socket.                                                        |
+| `ducknng_list_sockets`       | table  |                                                 | `TABLE(socket_id UBIGINT, protocol VARCHAR, url VARCHAR, open BOOLEAN, connected BOOLEAN, listening BOOLEAN, send_timeout_ms INTEGER, recv_timeout_ms INTEGER)` | List client socket handles in the runtime.                                                          |
+| `ducknng_request`            | table  | `url, payload, timeout_ms, tls_config_id`       | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                                | Perform a one-shot raw request and return a structured result row.                                  |
+| `ducknng_request_socket`     | table  | `socket_id, payload, timeout_ms`                | `TABLE(ok BOOLEAN, error VARCHAR, payload BLOB)`                                                                                                                | Perform a raw request through a previously dialed socket handle and return a structured result row. |
+| `ducknng_request_raw`        | scalar | `url, payload, timeout_ms, tls_config_id`       | `BLOB`                                                                                                                                                          | Perform a one-shot raw request and return the raw reply frame bytes.                                |
+| `ducknng_request_socket_raw` | scalar | `socket_id, payload, timeout_ms`                | `BLOB`                                                                                                                                                          | Perform a raw request through a dialed socket handle and return the raw reply frame bytes.          |
+| `ducknng_decode_frame`       | table  | `frame`                                         | `TABLE(ok BOOLEAN, error VARCHAR, version UTINYINT, type UTINYINT, flags UINTEGER, type_name VARCHAR, name VARCHAR, payload BLOB, payload_text VARCHAR)`        | Decode a raw ducknng frame into envelope fields and extracted payload columns.                      |
 
 ## Transport Security
 
@@ -82,14 +92,17 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Async I/O
 
-| name                             | kind   | arguments                               | returns                                                        | description                                                                                               |
-|----------------------------------|--------|-----------------------------------------|----------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
-| `ducknng_request_raw_aio`        | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT`                                                      | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id.                   |
-| `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                      | Launch one raw req/rep roundtrip asynchronously on an existing socket handle and return an aio handle id. |
-| `ducknng_aio_ready`              | scalar | `aio_id`                                | `BOOLEAN`                                                      | Return whether an aio handle has reached a terminal state.                                                |
-| `ducknng_aio_collect`            | table  | `aio_ids, wait_ms`                      | `TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)` | Wait for any requested aio handles to finish and return one row per newly collected terminal result.      |
-| `ducknng_aio_cancel`             | scalar | `aio_id`                                | `BOOLEAN`                                                      | Request cancellation of a pending aio handle.                                                             |
-| `ducknng_aio_drop`               | scalar | `aio_id`                                | `BOOLEAN`                                                      | Release a terminal aio handle from the runtime registry.                                                  |
+| name                             | kind   | arguments                               | returns                                                                                                                                                                                                               | description                                                                                                   |
+|----------------------------------|--------|-----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
+| `ducknng_request_raw_aio`        | scalar | `url, frame, timeout_ms, tls_config_id` | `UBIGINT`                                                                                                                                                                                                             | Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id.                       |
+| `ducknng_request_socket_raw_aio` | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                                                                                                                                                                             | Launch one raw req/rep roundtrip asynchronously on an existing req socket handle and return an aio handle id. |
+| `ducknng_send_socket_raw_aio`    | scalar | `socket_id, frame, timeout_ms`          | `UBIGINT`                                                                                                                                                                                                             | Launch one raw socket send asynchronously and return an aio handle id.                                        |
+| `ducknng_recv_socket_raw_aio`    | scalar | `socket_id, timeout_ms`                 | `UBIGINT`                                                                                                                                                                                                             | Launch one raw socket receive asynchronously and return an aio handle id.                                     |
+| `ducknng_aio_ready`              | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Return whether an aio handle has reached a terminal state.                                                    |
+| `ducknng_aio_status`             | table  | `aio_id`                                | `TABLE(aio_id UBIGINT, exists BOOLEAN, kind VARCHAR, state VARCHAR, phase VARCHAR, terminal BOOLEAN, send_done BOOLEAN, send_ok BOOLEAN, recv_done BOOLEAN, recv_ok BOOLEAN, has_reply_frame BOOLEAN, error VARCHAR)` | Inspect the current or terminal status of one aio handle, including send-phase and recv-phase completion.     |
+| `ducknng_aio_collect`            | table  | `aio_ids, wait_ms`                      | `TABLE(aio_id UBIGINT, ok BOOLEAN, error VARCHAR, frame BLOB)`                                                                                                                                                        | Wait for any requested aio handles to finish and return one row per newly collected terminal result.          |
+| `ducknng_aio_cancel`             | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Request cancellation of a pending aio handle.                                                                 |
+| `ducknng_aio_drop`               | scalar | `aio_id`                                | `BOOLEAN`                                                                                                                                                                                                             | Release a terminal aio handle from the runtime registry.                                                      |
 
 ## RPC Helper
 
@@ -366,12 +379,12 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├────────────────────────────────────────────────────────────────────────┤
     │ true                                                                   │
     └────────────────────────────────────────────────────────────────────────┘
-    ┌───────────┬──────────┬────────────────────────────────────────┬─────────┬───────────┬─────────────────┬─────────────────┐
-    │ socket_id │ protocol │                  url                   │  open   │ connected │ send_timeout_ms │ recv_timeout_ms │
-    │  uint64   │ varchar  │                varchar                 │ boolean │  boolean  │      int32      │      int32      │
-    ├───────────┼──────────┼────────────────────────────────────────┼─────────┼───────────┼─────────────────┼─────────────────┤
-    │         1 │ req      │ ipc:///tmp/ducknng_sql_client_demo.ipc │ true    │ true      │            1000 │            1000 │
-    └───────────┴──────────┴────────────────────────────────────────┴─────────┴───────────┴─────────────────┴─────────────────┘
+    ┌───────────┬──────────┬────────────────────────────────────────┬─────────┬───────────┬───────────┬─────────────────┬─────────────────┐
+    │ socket_id │ protocol │                  url                   │  open   │ connected │ listening │ send_timeout_ms │ recv_timeout_ms │
+    │  uint64   │ varchar  │                varchar                 │ boolean │  boolean  │  boolean  │      int32      │      int32      │
+    ├───────────┼──────────┼────────────────────────────────────────┼─────────┼───────────┼───────────┼─────────────────┼─────────────────┤
+    │         1 │ req      │ ipc:///tmp/ducknng_sql_client_demo.ipc │ true    │ true      │ false     │            1000 │            1000 │
+    └───────────┴──────────┴────────────────────────────────────────┴─────────┴───────────┴───────────┴─────────────────┴─────────────────┘
     ┌─────────┬─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
     │   ok    │  error  │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                payload                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 │
     │ boolean │ varchar │                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  blob                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  │
@@ -420,6 +433,111 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├────────────────────────────────────────┤
     │ true                                   │
     └────────────────────────────────────────┘
+
+### Launch raw socket send/recv airos and inspect send status explicitly
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- Open one listening pair socket and one dialed peer.
+SELECT ducknng_open_socket('pair');
+SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 134217728, 0::UBIGINT);
+SELECT ducknng_open_socket('pair');
+SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000);
+
+-- Start one async receive and one async send.
+CREATE TEMP TABLE pair_recv AS
+SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+
+CREATE TEMP TABLE pair_send AS
+SELECT ducknng_send_socket_raw_aio(2::UBIGINT, from_hex('6173796e632072657175657374'), 1000) AS send_aio;
+
+-- Collect the terminal send result. Send-only airos succeed with frame = NULL.
+SELECT aio_id, ok, frame IS NULL AS no_frame
+FROM ducknng_aio_collect((SELECT list_value(send_aio) FROM pair_send), 1000);
+
+-- Collect the received raw frame from the peer side.
+SELECT aio_id, ok, hex(frame) = '6173796E632072657175657374' AS got_payload
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM pair_recv), 1000);
+
+-- Inspect whether the send phase completed successfully.
+SELECT kind, state, phase, send_done, send_ok, recv_done, recv_ok IS NULL AS recv_ok_is_null
+FROM ducknng_aio_status((SELECT send_aio FROM pair_send));
+
+-- Clean up the terminal aio handles, temp state, and socket handles.
+SELECT ducknng_aio_drop((SELECT send_aio FROM pair_send));
+SELECT ducknng_aio_drop((SELECT recv_aio FROM pair_recv));
+DROP TABLE pair_send;
+DROP TABLE pair_recv;
+SELECT ducknng_close_socket(2);
+SELECT ducknng_close_socket(1);
+```
+
+    ┌─────────────────────────────┐
+    │ ducknng_open_socket('pair') │
+    │           uint64            │
+    ├─────────────────────────────┤
+    │                           1 │
+    └─────────────────────────────┘
+    ┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 134217728, CAST(0 AS "UBIGINT")) │
+    │                                                boolean                                                │
+    ├───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                                                  │
+    └───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ┌─────────────────────────────┐
+    │ ducknng_open_socket('pair') │
+    │           uint64            │
+    ├─────────────────────────────┤
+    │                           2 │
+    └─────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │ ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000) │
+    │                                 boolean                                  │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │ true                                                                     │
+    └──────────────────────────────────────────────────────────────────────────┘
+    ┌────────┬─────────┬──────────┐
+    │ aio_id │   ok    │ no_frame │
+    │ uint64 │ boolean │ boolean  │
+    ├────────┼─────────┼──────────┤
+    │      2 │ true    │ true     │
+    └────────┴─────────┴──────────┘
+    ┌────────┬─────────┬─────────────┐
+    │ aio_id │   ok    │ got_payload │
+    │ uint64 │ boolean │   boolean   │
+    ├────────┼─────────┼─────────────┤
+    │      1 │ true    │ true        │
+    └────────┴─────────┴─────────────┘
+    ┌─────────┬───────────┬─────────┬───────────┬─────────┬───────────┬─────────────────┐
+    │  kind   │   state   │  phase  │ send_done │ send_ok │ recv_done │ recv_ok_is_null │
+    │ varchar │  varchar  │ varchar │  boolean  │ boolean │  boolean  │     boolean     │
+    ├─────────┼───────────┼─────────┼───────────┼─────────┼───────────┼─────────────────┤
+    │ send    │ collected │ send    │ true      │ true    │ false     │ true            │
+    └─────────┴───────────┴─────────┴───────────┴─────────┴───────────┴─────────────────┘
+    ┌────────────────────────────────────────────────────┐
+    │ ducknng_aio_drop((SELECT send_aio FROM pair_send)) │
+    │                      boolean                       │
+    ├────────────────────────────────────────────────────┤
+    │ true                                               │
+    └────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────────────────┐
+    │ ducknng_aio_drop((SELECT recv_aio FROM pair_recv)) │
+    │                      boolean                       │
+    ├────────────────────────────────────────────────────┤
+    │ true                                               │
+    └────────────────────────────────────────────────────┘
+    ┌─────────────────────────┐
+    │ ducknng_close_socket(2) │
+    │         boolean         │
+    ├─────────────────────────┤
+    │ true                    │
+    └─────────────────────────┘
+    ┌─────────────────────────┐
+    │ ducknng_close_socket(1) │
+    │         boolean         │
+    ├─────────────────────────┤
+    │ true                    │
+    └─────────────────────────┘
 
 ### Launch raw requests asynchronously and collect the reply frames later
 
@@ -927,8 +1045,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_15d041269820c8.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                              TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_17ae0cb578b95.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE
@@ -995,3 +1113,17 @@ close(req)
 DBI::dbDisconnect(db_con)
 unlink(ipc_path)
 ```
+
+## References
+
+- [NNG](https://nng.nanomsg.org/) for the underlying messaging library
+  and REQ/REP transport model.
+- [`r-lib/nanonext`](https://github.com/r-lib/nanonext) for the main
+  client/server ergonomics reference.
+- [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro)
+  for the thin-envelope + Arrow IPC RPC direction.
+- [DuckDB C API](https://duckdb.org/docs/stable/clients/c/api) for the
+  extension and SQL integration boundary.
+- [Apache Arrow
+  IPC](https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc)
+  for the tabular payload format.
