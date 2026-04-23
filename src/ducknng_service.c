@@ -114,9 +114,13 @@ static void ducknng_rep_ctx_teardown(ducknng_rep_ctx *rc) {
         ducknng_cond_signal(&rc->cv);
         ducknng_mutex_unlock(&rc->mu);
     }
+    if (rc->aio) ducknng_aio_cancel(rc->aio);
     if (rc->thread_started) {
         ducknng_thread_join(rc->thread);
         rc->thread_started = 0;
+    }
+    if (rc->aio) {
+        ducknng_aio_wait(rc->aio);
     }
     if (rc->request_msg) {
         nng_msg_free(rc->request_msg);
@@ -220,6 +224,7 @@ ducknng_service *ducknng_service_create(ducknng_runtime *rt, const char *name, c
         return NULL;
     }
     ducknng_mutex_init(&svc->mu);
+    svc->mu_initialized = 1;
     return svc;
 }
 
@@ -238,7 +243,10 @@ void ducknng_service_destroy(ducknng_service *svc) {
         duckdb_free(svc->sessions);
     }
     if (svc->ctxs) duckdb_free(svc->ctxs);
-    ducknng_mutex_destroy(&svc->mu);
+    if (svc->mu_initialized) {
+        ducknng_mutex_destroy(&svc->mu);
+        svc->mu_initialized = 0;
+    }
     duckdb_free(svc);
 }
 
@@ -363,6 +371,12 @@ int ducknng_service_stop(ducknng_service *svc, char **errmsg) {
         for (i = 0; i < svc->ncontexts; i++) {
             ducknng_rep_ctx_teardown(&svc->ctxs[i]);
         }
+        duckdb_free(svc->ctxs);
+        svc->ctxs = NULL;
+    }
+    if (svc->resolved_listen_url) {
+        duckdb_free(svc->resolved_listen_url);
+        svc->resolved_listen_url = NULL;
     }
     svc->running = 0;
     if (svc->sessions) {

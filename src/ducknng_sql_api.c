@@ -2155,18 +2155,16 @@ static void ducknng_aio_cancel_scalar(duckdb_function_info info, duckdb_data_chu
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t aio_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
-        nng_aio *aio = NULL;
         ducknng_client_aio *slot;
         out[row] = false;
         if (!ctx || !ctx->rt || aio_id == 0) continue;
         ducknng_mutex_lock(&ctx->rt->mu);
         slot = ducknng_find_client_aio_locked(ctx->rt, aio_id);
-        if (slot && slot->state == DUCKNNG_CLIENT_AIO_PENDING) aio = slot->aio;
-        ducknng_mutex_unlock(&ctx->rt->mu);
-        if (aio) {
-            ducknng_aio_cancel(aio);
+        if (slot && slot->state == DUCKNNG_CLIENT_AIO_PENDING && slot->aio) {
+            ducknng_aio_cancel(slot->aio);
             out[row] = true;
         }
+        ducknng_mutex_unlock(&ctx->rt->mu);
     }
 }
 
@@ -2242,6 +2240,7 @@ static void ducknng_aio_status_scalar(duckdb_function_info info, duckdb_data_chu
     for (idx_t row = 0; row < row_count; row++) {
         uint64_t aio_id = arg_u64(aio_id_vec, row, 0);
         ducknng_client_aio snapshot;
+        char *error_copy = NULL;
         const char *kind_name = NULL;
         const char *state_name = NULL;
         const char *phase_name = NULL;
@@ -2267,6 +2266,7 @@ static void ducknng_aio_status_scalar(duckdb_function_info info, duckdb_data_chu
             ducknng_client_aio *slot = ducknng_find_client_aio_locked(ctx->rt, aio_id);
             if (slot) {
                 snapshot = *slot;
+                if (slot->error) error_copy = ducknng_strdup(slot->error);
                 found = 1;
             }
         }
@@ -2303,8 +2303,9 @@ static void ducknng_aio_status_scalar(duckdb_function_info info, duckdb_data_chu
         } else {
             set_null(child_vecs[9], row);
         }
-        if (snapshot.error) duckdb_vector_assign_string_element(child_vecs[11], row, snapshot.error);
+        if (error_copy) duckdb_vector_assign_string_element(child_vecs[11], row, error_copy);
         else set_null(child_vecs[11], row);
+        if (error_copy) duckdb_free(error_copy);
     }
 }
 
@@ -3848,6 +3849,33 @@ static void ducknng_aio_collect_scan(duckdb_function_info info, duckdb_data_chun
     duckdb_data_chunk_set_size(output, chunk_size);
 }
 
+static void destroy_sql_context_extra(void *data) {
+    if (data) duckdb_free(data);
+}
+
+static ducknng_sql_context *ducknng_dup_sql_context(const ducknng_sql_context *ctx) {
+    ducknng_sql_context *copy;
+    if (!ctx) return NULL;
+    copy = (ducknng_sql_context *)duckdb_malloc(sizeof(*copy));
+    if (!copy) return NULL;
+    *copy = *ctx;
+    return copy;
+}
+
+static int ducknng_set_scalar_sql_context(duckdb_scalar_function fn, const ducknng_sql_context *ctx) {
+    ducknng_sql_context *copy = ducknng_dup_sql_context(ctx);
+    if (!copy) return 0;
+    duckdb_scalar_function_set_extra_info(fn, copy, destroy_sql_context_extra);
+    return 1;
+}
+
+static int ducknng_set_table_sql_context(duckdb_table_function tf, const ducknng_sql_context *ctx) {
+    ducknng_sql_context *copy = ducknng_dup_sql_context(ctx);
+    if (!copy) return 0;
+    duckdb_table_function_set_extra_info(tf, copy, destroy_sql_context_extra);
+    return 1;
+}
+
 static int register_scalar_ex(duckdb_connection con, const char *name, idx_t nparams,
     duckdb_scalar_function_t fn, ducknng_sql_context *ctx, duckdb_type *param_types,
     duckdb_type return_type_id, bool is_volatile) {
@@ -3867,7 +3895,7 @@ static int register_scalar_ex(duckdb_connection con, const char *name, idx_t npa
     duckdb_scalar_function_set_function(f, fn);
     duckdb_scalar_function_set_special_handling(f);
     if (is_volatile) duckdb_scalar_function_set_volatile(f);
-    duckdb_scalar_function_set_extra_info(f, ctx, NULL);
+    if (!ducknng_set_scalar_sql_context(f, ctx)) { duckdb_destroy_scalar_function(&f); return 0; }
     if (duckdb_register_scalar_function(con, f) == DuckDBError) { duckdb_destroy_scalar_function(&f); return 0; }
     duckdb_destroy_scalar_function(&f);
     return 1;
@@ -3905,7 +3933,7 @@ static int register_aio_wait_any_scalar_named(duckdb_connection con, ducknng_sql
     duckdb_scalar_function_set_function(fn, ducknng_aio_wait_any_scalar);
     duckdb_scalar_function_set_special_handling(fn);
     duckdb_scalar_function_set_volatile(fn);
-    duckdb_scalar_function_set_extra_info(fn, ctx, NULL);
+    if (!ducknng_set_scalar_sql_context(fn, ctx)) { duckdb_destroy_scalar_function(&fn); return 0; }
     if (duckdb_register_scalar_function(con, fn) == DuckDBError) {
         duckdb_destroy_scalar_function(&fn);
         duckdb_destroy_logical_type(&u64_type);
@@ -3952,7 +3980,7 @@ static int register_aio_collect_row_scalar_named(duckdb_connection con, ducknng_
     duckdb_scalar_function_set_function(fn, ducknng_aio_collect_row_scalar);
     duckdb_scalar_function_set_special_handling(fn);
     duckdb_scalar_function_set_volatile(fn);
-    duckdb_scalar_function_set_extra_info(fn, ctx, NULL);
+    if (!ducknng_set_scalar_sql_context(fn, ctx)) { duckdb_destroy_scalar_function(&fn); return 0; }
     if (duckdb_register_scalar_function(con, fn) == DuckDBError) {
         duckdb_destroy_scalar_function(&fn);
         duckdb_destroy_logical_type(&u64_type);
@@ -4011,7 +4039,7 @@ static int register_aio_status_scalar_named(duckdb_connection con, ducknng_sql_c
     duckdb_scalar_function_set_function(fn, ducknng_aio_status_scalar);
     duckdb_scalar_function_set_special_handling(fn);
     duckdb_scalar_function_set_volatile(fn);
-    duckdb_scalar_function_set_extra_info(fn, ctx, NULL);
+    if (!ducknng_set_scalar_sql_context(fn, ctx)) { duckdb_destroy_scalar_function(&fn); return 0; }
     if (duckdb_register_scalar_function(con, fn) == DuckDBError) {
         duckdb_destroy_scalar_function(&fn);
         duckdb_destroy_logical_type(&u64_type);
@@ -4575,7 +4603,7 @@ static int register_named_servers_table(duckdb_connection con, ducknng_sql_conte
     tf = duckdb_create_table_function();
     if (!tf) return 0;
     duckdb_table_function_set_name(tf, name);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_servers_bind);
     duckdb_table_function_set_init(tf, ducknng_servers_init);
     duckdb_table_function_set_function(tf, ducknng_servers_scan);
@@ -4593,7 +4621,7 @@ static int register_named_sockets_table(duckdb_connection con, ducknng_sql_conte
     tf = duckdb_create_table_function();
     if (!tf) return 0;
     duckdb_table_function_set_name(tf, name);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_sockets_bind);
     duckdb_table_function_set_init(tf, ducknng_sockets_init);
     duckdb_table_function_set_function(tf, ducknng_sockets_scan);
@@ -4611,7 +4639,7 @@ static int register_named_tls_configs_table(duckdb_connection con, ducknng_sql_c
     tf = duckdb_create_table_function();
     if (!tf) return 0;
     duckdb_table_function_set_name(tf, name);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_tls_configs_bind);
     duckdb_table_function_set_init(tf, ducknng_tls_configs_init);
     duckdb_table_function_set_function(tf, ducknng_tls_configs_scan);
@@ -4629,7 +4657,7 @@ static int register_named_methods_table(duckdb_connection con, ducknng_sql_conte
     tf = duckdb_create_table_function();
     if (!tf) return 0;
     duckdb_table_function_set_name(tf, name);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_methods_bind);
     duckdb_table_function_set_init(tf, ducknng_methods_init);
     duckdb_table_function_set_function(tf, ducknng_methods_scan);
@@ -4656,7 +4684,7 @@ static int register_remote_table_named(duckdb_connection con, ducknng_sql_contex
     duckdb_table_function_add_parameter(tf, type_tls);
     duckdb_destroy_logical_type(&type);
     duckdb_destroy_logical_type(&type_tls);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_query_rpc_bind);
     duckdb_table_function_set_init(tf, ducknng_query_rpc_init);
     duckdb_table_function_set_function(tf, ducknng_query_rpc_scan);
@@ -4682,7 +4710,7 @@ static int register_manifest_result_table_named(duckdb_connection con, ducknng_s
     duckdb_table_function_add_parameter(tf, type_tls);
     duckdb_destroy_logical_type(&type);
     duckdb_destroy_logical_type(&type_tls);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_get_rpc_manifest_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
     duckdb_table_function_set_function(tf, ducknng_get_rpc_manifest_scan);
@@ -4709,7 +4737,7 @@ static int register_exec_result_table_named(duckdb_connection con, ducknng_sql_c
     duckdb_table_function_add_parameter(tf, type_tls);
     duckdb_destroy_logical_type(&type);
     duckdb_destroy_logical_type(&type_tls);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_run_rpc_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
     duckdb_table_function_set_function(tf, ducknng_run_rpc_scan);
@@ -4743,7 +4771,7 @@ static int register_request_result_table_named(duckdb_connection con, ducknng_sq
     duckdb_destroy_logical_type(&type_blob);
     duckdb_destroy_logical_type(&type_int);
     duckdb_destroy_logical_type(&type_tls);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_request_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
     duckdb_table_function_set_function(tf, ducknng_request_scan);
@@ -4773,7 +4801,7 @@ static int register_request_socket_result_table_named(duckdb_connection con, duc
     duckdb_destroy_logical_type(&type_u64);
     duckdb_destroy_logical_type(&type_blob);
     duckdb_destroy_logical_type(&type_int);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_request_socket_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
     duckdb_table_function_set_function(tf, ducknng_request_scan);
@@ -4809,7 +4837,7 @@ static int register_http_result_table_named(duckdb_connection con, ducknng_sql_c
     duckdb_destroy_logical_type(&type_blob);
     duckdb_destroy_logical_type(&type_int);
     duckdb_destroy_logical_type(&type_tls);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_ncurl_bind);
     duckdb_table_function_set_init(tf, ducknng_single_row_init);
     duckdb_table_function_set_function(tf, ducknng_ncurl_scan);
@@ -4838,7 +4866,7 @@ static int register_open_query_table_named(duckdb_connection con, ducknng_sql_co
     duckdb_table_function_add_parameter(tf, type_u64);
     duckdb_destroy_logical_type(&type_varchar);
     duckdb_destroy_logical_type(&type_u64);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_open_query_bind);
     duckdb_table_function_set_init(tf, ducknng_session_result_init);
     duckdb_table_function_set_function(tf, ducknng_session_control_scan);
@@ -4866,7 +4894,7 @@ static int register_session_control_table_named(duckdb_connection con, ducknng_s
     duckdb_table_function_add_parameter(tf, type_u64);
     duckdb_destroy_logical_type(&type_varchar);
     duckdb_destroy_logical_type(&type_u64);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, bind_fn);
     duckdb_table_function_set_init(tf, ducknng_session_result_init);
     duckdb_table_function_set_function(tf, ducknng_session_control_scan);
@@ -4895,7 +4923,7 @@ static int register_fetch_query_table_named(duckdb_connection con, ducknng_sql_c
     duckdb_table_function_add_parameter(tf, type_u64);
     duckdb_destroy_logical_type(&type_varchar);
     duckdb_destroy_logical_type(&type_u64);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_fetch_query_bind);
     duckdb_table_function_set_init(tf, ducknng_session_result_init);
     duckdb_table_function_set_function(tf, ducknng_fetch_query_scan);
@@ -4944,7 +4972,7 @@ static int register_aio_collect_table_named(duckdb_connection con, ducknng_sql_c
     duckdb_destroy_logical_type(&type_u64);
     duckdb_destroy_logical_type(&type_list_u64);
     duckdb_destroy_logical_type(&type_int);
-    duckdb_table_function_set_extra_info(tf, ctx, NULL);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_aio_collect_bind);
     duckdb_table_function_set_init(tf, ducknng_aio_collect_init);
     duckdb_table_function_set_function(tf, ducknng_aio_collect_scan);
@@ -4957,7 +4985,7 @@ static int register_aio_collect_table_named(duckdb_connection con, ducknng_sql_c
 }
 
 int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) {
-    static ducknng_sql_context ctx;
+    ducknng_sql_context ctx;
     duckdb_type start_tls_config_types[6] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT,
         DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
     duckdb_type stop_types[1] = {DUCKDB_TYPE_VARCHAR};

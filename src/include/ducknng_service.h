@@ -41,6 +41,7 @@ struct ducknng_service {
     ducknng_rep_ctx *ctxs;
     int ncontexts;
     ducknng_mutex mu;
+    int mu_initialized;
     ducknng_session **sessions;
     size_t session_count;
     size_t session_cap;

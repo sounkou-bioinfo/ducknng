@@ -38,11 +38,12 @@ acting as a generic abstraction over all socket patterns. The current
 async RPC wrappers are also layered this way: they launch one ordinary
 request/reply method call asynchronously and later return the collected
 raw reply frame for decoding, rather than introducing a second
-background-job protocol. The session family is implemented and usable,
-but it should still be treated as experimental until session ownership
-is bound to a concrete multi-client identity model. HTTP/HTTPS are the
-only current web-carrier focus; `ws://` and `wss://` are intentionally
-deferred and are not enabled in the current build.
+background-job protocol. The current server is still unauthenticated, so
+the session family is implemented and usable but should still be treated
+as experimental until session ownership is bound to a concrete
+multi-client identity model. HTTP/HTTPS are the only current web-carrier
+focus; `ws://` and `wss://` are intentionally deferred and are not
+enabled in the current build.
 
 ## Functions
 
@@ -536,17 +537,17 @@ SELECT ducknng_drop_tls_config(1);
     ├──────────────────────────────────────────────────────────────────────────────────────┤
     │                                                                                    1 │
     └──────────────────────────────────────────────────────────────────────────────────────┘
-    ┌─────────┬────────┬──────────────────────────┐
-    │   ok    │ status │        body_text         │
-    │ boolean │ int32  │         varchar          │
-    ├─────────┼────────┼──────────────────────────┤
-    │ true    │    200 │ hello from ducknng https │
-    └─────────┴────────┴──────────────────────────┘
+    ┌─────────┬────────┬───────────┐
+    │   ok    │ status │ body_text │
+    │ boolean │ int32  │  varchar  │
+    ├─────────┼────────┼───────────┤
+    │ false   │   NULL │ NULL      │
+    └─────────┴────────┴───────────┘
     ┌─────────┬────────┬──────────┬────────────┐
     │   ok    │ status │ body_hex │ has_header │
     │ boolean │ int32  │ varchar  │  boolean   │
     ├─────────┼────────┼──────────┼────────────┤
-    │ true    │    200 │ 01020304 │ true       │
+    │ false   │   NULL │ NULL     │ NULL       │
     └─────────┴────────┴──────────┴────────────┘
     ┌────────────────────────────┐
     │ ducknng_drop_tls_config(1) │
@@ -1557,7 +1558,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1c1db64979157a.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1d16d378e1f153.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

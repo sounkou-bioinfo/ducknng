@@ -77,14 +77,9 @@ The same applies to fetched Arrow payload ergonomics: decide whether the stable 
 
 ### 6. Representative protocol examples and tests
 
-The repo already supports a broader protocol family than the README currently demonstrates. Before sealing, representative runnable examples and tests should exist for more than just req-style RPC and pair-style raw messaging.
+The repo now demonstrates req-style RPC, `pair`, `push` / `pull`, `pub` / `sub`, raw aio, unary RPC aio, and the current session control flow. Before sealing, the remaining question is not whether the protocol family is entirely undocumented, but whether the current examples and tests are representative enough for the less-common raw socket patterns that remain open/close-oriented rather than tutorial-driven.
 
-At minimum, public examples should cover:
-
-- `push` / `pull`
-- `pub` / `sub`
-- req-style raw aio and unary RPC aio
-- the current session control flow
+At minimum, the project should keep the existing runnable examples green and decide whether additional tutorial coverage for `bus` or any later event-oriented patterns belongs in the sealed public story.
 
 ### 7. Explicit scope for `ws://` and `wss://`
 
@@ -98,7 +93,7 @@ These items were worth resolving before the API hardens further and should stay 
 
 - runtime teardown now cleans up services, aio handles, client sockets, TLS configs, the runtime mutex, and the global runtime registry entry instead of leaving destruction partial
 - the vendored NNG Windows MinGW fallback is now documented through an explicit local patch file and patch ledger under `patches/nng/`
-- README examples now include representative raw protocol slices beyond req/pair, including `push` / `pull` and `pub` / `sub`
+- README examples now include representative raw protocol slices beyond req/pair, including `push` / `pull`, `pub` / `sub`, and `surveyor` / `respondent`
 
 ## Not sealing blockers by themselves
 

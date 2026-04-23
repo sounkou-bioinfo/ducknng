@@ -131,6 +131,9 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
     duckdb_database *db;
     if (!rt) return;
     db = rt->db;
+    reg_lock();
+    reg_remove(db);
+    reg_unlock();
     if (rt->services) {
         for (i = 0; i < rt->service_count; i++) {
             ducknng_service *svc = rt->services[i];
@@ -186,10 +189,8 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
     }
     ducknng_method_registry_destroy(&rt->registry);
     if (rt->aio_cv_initialized) ducknng_cond_destroy(&rt->aio_cv);
+    if (rt->init_con) duckdb_disconnect(&rt->init_con);
     ducknng_mutex_destroy(&rt->mu);
-    reg_lock();
-    reg_remove(db);
-    reg_unlock();
     duckdb_free(rt);
 }
 

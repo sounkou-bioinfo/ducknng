@@ -165,12 +165,19 @@ static int ducknng_method_fetch_handler(ducknng_service *svc,
         return -1;
     }
     duckdb_free(json);
-    session = ducknng_service_find_session(svc, session_id);
+    ducknng_mutex_lock(&svc->mu);
+    session = NULL;
+    for (size_t i = 0; i < svc->session_count; i++) {
+        if (svc->sessions[i] && svc->sessions[i]->session_id == session_id) {
+            session = svc->sessions[i];
+            break;
+        }
+    }
     if (!session) {
+        ducknng_mutex_unlock(&svc->mu);
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_NOT_FOUND, "ducknng: session not found");
         return -1;
     }
-    ducknng_mutex_lock(&svc->mu);
     session->last_touch_ms = ducknng_now_ms();
     if (session->cancelled) {
         ducknng_mutex_unlock(&svc->mu);
