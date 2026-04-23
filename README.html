@@ -1528,18 +1528,30 @@ have not been auto-routed over <code>http://</code> and
 <span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a>  <span class="at">url =</span> <span class="st">&#39;https://127.0.0.1:18443&#39;</span>,</span>
 <span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>  <span class="at">handlers =</span> <span class="fu">list</span>(</span>
 <span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a>    <span class="fu">handler</span>(<span class="st">&#39;/hello&#39;</span>, <span class="cf">function</span>(req) {</span>
-<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>      <span class="fu">list</span>(<span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>, <span class="at">headers =</span> <span class="fu">c</span>(<span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> <span class="st">&#39;text/plain&#39;</span>, <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;hello&#39;</span>), <span class="at">body =</span> <span class="st">&#39;hello from nanonext https server&#39;</span>)</span>
-<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>    }),</span>
-<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a>    <span class="fu">handler</span>(<span class="st">&#39;/echo&#39;</span>, <span class="cf">function</span>(req) {</span>
-<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>      <span class="fu">list</span>(</span>
-<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a>        <span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>,</span>
-<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>        <span class="at">headers =</span> <span class="fu">c</span>(<span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> (req<span class="sc">$</span>headers[[<span class="st">&#39;Content-Type&#39;</span>]] <span class="sc">%||%</span> <span class="st">&#39;application/octet-stream&#39;</span>), <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;echo&#39;</span>),</span>
-<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a>        <span class="at">body =</span> req<span class="sc">$</span>body</span>
+<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>      <span class="fu">list</span>(</span>
+<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>        <span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>,</span>
+<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a>        <span class="at">headers =</span> <span class="fu">c</span>(</span>
+<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>          <span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> <span class="st">&#39;text/plain&#39;</span>,</span>
+<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a>          <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;hello&#39;</span></span>
+<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>        ),</span>
+<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a>        <span class="at">body =</span> <span class="st">&#39;hello from nanonext https server&#39;</span></span>
 <span id="cb10-17"><a href="#cb10-17" tabindex="-1"></a>      )</span>
-<span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a>    }, <span class="at">method =</span> <span class="st">&#39;POST&#39;</span>)</span>
-<span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a>  ),</span>
-<span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a>  <span class="at">tls =</span> <span class="fu">tls_config</span>(<span class="at">server =</span> cert<span class="sc">$</span>server)</span>
-<span id="cb10-21"><a href="#cb10-21" tabindex="-1"></a>)</span></code></pre></div>
+<span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a>    }),</span>
+<span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a>    <span class="fu">handler</span>(<span class="st">&#39;/echo&#39;</span>, <span class="cf">function</span>(req) {</span>
+<span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a>      <span class="fu">list</span>(</span>
+<span id="cb10-21"><a href="#cb10-21" tabindex="-1"></a>        <span class="at">status =</span> <span class="dv">200</span><span class="dt">L</span>,</span>
+<span id="cb10-22"><a href="#cb10-22" tabindex="-1"></a>        <span class="at">headers =</span> <span class="fu">c</span>(</span>
+<span id="cb10-23"><a href="#cb10-23" tabindex="-1"></a>          <span class="st">&#39;Content-Type&#39;</span> <span class="ot">=</span> (</span>
+<span id="cb10-24"><a href="#cb10-24" tabindex="-1"></a>            req<span class="sc">$</span>headers[[<span class="st">&#39;Content-Type&#39;</span>]] <span class="sc">%||%</span> <span class="st">&#39;application/octet-stream&#39;</span></span>
+<span id="cb10-25"><a href="#cb10-25" tabindex="-1"></a>          ),</span>
+<span id="cb10-26"><a href="#cb10-26" tabindex="-1"></a>          <span class="st">&#39;X-Test&#39;</span> <span class="ot">=</span> <span class="st">&#39;echo&#39;</span></span>
+<span id="cb10-27"><a href="#cb10-27" tabindex="-1"></a>        ),</span>
+<span id="cb10-28"><a href="#cb10-28" tabindex="-1"></a>        <span class="at">body =</span> req<span class="sc">$</span>body</span>
+<span id="cb10-29"><a href="#cb10-29" tabindex="-1"></a>      )</span>
+<span id="cb10-30"><a href="#cb10-30" tabindex="-1"></a>    }, <span class="at">method =</span> <span class="st">&#39;POST&#39;</span>)</span>
+<span id="cb10-31"><a href="#cb10-31" tabindex="-1"></a>  ),</span>
+<span id="cb10-32"><a href="#cb10-32" tabindex="-1"></a>  <span class="at">tls =</span> <span class="fu">tls_config</span>(<span class="at">server =</span> cert<span class="sc">$</span>server)</span>
+<span id="cb10-33"><a href="#cb10-33" tabindex="-1"></a>)</span></code></pre></div>
 <div class="sourceCode" id="cb11"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>LOAD <span class="st">&#39;build/release/ducknng.duckdb_extension&#39;</span>;</span>
 <span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="co">-- Register a client TLS handle that trusts the self-signed HTTPS demo server.</span></span>
 <span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_tls_config_from_files(</span>
@@ -1561,18 +1573,26 @@ have not been auto-routed over <code>http://</code> and
 <span id="cb11-19"><a href="#cb11-19" tabindex="-1"></a>);</span>
 <span id="cb11-20"><a href="#cb11-20" tabindex="-1"></a></span>
 <span id="cb11-21"><a href="#cb11-21" tabindex="-1"></a><span class="co">-- POST can send raw bytes while still exposing HTTP headers and status in-band.</span></span>
-<span id="cb11-22"><a href="#cb11-22" tabindex="-1"></a><span class="kw">SELECT</span> ok, status, error, hex(<span class="kw">body</span>) <span class="kw">AS</span> body_hex, position(<span class="st">&#39;X-Test&#39;</span> <span class="kw">IN</span> headers_json) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_header</span>
-<span id="cb11-23"><a href="#cb11-23" tabindex="-1"></a><span class="kw">FROM</span> ducknng_ncurl(</span>
-<span id="cb11-24"><a href="#cb11-24" tabindex="-1"></a>  <span class="st">&#39;https://127.0.0.1:18443/echo&#39;</span>,                        <span class="co">-- url</span></span>
-<span id="cb11-25"><a href="#cb11-25" tabindex="-1"></a>  <span class="st">&#39;POST&#39;</span>,                                                <span class="co">-- method</span></span>
-<span id="cb11-26"><a href="#cb11-26" tabindex="-1"></a>  <span class="st">&#39;[{&quot;name&quot;:&quot;Content-Type&quot;,&quot;value&quot;:&quot;application/octet-stream&quot;}]&#39;</span>, <span class="co">-- headers_json</span></span>
-<span id="cb11-27"><a href="#cb11-27" tabindex="-1"></a>  from_hex(<span class="st">&#39;01020304&#39;</span>),                                  <span class="co">-- body</span></span>
-<span id="cb11-28"><a href="#cb11-28" tabindex="-1"></a>  <span class="dv">2000</span>,                                                  <span class="co">-- timeout_ms</span></span>
-<span id="cb11-29"><a href="#cb11-29" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>                                             <span class="co">-- tls_config_id</span></span>
-<span id="cb11-30"><a href="#cb11-30" tabindex="-1"></a>);</span>
-<span id="cb11-31"><a href="#cb11-31" tabindex="-1"></a></span>
-<span id="cb11-32"><a href="#cb11-32" tabindex="-1"></a><span class="co">-- Drop the temporary client TLS handle after the HTTPS checks complete.</span></span>
-<span id="cb11-33"><a href="#cb11-33" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_drop_tls_config(<span class="dv">1</span>);</span></code></pre></div>
+<span id="cb11-22"><a href="#cb11-22" tabindex="-1"></a><span class="kw">SET</span> VARIABLE echo_headers <span class="op">=</span></span>
+<span id="cb11-23"><a href="#cb11-23" tabindex="-1"></a>  <span class="st">&#39;[{&quot;name&quot;:&quot;Content-Type&quot;,&quot;value&quot;:&quot;application/octet-stream&quot;}]&#39;</span>;</span>
+<span id="cb11-24"><a href="#cb11-24" tabindex="-1"></a></span>
+<span id="cb11-25"><a href="#cb11-25" tabindex="-1"></a><span class="kw">SELECT</span></span>
+<span id="cb11-26"><a href="#cb11-26" tabindex="-1"></a>  ok,</span>
+<span id="cb11-27"><a href="#cb11-27" tabindex="-1"></a>  status,</span>
+<span id="cb11-28"><a href="#cb11-28" tabindex="-1"></a>  error,</span>
+<span id="cb11-29"><a href="#cb11-29" tabindex="-1"></a>  hex(<span class="kw">body</span>) <span class="kw">AS</span> body_hex,</span>
+<span id="cb11-30"><a href="#cb11-30" tabindex="-1"></a>  position(<span class="st">&#39;X-Test&#39;</span> <span class="kw">IN</span> headers_json) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_header</span>
+<span id="cb11-31"><a href="#cb11-31" tabindex="-1"></a><span class="kw">FROM</span> ducknng_ncurl(</span>
+<span id="cb11-32"><a href="#cb11-32" tabindex="-1"></a>  <span class="st">&#39;https://127.0.0.1:18443/echo&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb11-33"><a href="#cb11-33" tabindex="-1"></a>  <span class="st">&#39;POST&#39;</span>,                         <span class="co">-- method</span></span>
+<span id="cb11-34"><a href="#cb11-34" tabindex="-1"></a>  getvariable(<span class="st">&#39;echo_headers&#39;</span>),    <span class="co">-- headers_json</span></span>
+<span id="cb11-35"><a href="#cb11-35" tabindex="-1"></a>  from_hex(<span class="st">&#39;01020304&#39;</span>),           <span class="co">-- body</span></span>
+<span id="cb11-36"><a href="#cb11-36" tabindex="-1"></a>  <span class="dv">2000</span>,                           <span class="co">-- timeout_ms</span></span>
+<span id="cb11-37"><a href="#cb11-37" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>                      <span class="co">-- tls_config_id</span></span>
+<span id="cb11-38"><a href="#cb11-38" tabindex="-1"></a>);</span>
+<span id="cb11-39"><a href="#cb11-39" tabindex="-1"></a></span>
+<span id="cb11-40"><a href="#cb11-40" tabindex="-1"></a><span class="co">-- Drop the temporary client TLS handle after the HTTPS checks complete.</span></span>
+<span id="cb11-41"><a href="#cb11-41" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_drop_tls_config(<span class="dv">1</span>);</span></code></pre></div>
 <pre><code>┌──────────────────────────────────────────────────────────────────────────────────────┐
 │ ducknng_tls_config_from_files(NULL, &#39;/tmp/ducknng_readme_http_demo_ca.pem&#39;, NULL, 2) │
 │                                        uint64                                        │
@@ -2558,8 +2578,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb33-21"><a href="#cb33-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb33-22"><a href="#cb33-22" tabindex="-1"></a>  )</span>
 <span id="cb33-23"><a href="#cb33-23" tabindex="-1"></a>)</span>
-<span id="cb33-24"><a href="#cb33-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_1e938c81a8714.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb33-25"><a href="#cb33-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
+<span id="cb33-24"><a href="#cb33-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_1eb23657d3b691.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb33-25"><a href="#cb33-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb33-26"><a href="#cb33-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb33-27"><a href="#cb33-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb33-28"><a href="#cb33-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>

@@ -557,12 +557,24 @@ server <- http_server(
   url = 'https://127.0.0.1:18443',
   handlers = list(
     handler('/hello', function(req) {
-      list(status = 200L, headers = c('Content-Type' = 'text/plain', 'X-Test' = 'hello'), body = 'hello from nanonext https server')
+      list(
+        status = 200L,
+        headers = c(
+          'Content-Type' = 'text/plain',
+          'X-Test' = 'hello'
+        ),
+        body = 'hello from nanonext https server'
+      )
     }),
     handler('/echo', function(req) {
       list(
         status = 200L,
-        headers = c('Content-Type' = (req$headers[['Content-Type']] %||% 'application/octet-stream'), 'X-Test' = 'echo'),
+        headers = c(
+          'Content-Type' = (
+            req$headers[['Content-Type']] %||% 'application/octet-stream'
+          ),
+          'X-Test' = 'echo'
+        ),
         body = req$body
       )
     }, method = 'POST')
@@ -593,14 +605,22 @@ FROM ducknng_ncurl(
 );
 
 -- POST can send raw bytes while still exposing HTTP headers and status in-band.
-SELECT ok, status, error, hex(body) AS body_hex, position('X-Test' IN headers_json) > 0 AS has_header
+SET VARIABLE echo_headers =
+  '[{"name":"Content-Type","value":"application/octet-stream"}]';
+
+SELECT
+  ok,
+  status,
+  error,
+  hex(body) AS body_hex,
+  position('X-Test' IN headers_json) > 0 AS has_header
 FROM ducknng_ncurl(
-  'https://127.0.0.1:18443/echo',                        -- url
-  'POST',                                                -- method
-  '[{"name":"Content-Type","value":"application/octet-stream"}]', -- headers_json
-  from_hex('01020304'),                                  -- body
-  2000,                                                  -- timeout_ms
-  1::UBIGINT                                             -- tls_config_id
+  'https://127.0.0.1:18443/echo', -- url
+  'POST',                         -- method
+  getvariable('echo_headers'),    -- headers_json
+  from_hex('01020304'),           -- body
+  2000,                           -- timeout_ms
+  1::UBIGINT                      -- tls_config_id
 );
 
 -- Drop the temporary client TLS handle after the HTTPS checks complete.
@@ -1638,8 +1658,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1e938c81a8714.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1eb23657d3b691.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE
