@@ -177,6 +177,103 @@ SELECT ducknng_close_socket(1);
 SELECT ducknng_stop_server('sql_client_demo');
 ```
 
+### Use `ducknng_ncurl()` as a low-level HTTP client
+
+A tiny local R `servr` server is started during README rendering so this example runs without depending on the public internet. This helper is the low-level HTTP/HTTPS transport primitive; the higher-level RPC and session helpers have not been auto-routed over `http://` and `https://` yet.
+
+```{r http-client-demo-setup, include=FALSE}
+pidfile <- "/tmp/ducknng_readme_http_demo.pid"
+script <- "/tmp/ducknng_readme_http_demo.R"
+logfile <- "/tmp/ducknng_readme_http_demo.log"
+if (file.exists(pidfile)) {
+  pid <- suppressWarnings(as.integer(readLines(pidfile, warn = FALSE)))
+  if (!is.na(pid)) tools::pskill(pid)
+  unlink(pidfile)
+}
+writeLines(c(
+  "library(servr)",
+  "`%||%` <- function(x, y) if (is.null(x) || !length(x) || !nzchar(x)) y else x",
+  "servr::create_server(",
+  "  host = '127.0.0.1',",
+  "  port = 18081L,",
+  "  browser = FALSE,",
+  "  daemon = FALSE,",
+  "  verbose = FALSE,",
+  "  handler = function(req) {",
+  "    method <- req$REQUEST_METHOD",
+  "    path <- req$PATH_INFO",
+  "    if (identical(method, 'GET') && identical(path, '/hello')) {",
+  "      return(list(status = 200L, headers = list('Content-Type' = 'text/plain', 'X-Test' = 'hello'), body = 'hello from ducknng http'))",
+  "    }",
+  "    if (identical(method, 'POST') && identical(path, '/echo')) {",
+  "      body <- raw(0)",
+  "      input <- req$rook.input",
+  "      repeat {",
+  "        chunk <- input$read()",
+  "        if (length(chunk) == 0) break",
+  "        body <- c(body, chunk)",
+  "      }",
+  "      ctype <- req$CONTENT_TYPE %||% req$HTTP_CONTENT_TYPE %||% 'application/octet-stream'",
+  "      return(list(status = 200L, headers = list('Content-Type' = ctype, 'X-Test' = 'echo'), body = body))",
+  "    }",
+  "    list(status = 404L, headers = list('Content-Type' = 'text/plain'), body = 'not found')",
+  "  }",
+  ")"
+), script)
+status <- system(sprintf(
+  "Rscript %s > %s 2>&1 & echo $! > %s",
+  shQuote(script),
+  shQuote(logfile),
+  shQuote(pidfile)
+))
+if (status != 0 || !file.exists(pidfile)) {
+  stop("failed to start the README HTTP demo server")
+}
+Sys.sleep(1)
+pid <- suppressWarnings(as.integer(readLines(pidfile, warn = FALSE)))
+if (is.na(pid) || system(sprintf("kill -0 %d >/dev/null 2>&1", pid)) != 0) {
+  log_text <- if (file.exists(logfile)) paste(readLines(logfile, warn = FALSE), collapse = "\n") else ""
+  stop("README HTTP demo server did not stay running\n", log_text)
+}
+```
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- GET defaults are allowed: NULL method means GET and NULL body means no request body.
+SELECT ok, status, body_text
+FROM ducknng_ncurl(
+  'http://127.0.0.1:18081/hello', -- url
+  NULL,                           -- method
+  NULL,                           -- headers_json
+  NULL,                           -- body
+  2000,                           -- timeout_ms
+  0::UBIGINT                      -- tls_config_id
+);
+
+-- POST can send raw bytes while still exposing HTTP headers and status in-band.
+SELECT ok, status, hex(body) AS body_hex, position('X-Test' IN headers_json) > 0 AS has_header
+FROM ducknng_ncurl(
+  'http://127.0.0.1:18081/echo',                           -- url
+  'POST',                                                  -- method
+  '[{"name":"Content-Type","value":"application/octet-stream"}]', -- headers_json
+  from_hex('01020304'),                                    -- body
+  2000,                                                    -- timeout_ms
+  0::UBIGINT                                               -- tls_config_id
+);
+```
+
+```{r http-client-demo-cleanup, include=FALSE}
+pidfile <- "/tmp/ducknng_readme_http_demo.pid"
+if (file.exists(pidfile)) {
+  pid <- suppressWarnings(as.integer(readLines(pidfile, warn = FALSE)))
+  if (!is.na(pid)) tools::pskill(pid)
+  unlink(pidfile)
+}
+unlink(c(
+  "/tmp/ducknng_readme_http_demo.R",
+  "/tmp/ducknng_readme_http_demo.log"
+))
+```
+
 ### Launch raw socket send/recv airos and inspect send status explicitly
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}

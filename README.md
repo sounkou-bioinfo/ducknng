@@ -444,6 +444,52 @@ SELECT ducknng_stop_server('sql_client_demo');
     │ true                                   │
     └────────────────────────────────────────┘
 
+### Use `ducknng_ncurl()` as a low-level HTTP client
+
+A tiny local R `servr` server is started during README rendering so this
+example runs without depending on the public internet. This helper is
+the low-level HTTP/HTTPS transport primitive; the higher-level RPC and
+session helpers have not been auto-routed over `http://` and `https://`
+yet.
+
+``` sql
+LOAD '/root/ducknng/build/release/ducknng.duckdb_extension';
+-- GET defaults are allowed: NULL method means GET and NULL body means no request body.
+SELECT ok, status, body_text
+FROM ducknng_ncurl(
+  'http://127.0.0.1:18081/hello', -- url
+  NULL,                           -- method
+  NULL,                           -- headers_json
+  NULL,                           -- body
+  2000,                           -- timeout_ms
+  0::UBIGINT                      -- tls_config_id
+);
+
+-- POST can send raw bytes while still exposing HTTP headers and status in-band.
+SELECT ok, status, hex(body) AS body_hex, position('X-Test' IN headers_json) > 0 AS has_header
+FROM ducknng_ncurl(
+  'http://127.0.0.1:18081/echo',                           -- url
+  'POST',                                                  -- method
+  '[{"name":"Content-Type","value":"application/octet-stream"}]', -- headers_json
+  from_hex('01020304'),                                    -- body
+  2000,                                                    -- timeout_ms
+  0::UBIGINT                                               -- tls_config_id
+);
+```
+
+    ┌─────────┬────────┬─────────────────────────┐
+    │   ok    │ status │        body_text        │
+    │ boolean │ int32  │         varchar         │
+    ├─────────┼────────┼─────────────────────────┤
+    │ true    │    200 │ hello from ducknng http │
+    └─────────┴────────┴─────────────────────────┘
+    ┌─────────┬────────┬──────────┬────────────┐
+    │   ok    │ status │ body_hex │ has_header │
+    │ boolean │ int32  │ varchar  │  boolean   │
+    ├─────────┼────────┼──────────┼────────────┤
+    │ true    │    200 │ 01020304 │ true       │
+    └─────────┴────────┴──────────┴────────────┘
+
 ### Launch raw socket send/recv airos and inspect send status explicitly
 
 ``` sql
@@ -1055,7 +1101,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_19551231fb2d66.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1a34523bc3fb8a.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
