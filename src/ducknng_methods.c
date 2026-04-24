@@ -38,8 +38,10 @@ static int ducknng_method_manifest_handler(ducknng_service *svc,
         security.peer_identity_required = ducknng_service_requires_peer_identity(svc);
         security.sessions_bind_peer_identity_when_present = 1;
         security.peer_identity_format = "tls:san:<value>|tls:cn:<common-name>";
+        ducknng_mutex_lock(&svc->rt->mu);
         json = ducknng_method_registry_manifest_json(&svc->rt->registry, "ducknng", "0.1.0",
             DUCKNNG_WIRE_VERSION, &security, &errmsg);
+        ducknng_mutex_unlock(&svc->rt->mu);
     }
     if (!json) {
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INTERNAL,

@@ -1217,6 +1217,62 @@ static void ducknng_register_exec_method_scalar(duckdb_function_info info, duckd
     }
 }
 
+static int ducknng_method_descriptor_sessionful(const ducknng_method_descriptor *method) {
+    if (!method) return 0;
+    return method->session_behavior != DUCKNNG_SESSION_STATELESS ||
+        method->requires_session || method->opens_session || method->closes_session;
+}
+
+static size_t ducknng_runtime_visible_session_count_locked(ducknng_runtime *rt) {
+    size_t i;
+    size_t total = 0;
+    if (!rt) return 0;
+    for (i = 0; i < rt->service_count; i++) {
+        ducknng_service *svc = rt->services[i];
+        if (svc) total += atomic_load_explicit(&svc->session_count_visible, memory_order_acquire);
+    }
+    return total;
+}
+
+static int ducknng_registry_family_sessionful_locked(const ducknng_method_registry *registry, const char *family) {
+    size_t i;
+    if (!registry || !family || !family[0]) return 0;
+    for (i = 0; i < registry->method_count; i++) {
+        const ducknng_method_descriptor *method = registry->methods[i];
+        if (method && method->family && strcmp(method->family, family) == 0 &&
+            ducknng_method_descriptor_sessionful(method)) return 1;
+    }
+    return 0;
+}
+
+static void ducknng_set_method_auth_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    bool *out = (bool *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        int requires_auth = arg_bool(duckdb_data_chunk_get_vector(input, 1), row, false) ? 1 : 0;
+        char *errmsg = NULL;
+        int ok;
+        if (!ctx || !ctx->rt || !name || !name[0]) {
+            if (name) duckdb_free(name);
+            duckdb_scalar_function_set_error(info, "ducknng: method name is required");
+            return;
+        }
+        ducknng_mutex_lock(&ctx->rt->mu);
+        ok = ducknng_method_registry_set_requires_auth(&ctx->rt->registry, name, requires_auth, &errmsg);
+        ducknng_mutex_unlock(&ctx->rt->mu);
+        duckdb_free(name);
+        if (!ok) {
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to update method auth policy");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        out[row] = true;
+    }
+}
+
 static void ducknng_unregister_method_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
@@ -1236,6 +1292,24 @@ static void ducknng_unregister_method_scalar(duckdb_function_info info, duckdb_d
             return;
         }
         ducknng_mutex_lock(&ctx->rt->mu);
+        {
+            const ducknng_method_descriptor *method = ducknng_method_registry_find(&ctx->rt->registry,
+                (const uint8_t *)name, (uint32_t)strlen(name));
+            if (!method) {
+                ducknng_mutex_unlock(&ctx->rt->mu);
+                duckdb_free(name);
+                duckdb_scalar_function_set_error(info, "ducknng: method not found");
+                return;
+            }
+            if (ducknng_method_descriptor_sessionful(method) &&
+                ducknng_runtime_visible_session_count_locked(ctx->rt) > 0) {
+                ducknng_mutex_unlock(&ctx->rt->mu);
+                duckdb_free(name);
+                duckdb_scalar_function_set_error(info,
+                    "ducknng: cannot unregister sessionful method while sessions are open");
+                return;
+            }
+        }
         ok = ducknng_method_registry_unregister(&ctx->rt->registry, name);
         ducknng_mutex_unlock(&ctx->rt->mu);
         duckdb_free(name);
@@ -1266,6 +1340,14 @@ static void ducknng_unregister_family_scalar(duckdb_function_info info, duckdb_d
             return;
         }
         ducknng_mutex_lock(&ctx->rt->mu);
+        if (ducknng_registry_family_sessionful_locked(&ctx->rt->registry, family) &&
+            ducknng_runtime_visible_session_count_locked(ctx->rt) > 0) {
+            ducknng_mutex_unlock(&ctx->rt->mu);
+            duckdb_free(family);
+            duckdb_scalar_function_set_error(info,
+                "ducknng: cannot unregister sessionful method family while sessions are open");
+            return;
+        }
         removed = ducknng_method_registry_unregister_family(&ctx->rt->registry, family);
         ducknng_mutex_unlock(&ctx->rt->mu);
         duckdb_free(family);
@@ -6567,6 +6649,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type tls_self_signed_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_INTEGER};
     duckdb_type tls_id_types[1] = {DUCKDB_TYPE_UBIGINT};
     duckdb_type method_name_types[1] = {DUCKDB_TYPE_VARCHAR};
+    duckdb_type method_auth_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_BOOLEAN};
     duckdb_type method_family_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type register_exec_auth_types[1] = {DUCKDB_TYPE_BOOLEAN};
     ctx.rt = rt;
@@ -6580,6 +6663,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_drop_tls_config", 1, ducknng_drop_tls_config_scalar, &ctx, tls_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_register_exec_method", 0, ducknng_register_exec_method_scalar, &ctx, NULL, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_register_exec_method", 1, ducknng_register_exec_method_scalar, &ctx, register_exec_auth_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(connection, "ducknng_set_method_auth", 2, ducknng_set_method_auth_scalar, &ctx, method_auth_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_unregister_method", 1, ducknng_unregister_method_scalar, &ctx, method_name_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_unregister_family", 1, ducknng_unregister_family_scalar, &ctx, method_family_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_run_rpc_raw", 3, ducknng_run_rpc_raw_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_BLOB)) return 0;

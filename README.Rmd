@@ -46,13 +46,14 @@ Implemented now:
 - generic NNG sockets and raw send/recv across the NNG transport schemes above
 - first-class raw AIO handles for one pending NNG operation: socket send/recv, req-style request/reply futures, and the first raw unary RPC futures
 - manifest-driven RPC helpers, opt-in `exec`, and query sessions (`query_open`, `fetch`, `close`, `cancel`)
+- registry auth policy controls such as `ducknng_set_method_auth('manifest', true)` for protecting discovery through verified peer identity
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on URL scheme
 - TLS config handles for `tls+tcp://`, `wss://`, and `https://`; `auth_mode = 2` enables required peer verification/mTLS
 - session ownership by `session_token`, additionally bound to verified mTLS peer identity when present
 
 Still intentionally deferred or not sealed:
 
-- HTTP async helpers are not part of the stable surface yet
+- `ducknng_ncurl_aio(...)` is planned but not implemented yet
 - CSV/TSV/Parquet body parsers are not implemented beyond the safe BLOB fallback
 - full SQL-side decoding of session `fetch` Arrow batch BLOBs is still a future table-function layer
 - envelope-level application authentication is not implemented; the current contract is `session_token` plus optional verified mTLS owner identity
@@ -913,7 +914,7 @@ SELECT ducknng_stop_server('tls_demo_self');
 SELECT ducknng_drop_tls_config(1);
 ```
 
-For mTLS, create the same kind of TLS handle with `auth_mode = 2`. On listeners this requires the peer to present a certificate trusted by the configured CA; on clients it requires server verification. The dispatcher derives the current caller identity from the first verified peer certificate SAN as `tls:san:<value>`, falling back to the common name as `tls:cn:<common-name>`. Sessions opened over mTLS are still controlled by `session_token`, but they are also bound to that verified peer identity. `ducknng_list_servers()` exposes `tls_enabled`, `tls_auth_mode`, and `peer_identity_required` so deployments can distinguish TLS without client verification from mTLS.
+For mTLS, create the same kind of TLS handle with `auth_mode = 2`. On listeners this requires the peer to present a certificate trusted by the configured CA; on clients it requires server verification. The dispatcher derives the current caller identity from the first verified peer certificate SAN as `tls:san:<value>`, falling back to the common name as `tls:cn:<common-name>`. Sessions opened over mTLS are still controlled by `session_token`, but they are also bound to that verified peer identity. `ducknng_list_servers()` exposes `tls_enabled`, `tls_auth_mode`, and `peer_identity_required` so deployments can distinguish TLS without client verification from mTLS. Individual registry-backed methods can also require verified peer identity; for example, `ducknng_set_method_auth('manifest', true)` protects manifest discovery without unregistering the method.
 
 ### `tls+tcp://` from file-backed certificate material
 

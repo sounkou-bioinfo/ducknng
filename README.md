@@ -68,6 +68,9 @@ Implemented now:
   RPC futures
 - manifest-driven RPC helpers, opt-in `exec`, and query sessions
   (`query_open`, `fetch`, `close`, `cancel`)
+- registry auth policy controls such as
+  `ducknng_set_method_auth('manifest', true)` for protecting discovery
+  through verified peer identity
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on
   URL scheme
 - TLS config handles for `tls+tcp://`, `wss://`, and `https://`;
@@ -77,7 +80,7 @@ Implemented now:
 
 Still intentionally deferred or not sealed:
 
-- HTTP async helpers are not part of the stable surface yet
+- `ducknng_ncurl_aio(...)` is planned but not implemented yet
 - CSV/TSV/Parquet body parsers are not implemented beyond the safe BLOB
   fallback
 - full SQL-side decoding of session `fetch` Arrow batch BLOBs is still a
@@ -224,12 +227,13 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Method Registry
 
-| name                           | kind   | arguments         | returns                                                                                                                                                                                                                                                                       | description                                                        |
-|--------------------------------|--------|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
-| `ducknng_register_exec_method` | scalar | `[requires_auth]` | `BOOLEAN`                                                                                                                                                                                                                                                                     | Register the built-in exec RPC method explicitly.                  |
-| `ducknng_unregister_method`    | scalar | `name`            | `BOOLEAN`                                                                                                                                                                                                                                                                     | Unregister a method from the runtime registry.                     |
-| `ducknng_unregister_family`    | scalar | `family`          | `UBIGINT`                                                                                                                                                                                                                                                                     | Unregister all methods in a family and return the number removed.  |
-| `ducknng_list_methods`         | table  |                   | `TABLE(name VARCHAR, family VARCHAR, summary VARCHAR, transport_pattern VARCHAR, request_payload_format VARCHAR, response_payload_format VARCHAR, response_mode VARCHAR, request_schema_json VARCHAR, response_schema_json VARCHAR, requires_auth BOOLEAN, disabled BOOLEAN)` | List the currently registered RPC methods in the runtime registry. |
+| name                           | kind   | arguments             | returns                                                                                                                                                                                                                                                                       | description                                                                            |
+|--------------------------------|--------|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
+| `ducknng_register_exec_method` | scalar | `[requires_auth]`     | `BOOLEAN`                                                                                                                                                                                                                                                                     | Register the built-in exec RPC method explicitly.                                      |
+| `ducknng_set_method_auth`      | scalar | `name, requires_auth` | `BOOLEAN`                                                                                                                                                                                                                                                                     | Set descriptor-level verified-peer-identity authorization for a registered RPC method. |
+| `ducknng_unregister_method`    | scalar | `name`                | `BOOLEAN`                                                                                                                                                                                                                                                                     | Unregister a method from the runtime registry.                                         |
+| `ducknng_unregister_family`    | scalar | `family`              | `UBIGINT`                                                                                                                                                                                                                                                                     | Unregister all methods in a family and return the number removed.                      |
+| `ducknng_list_methods`         | table  |                       | `TABLE(name VARCHAR, family VARCHAR, summary VARCHAR, transport_pattern VARCHAR, request_payload_format VARCHAR, response_payload_format VARCHAR, response_mode VARCHAR, request_schema_json VARCHAR, response_schema_json VARCHAR, requires_auth BOOLEAN, disabled BOOLEAN)` | List the currently registered RPC methods in the runtime registry.                     |
 
 ## Primitive Transport
 
@@ -1355,7 +1359,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | 1fe2d1aaf94ce28ffa802cad07f7179b | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | c719fd0647af7a33d29e4b20474dd707 | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1431,7 +1435,10 @@ name as `tls:cn:<common-name>`. Sessions opened over mTLS are still
 controlled by `session_token`, but they are also bound to that verified
 peer identity. `ducknng_list_servers()` exposes `tls_enabled`,
 `tls_auth_mode`, and `peer_identity_required` so deployments can
-distinguish TLS without client verification from mTLS.
+distinguish TLS without client verification from mTLS. Individual
+registry-backed methods can also require verified peer identity; for
+example, `ducknng_set_method_auth('manifest', true)` protects manifest
+discovery without unregistering the method.
 
 ### `tls+tcp://` from file-backed certificate material
 
@@ -1783,8 +1790,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_3480a2358f5782.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                              TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_34daacc7f65ee.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

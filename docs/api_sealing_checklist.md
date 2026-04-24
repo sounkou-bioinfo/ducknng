@@ -23,24 +23,24 @@ That is enough for serious use and interop work, but it is not yet enough to cal
 
 ## Must-resolve before sealing
 
-### 1. Session execution isolation and ownership policy review
+### 1. Session ownership and execution-lane policy review
 
-The previous bare-`session_id` ownership blocker is addressed by the current query-family bearer token model: `query_open` returns `session_token`, and `fetch`, `close`, and `cancel` must present it with the session id. Transport-derived mTLS identity has also landed for TLS-authenticated services, and sessions opened with a verified peer identity are bound to that identity in addition to the token. Before sealing, the remaining session question is whether this bearer-token plus optional mTLS owner-identity model is the stable public owner contract or whether an envelope-level RPC authentication layer is still required.
+The previous bare-`session_id` ownership blocker is addressed by the current query-family bearer token model: `query_open` returns `session_token`, and `fetch`, `close`, and `cancel` must present it with the session id. Transport-derived mTLS identity has also landed for TLS-authenticated services, and sessions opened with a verified peer identity are bound to that identity in addition to the token. Before sealing, the remaining ownership question is whether this bearer-token plus optional mTLS owner-identity model is the stable public owner contract or whether an envelope-level RPC authentication layer is still required.
 
-The deeper remaining session blocker is execution isolation. Service-owned SQL is still serialized through the runtime init connection. That avoids concurrent connection misuse, but it does not yet provide isolated per-session DuckDB state or a sandboxed execution profile. Before declaring multi-client session semantics sealed, decide whether per-session or per-request DuckDB connections with locked-down configuration are required for the stable surface, and decide which filesystem, extension-loading, external-access, and attachment capabilities are allowed over RPC.
+The current service execution model is a single serialized DuckDB execution lane backed by the runtime init connection. That is no longer treated as an automatic sealing blocker: deployments can scale or isolate work by using multiple DuckDB contexts, multiple `ducknng` services or instances, or an upstream router. The remaining decision is how strongly the stable API must expose and document that lane model, and which filesystem, extension-loading, external-access, and attachment capabilities are allowed when deployments expose SQL over RPC. Per-session or per-request DuckDB connections remain a possible hard-isolation mode, not the only acceptable sealed posture.
 
 ### 2. Resource quotas for multi-client services
 
-The current implementation enforces listener receive-size limits, descriptor request/reply-size limits, and session idle timeout. It does not yet implement all owner/pipe-level quotas expected from a sealed multi-tenant RPC service. Before sealing multi-client deployment semantics, decide whether the stable surface needs explicit limits for concurrent in-flight requests, open sessions per owner identity, cumulative reply bytes per owner, and session-open rate.
+The current implementation enforces listener receive-size limits, descriptor request/reply-size limits, and service-level session idle timeout. It does not yet implement all owner/pipe-level quotas useful for a sealed multi-tenant RPC service. Before sealing multi-client deployment semantics, decide whether the stable surface needs explicit limits for concurrent in-flight requests, open sessions per owner identity, cumulative reply bytes per owner, and session-open rate. If per-session idle timeout is accepted at `query_open` time, it should be bounded by server-side defaults and maxima rather than being an unbounded client choice.
 
-### 3. Final HTTP async scope
+### 3. HTTP async and web-server framework scope
 
 The synchronous HTTP transport direction is now in place:
 
 - `ducknng_start_http_server(...)` is implemented
 - the existing synchronous request/RPC/session helpers route over `http://` and `https://`
 
-Before sealing, the remaining HTTP question is whether any HTTP aio helpers are intended to be part of the stable async story. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules.
+Before sealing, `ducknng_ncurl_aio(...)` should be treated as the natural async counterpart to `ducknng_ncurl(...)`, matching the `nanonext` ergonomic reference while still using the existing future-like AIO handle model. The broader HTTP server framework question is separate: the current server is a non-blocking NNG HTTP server that mounts one framed RPC handler; a later web-toolkit layer may add explicit route handlers, static responses, or SQL-backed handlers, but it must not create path-specific copies of existing RPC methods. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules unless a separate web-framework surface is designed and documented.
 
 ### 4. Final generic socket transport coverage story
 
@@ -90,6 +90,8 @@ These items were worth resolving before the API hardens further and should stay 
 - query sessions now bind ownership to an explicit `session_token` bearer capability instead of treating `session_id` as a capability
 - TLS-authenticated services now attach verified mTLS peer identity to requests and bind sessions to that identity when present
 - `ducknng_register_exec_method(true)` can register the opt-in `exec` descriptor with verified peer identity required, while the zero-argument form remains backwards compatible
+- `ducknng_set_method_auth(name, requires_auth)` can protect registry-backed methods such as `manifest` using the same descriptor-level auth path
+- unregistration now refuses to remove sessionful methods or families while any service has open sessions
 
 ## Not sealing blockers by themselves
 

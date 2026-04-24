@@ -8,20 +8,30 @@ DUCKDB_EXTENSION_EXTERN
 
 static int ducknng_registry_reserve(ducknng_method_registry *registry, size_t want, char **errmsg) {
     const ducknng_method_descriptor **next_methods;
+    unsigned char *next_owned;
     size_t next_cap = registry->method_cap ? registry->method_cap * 2 : 8;
     if (registry->method_cap >= want) return 1;
     while (next_cap < want) next_cap *= 2;
     next_methods = (const ducknng_method_descriptor **)duckdb_malloc(sizeof(*next_methods) * next_cap);
-    if (!next_methods) {
+    next_owned = (unsigned char *)duckdb_malloc(sizeof(*next_owned) * next_cap);
+    if (!next_methods || !next_owned) {
+        if (next_methods) duckdb_free(next_methods);
+        if (next_owned) duckdb_free(next_owned);
         if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory growing method registry");
         return 0;
     }
     memset(next_methods, 0, sizeof(*next_methods) * next_cap);
+    memset(next_owned, 0, sizeof(*next_owned) * next_cap);
     if (registry->methods && registry->method_count) {
         memcpy(next_methods, registry->methods, sizeof(*next_methods) * registry->method_count);
         duckdb_free(registry->methods);
     }
+    if (registry->owned && registry->method_count) {
+        memcpy(next_owned, registry->owned, sizeof(*next_owned) * registry->method_count);
+        duckdb_free(registry->owned);
+    }
     registry->methods = next_methods;
+    registry->owned = next_owned;
     registry->method_cap = next_cap;
     return 1;
 }
@@ -52,9 +62,16 @@ static int ducknng_method_name_exists_in_batch(
 
 static void ducknng_registry_remove_at(ducknng_method_registry *registry, size_t idx) {
     if (!registry || idx >= registry->method_count) return;
-    for (; idx + 1 < registry->method_count; idx++) registry->methods[idx] = registry->methods[idx + 1];
+    if (registry->owned && registry->owned[idx] && registry->methods && registry->methods[idx]) {
+        duckdb_free((void *)registry->methods[idx]);
+    }
+    for (; idx + 1 < registry->method_count; idx++) {
+        registry->methods[idx] = registry->methods[idx + 1];
+        if (registry->owned) registry->owned[idx] = registry->owned[idx + 1];
+    }
     registry->method_count--;
     registry->methods[registry->method_count] = NULL;
+    if (registry->owned) registry->owned[registry->method_count] = 0;
 }
 
 int ducknng_method_registry_init(ducknng_method_registry *registry) {
@@ -64,8 +81,15 @@ int ducknng_method_registry_init(ducknng_method_registry *registry) {
 }
 
 void ducknng_method_registry_destroy(ducknng_method_registry *registry) {
+    size_t i;
     if (!registry) return;
+    if (registry->methods && registry->owned) {
+        for (i = 0; i < registry->method_count; i++) {
+            if (registry->owned[i] && registry->methods[i]) duckdb_free((void *)registry->methods[i]);
+        }
+    }
     if (registry->methods) duckdb_free(registry->methods);
+    if (registry->owned) duckdb_free(registry->owned);
     memset(registry, 0, sizeof(*registry));
 }
 
@@ -80,7 +104,9 @@ int ducknng_method_registry_register(ducknng_method_registry *registry,
         return 0;
     }
     if (!ducknng_registry_reserve(registry, registry->method_count + 1, errmsg)) return 0;
-    registry->methods[registry->method_count++] = method;
+    registry->methods[registry->method_count] = method;
+    if (registry->owned) registry->owned[registry->method_count] = 0;
+    registry->method_count++;
     return 1;
 }
 
@@ -104,7 +130,9 @@ int ducknng_method_registry_register_many(ducknng_method_registry *registry,
     }
     if (!ducknng_registry_reserve(registry, registry->method_count + n_methods, errmsg)) return 0;
     for (i = 0; i < n_methods; i++) {
-        registry->methods[registry->method_count++] = methods[i];
+        registry->methods[registry->method_count] = methods[i];
+        if (registry->owned) registry->owned[registry->method_count] = 0;
+        registry->method_count++;
     }
     return 1;
 }
@@ -136,6 +164,35 @@ size_t ducknng_method_registry_unregister_family(ducknng_method_registry *regist
         i++;
     }
     return removed;
+}
+
+int ducknng_method_registry_set_requires_auth(ducknng_method_registry *registry,
+    const char *name, int requires_auth, char **errmsg) {
+    size_t i;
+    ducknng_method_descriptor *copy;
+    if (!registry || !name || !name[0]) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: method name is required");
+        return 0;
+    }
+    for (i = 0; i < registry->method_count; i++) {
+        const ducknng_method_descriptor *method = registry->methods[i];
+        if (!method || !method->name || strcmp(method->name, name) != 0) continue;
+        requires_auth = requires_auth ? 1 : 0;
+        if (method->requires_auth == requires_auth) return 1;
+        copy = (ducknng_method_descriptor *)duckdb_malloc(sizeof(*copy));
+        if (!copy) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory updating method auth policy");
+            return 0;
+        }
+        memcpy(copy, method, sizeof(*copy));
+        copy->requires_auth = requires_auth;
+        if (registry->owned && registry->owned[i] && registry->methods[i]) duckdb_free((void *)registry->methods[i]);
+        registry->methods[i] = copy;
+        if (registry->owned) registry->owned[i] = 1;
+        return 1;
+    }
+    if (errmsg) *errmsg = ducknng_strdup("ducknng: method not found");
+    return 0;
 }
 
 const ducknng_method_descriptor *ducknng_method_registry_find(

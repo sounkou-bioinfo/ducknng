@@ -17,6 +17,7 @@
 - Added the first content-type driven body codec provider layer: `ducknng_list_codecs()`, `ducknng_parse_body(body, content_type)`, and `ducknng_ncurl_table(...)` now expose built-in raw/text/JSON/Arrow IPC/frame parsing while keeping `ducknng_ncurl(...)` raw and keeping the HTTP server RPC endpoint frame-only. JSON parsing now stays in memory through DuckDB JSON functions; CSV/TSV/Parquet media types are recognized but use the generic `body BLOB` fallback until a scalarfs-style memory filesystem/provider path lands. The HTTP frame endpoint now also accepts the frame media type case-insensitively with parameters.
 - Bound query sessions to generated bearer capabilities: `query_open` / `ducknng_open_query(...)` now return `session_token`, and `fetch`, `close`, and `cancel` reject calls that present a matching `session_id` without the matching token.
 - Extended `ducknng_register_exec_method(...)` with an optional `requires_auth` boolean so deployments can register `exec` with descriptor-level verified peer identity enforcement instead of relying only on listener-wide mTLS policy.
+- Added `ducknng_set_method_auth(name, requires_auth)` so deployments can protect registry-backed RPC methods such as `manifest` through the same descriptor-level verified-peer-identity policy, and made unregistration refuse to remove sessionful methods or families while sessions are open.
 - Added transport-derived mTLS caller identity for `tls+tcp://`, `wss://`, and `https://` service requests. TLS authentication mode `2` now requires a verified peer certificate identity before dispatch; sessions opened over verified mTLS are bound to that identity in addition to the bearer `session_token`, and `ducknng_list_servers()` exposes `tls_enabled`, `tls_auth_mode`, and `peer_identity_required`.
 - Added sqllogictest coverage for mTLS manifest roundtrips over NNG TLS, WSS, and the HTTPS frame carrier, plus query-session identity binding over NNG TLS, wrong-identity `fetch` / `close` / `cancel` failures, required-mTLS no-certificate rejection, and optional-auth token-only versus identity-bound session behavior.
 - Added the first raw unary RPC aio wrappers: `ducknng_get_rpc_manifest_raw_aio(...)` and `ducknng_run_rpc_raw_aio(...)`.
@@ -61,7 +62,7 @@
 - Removed the dead deprecated Arrow-wrapper compatibility layer so the tree no longer carries unused `duckdb_query_arrow*` scaffolding.
 - Added a registry-backed built-in method surface with `manifest` and `exec` descriptors.
 - `manifest` now remains the only always-on built-in RPC method; `exec` must be registered explicitly with `ducknng_register_exec_method()`.
-- Added SQL-visible method registry administration with `ducknng_register_exec_method()`, `ducknng_unregister_method(name)`, `ducknng_unregister_family(family)`, and `ducknng_list_methods()`.
+- Added SQL-visible method registry administration with `ducknng_register_exec_method()`, `ducknng_set_method_auth(name, requires_auth)`, `ducknng_unregister_method(name)`, `ducknng_unregister_family(family)`, and `ducknng_list_methods()`.
 - Added `docs/security.md` and `docs/registry.md` as binding design and implementation contracts.
 - Added a project-local Pi skill at `.pi/skills/ducknng-rpc-framework/` for protocol, registry, session, and security work in this repo.
 - Added `test/rpc_smoke.R` plus `make rpc_smoke` to validate manifest discovery and Arrow-metadata `exec` replies over real NNG REQ/REP.
@@ -83,7 +84,7 @@
 
 ## Planned next steps
 
-- Extend the async RPC wrapper family beyond the first raw unary slice only where that can be done honestly on top of the existing aio substrate, and decide whether any HTTP aio helpers belong in the sealed public story.
+- Extend the async RPC wrapper family beyond the first raw unary slice only where that can be done honestly on top of the existing aio substrate, with `ducknng_ncurl_aio(...)` as the natural next HTTP client helper.
 - Continue Arrow type coverage beyond the current practical core where needed, and add a clean SQL-side decoder path for fetched Arrow payloads if richer session ergonomics are desired.
-- Decide whether the current bearer-token plus optional mTLS owner-identity model is the sealed session identity contract, and continue toward isolated per-session/per-request DuckDB execution if multi-client state isolation is required.
+- Decide whether the current bearer-token plus optional mTLS owner-identity model is the sealed session identity contract, document the single serialized DuckDB execution-lane model clearly, and reserve isolated per-session/per-request DuckDB execution for deployments that need hard state isolation.
 - Keep tightening lifetime and concurrency behavior around runtime-owned sockets, sessions, and aio handles now that the transport matrix is broader.

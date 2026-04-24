@@ -101,6 +101,58 @@ manifest	false
 query_open	false
 
 query I
+SELECT ducknng_set_method_auth('manifest', true)
+----
+1
+
+query IT
+SELECT ok, error
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_phase1_sql0.ipc', 0::UBIGINT)
+----
+0	ducknng: method requires verified peer identity
+
+query I
+SELECT ducknng_set_method_auth('manifest', false)
+----
+1
+
+statement ok
+CREATE TEMP TABLE unregister_live_session AS
+SELECT *
+FROM ducknng_open_query('ipc:///tmp/ducknng_phase1_sql0.ipc', 'SELECT 42 AS i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+
+statement ok
+SET VARIABLE unregister_live_session_token = (
+  SELECT session_token FROM unregister_live_session
+)
+
+statement error
+SELECT ducknng_unregister_family('query')
+----
+ducknng: cannot unregister sessionful method family while sessions are open
+
+statement error
+SELECT ducknng_unregister_method('fetch')
+----
+ducknng: cannot unregister sessionful method while sessions are open
+
+query I
+SELECT sessions
+FROM ducknng_list_servers()
+WHERE name = 'sql0'
+----
+1
+
+query I
+SELECT ok
+FROM ducknng_close_query('ipc:///tmp/ducknng_phase1_sql0.ipc', 1::UBIGINT, getvariable('unregister_live_session_token')::VARCHAR, 0::UBIGINT)
+----
+1
+
+statement ok
+DROP TABLE unregister_live_session
+
+query I
 SELECT ducknng_register_exec_method()
 ----
 1

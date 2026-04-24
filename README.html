@@ -681,6 +681,9 @@ futures</li>
 <li>manifest-driven RPC helpers, opt-in <code>exec</code>, and query
 sessions (<code>query_open</code>, <code>fetch</code>,
 <code>close</code>, <code>cancel</code>)</li>
+<li>registry auth policy controls such as
+<code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> for protecting
+discovery through verified peer identity</li>
 <li>automatic synchronous helper routing over NNG or HTTP/HTTPS based on
 URL scheme</li>
 <li>TLS config handles for <code>tls+tcp://</code>, <code>wss://</code>,
@@ -691,7 +694,8 @@ to verified mTLS peer identity when present</li>
 </ul>
 <p>Still intentionally deferred or not sealed:</p>
 <ul>
-<li>HTTP async helpers are not part of the stable surface yet</li>
+<li><code>ducknng_ncurl_aio(...)</code> is planned but not implemented
+yet</li>
 <li>CSV/TSV/Parquet body parsers are not implemented beyond the safe
 BLOB fallback</li>
 <li>full SQL-side decoding of session <code>fetch</code> Arrow batch
@@ -889,13 +893,21 @@ Expand the full generated function catalog
 <td>Register the built-in exec RPC method explicitly.</td>
 </tr>
 <tr class="even">
+<td><code>ducknng_set_method_auth</code></td>
+<td>scalar</td>
+<td><code>name, requires_auth</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Set descriptor-level verified-peer-identity authorization for a
+registered RPC method.</td>
+</tr>
+<tr class="odd">
 <td><code>ducknng_unregister_method</code></td>
 <td>scalar</td>
 <td><code>name</code></td>
 <td><code>BOOLEAN</code></td>
 <td>Unregister a method from the runtime registry.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>ducknng_unregister_family</code></td>
 <td>scalar</td>
 <td><code>family</code></td>
@@ -903,7 +915,7 @@ Expand the full generated function catalog
 <td>Unregister all methods in a family and return the number
 removed.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>ducknng_list_methods</code></td>
 <td>table</td>
 <td></td>
@@ -2335,7 +2347,7 @@ and close a query session explicitly</h3>
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-| true | NULL  | 1          | 1fe2d1aaf94ce28ffa802cad07f7179b | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
+| true | NULL  | 1          | c719fd0647af7a33d29e4b20474dd707 | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 +-----------------------------------------+
 | ducknng_stop_server(&#39;sql_session_demo&#39;) |
@@ -2408,7 +2420,10 @@ still controlled by <code>session_token</code>, but they are also bound
 to that verified peer identity. <code>ducknng_list_servers()</code>
 exposes <code>tls_enabled</code>, <code>tls_auth_mode</code>, and
 <code>peer_identity_required</code> so deployments can distinguish TLS
-without client verification from mTLS.</p>
+without client verification from mTLS. Individual registry-backed
+methods can also require verified peer identity; for example,
+<code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> protects manifest
+discovery without unregistering the method.</p>
 <h3 id="tlstcp-from-file-backed-certificate-material"><code>tls+tcp://</code>
 from file-backed certificate material</h3>
 <div class="sourceCode" id="cb31"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb31-1"><a href="#cb31-1" tabindex="-1"></a>LOAD <span class="st">&#39;build/release/ducknng.duckdb_extension&#39;</span>;</span>
@@ -2742,8 +2757,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_3480a2358f5782.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_34daacc7f65ee.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>

@@ -21,6 +21,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
 | `ducknng_register_exec_method` | scalar | `[requires_auth]` | `BOOLEAN` | Register the built-in exec RPC method explicitly. |
+| `ducknng_set_method_auth` | scalar | `name, requires_auth` | `BOOLEAN` | Set descriptor-level verified-peer-identity authorization for a registered RPC method. |
 | `ducknng_unregister_method` | scalar | `name` | `BOOLEAN` | Unregister a method from the runtime registry. |
 | `ducknng_unregister_family` | scalar | `family` | `UBIGINT` | Unregister all methods in a family and return the number removed. |
 | `ducknng_list_methods` | table |  | `TABLE(name VARCHAR, family VARCHAR, summary VARCHAR, transport_pattern VARCHAR, request_payload_format VARCHAR, response_payload_format VARCHAR, response_mode VARCHAR, request_schema_json VARCHAR, response_schema_json VARCHAR, requires_auth BOOLEAN, disabled BOOLEAN)` | List the currently registered RPC methods in the runtime registry. |

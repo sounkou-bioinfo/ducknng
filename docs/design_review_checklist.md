@@ -82,7 +82,7 @@ This checklist tracks the implementation status of the main architecture, transp
   - Remaining work: decide whether to delete the raw or structured twins entirely.
 - [~] Prepare HTTP / HTTPS transport adapters without inventing a second RPC surface.
   - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, `ducknng_start_http_server(...)` is implemented, `ducknng_ncurl(...)` remains the low-level HTTP/HTTPS client slice, and the synchronous request/RPC/session helpers now route by URL scheme.
-  - Remaining work: decide whether any HTTP aio helpers belong in the public async surface and keep the docs/examples clear about the HTTP-carrier boundary.
+  - Remaining work: add an honest `ducknng_ncurl_aio(...)` on the same future-like aio substrate, then decide whether a broader nanonext-style HTTP route framework belongs beside the framed RPC carrier.
 
 ## Blocked by larger architectural replacement work
 
@@ -99,7 +99,7 @@ This checklist tracks the implementation status of the main architecture, transp
     - mTLS-authenticated transports now attach verified peer identity to requests and bind sessions to that identity when present
   - Remaining work:
     - decide whether the bearer-token plus optional mTLS identity model is the sealed identity contract or whether envelope-level RPC authentication must land later
-    - replace shared init-connection session execution with isolated per-session or per-request DuckDB execution resources if multi-client state isolation is part of the sealed contract
+    - document the current single serialized DuckDB execution lane as an intentional deployment mode, and add isolated per-session or per-request DuckDB execution resources only for deployments that need hard state isolation
     - add a SQL-side Arrow batch decoder or higher-level row-decoding helper for session fetch payloads
     - decide whether `ducknng_query_rpc()` should later be rebuilt as a convenience wrapper over the session family
 - [~] Add the codec framework for body and Arrow extension serde.

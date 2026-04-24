@@ -11,6 +11,7 @@ DUCKDB_EXTENSION_EXTERN
 static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_frame *frame,
     const char *caller_identity) {
     const ducknng_method_descriptor *method = NULL;
+    ducknng_method_descriptor method_snapshot;
     ducknng_request_context req_ctx;
     ducknng_method_reply reply;
     nng_msg *msg;
@@ -27,15 +28,23 @@ static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_fra
             "ducknng: mTLS peer identity is required");
     }
     ducknng_service_prune_idle_sessions(svc, ducknng_now_ms());
+    memset(&method_snapshot, 0, sizeof(method_snapshot));
+    ducknng_mutex_lock(&svc->rt->mu);
     if (frame->type == DUCKNNG_RPC_MANIFEST) {
         method = ducknng_method_registry_find(&svc->rt->registry,
             (const uint8_t *)"manifest", (uint32_t)strlen("manifest"));
     } else if (frame->type == DUCKNNG_RPC_CALL) {
         method = ducknng_method_registry_find(&svc->rt->registry, frame->name, frame->name_len);
     } else {
+        ducknng_mutex_unlock(&svc->rt->mu);
         return ducknng_error_msg(NULL, DUCKNNG_STATUS_INVALID,
             "ducknng: unsupported message type");
     }
+    if (method) {
+        method_snapshot = *method;
+        method = &method_snapshot;
+    }
+    ducknng_mutex_unlock(&svc->rt->mu);
     if (!method) {
         return ducknng_error_msg(NULL, DUCKNNG_STATUS_NOT_FOUND,
             "ducknng: unknown RPC method");

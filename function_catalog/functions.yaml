@@ -85,6 +85,25 @@
       ]
     },
     {
+      "name": "ducknng_set_method_auth",
+      "kind": "scalar",
+      "category": "Method Registry",
+      "signature": "ducknng_set_method_auth(name, requires_auth)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Set descriptor-level verified-peer-identity authorization for a registered RPC method.",
+      "notes": [
+        "This updates the registry descriptor used by dispatch and manifest generation.",
+        "Use ducknng_set_method_auth('manifest', true) to require verified peer identity for manifest discovery unless a stronger listener-wide auth_mode already applies.",
+        "Registry administration functions are local SQL functions; this controls remote RPC method dispatch."
+      ],
+      "examples": [
+        "SELECT ducknng_set_method_auth('manifest', true);",
+        "SELECT name, requires_auth FROM ducknng_list_methods() WHERE name = 'manifest';"
+      ]
+    },
+    {
       "name": "ducknng_unregister_method",
       "kind": "scalar",
       "category": "Method Registry",
@@ -94,12 +113,14 @@
       "implemented": true,
       "description": "Unregister a method from the runtime registry.",
       "notes": [
-        "The built-in manifest method cannot be unregistered."
+        "The built-in manifest method cannot be unregistered.",
+        "Sessionful methods cannot be unregistered while any service has open sessions."
       ],
       "examples": [
         "SELECT ducknng_unregister_method('exec');"
       ]
     },
+
     {
       "name": "ducknng_unregister_family",
       "kind": "scalar",
@@ -110,7 +131,8 @@
       "implemented": true,
       "description": "Unregister all methods in a family and return the number removed.",
       "notes": [
-        "The built-in control family cannot be unregistered."
+        "The built-in control family cannot be unregistered.",
+        "Sessionful method families cannot be unregistered while any service has open sessions."
       ],
       "examples": [
         "SELECT ducknng_unregister_family('sql');"
