@@ -3,10 +3,9 @@
 
 # ducknng: a DuckDB binding to the NNG Scalability Protocols library and an Arrow IPC-based RPC framework
 
-`ducknng` is a pure C DuckDB extension that exposes NNG messaging and a
-small framed RPC layer to SQL. The SQL ergonomics are inspired by
-[`r-lib/nanonext`](https://github.com/r-lib/nanonext), while the RPC
-direction is a thin versioned envelope carrying Arrow IPC or JSON
+`ducknng` is a pure C DuckDB extension providing `nanonext`-inspired
+bindings to the NNG Scalability Protocols. It also includes a small
+framed RPC layer whose thin versioned envelope carries Arrow IPC or JSON
 payloads.
 
 The current implementation is easiest to understand as three layers.
@@ -1343,7 +1342,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | 280bb3598254aa2b9d498fd55f480bca | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | 95543d4684be6451c7cf1e842a9ece9f | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1771,7 +1770,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_33bd3a1d840b95.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_33c4ae6ffe7409.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

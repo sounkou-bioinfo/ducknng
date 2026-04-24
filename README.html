@@ -606,11 +606,10 @@ padding-top: 0px;
 <h1 id="ducknng-a-duckdb-binding-to-the-nng-scalability-protocols-library-and-an-arrow-ipc-based-rpc-framework">ducknng:
 a DuckDB binding to the NNG Scalability Protocols library and an Arrow
 IPC-based RPC framework</h1>
-<p><code>ducknng</code> is a pure C DuckDB extension that exposes NNG
-messaging and a small framed RPC layer to SQL. The SQL ergonomics are
-inspired by <a href="https://github.com/r-lib/nanonext"><code>r-lib/nanonext</code></a>,
-while the RPC direction is a thin versioned envelope carrying Arrow IPC
-or JSON payloads.</p>
+<p><code>ducknng</code> is a pure C DuckDB extension providing
+<code>nanonext</code>-inspired bindings to the NNG Scalability
+Protocols. It also includes a small framed RPC layer whose thin
+versioned envelope carries Arrow IPC or JSON payloads.</p>
 <p>The current implementation is easiest to understand as three
 layers.</p>
 <ol style="list-style-type: decimal">
@@ -2324,7 +2323,7 @@ and close a query session explicitly</h3>
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-| true | NULL  | 1          | 280bb3598254aa2b9d498fd55f480bca | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
+| true | NULL  | 1          | 95543d4684be6451c7cf1e842a9ece9f | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 +-----------------------------------------+
 | ducknng_stop_server(&#39;sql_session_demo&#39;) |
@@ -2731,7 +2730,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_33bd3a1d840b95.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_33c4ae6ffe7409.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>

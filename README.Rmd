@@ -27,7 +27,7 @@ knitr::knit_engines$set(sql = function(options) {
 
 # ducknng: a DuckDB binding to the NNG Scalability Protocols library and an Arrow IPC-based RPC framework
 
-`ducknng` is a pure C DuckDB extension that exposes NNG messaging and a small framed RPC layer to SQL. The SQL ergonomics are inspired by [`r-lib/nanonext`](https://github.com/r-lib/nanonext), while the RPC direction is a thin versioned envelope carrying Arrow IPC or JSON payloads.
+`ducknng` is a pure C DuckDB extension providing `nanonext`-inspired bindings to the NNG Scalability Protocols. It also includes a small framed RPC layer whose thin versioned envelope carries Arrow IPC or JSON payloads.
 
 The current implementation is easiest to understand as three layers.
 
