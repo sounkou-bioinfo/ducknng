@@ -354,7 +354,28 @@ SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE 
 SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)', 0::UBIGINT);
 
 -- RPC helper: fetch row results through the unary query path.
-SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i', 0::UBIGINT);
+SELECT *
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_sql_client_demo.ipc',          -- url
+  'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i', -- sql
+  0::UBIGINT                                        -- tls_config_id
+);
+
+-- The Arrow IPC row path also carries temporal, decimal, list, and struct values.
+SELECT d = DATE '2024-01-02' AS date_ok,
+       ts = TIMESTAMP '2024-01-02 03:04:05.123456' AS ts_ok,
+       dec = 123.45::DECIMAL(10,2) AS decimal_ok,
+       xs[2] IS NULL AND xs[3] = 3 AS list_ok,
+       st.a = 7 AND st.b = 'bee' AS struct_ok
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_sql_client_demo.ipc',          -- url
+  'SELECT DATE ''2024-01-02'' AS d,
+          TIMESTAMP ''2024-01-02 03:04:05.123456'' AS ts,
+          123.45::DECIMAL(10,2) AS dec,
+          [1, NULL, 3]::INTEGER[] AS xs,
+          {''a'': 7::INTEGER, ''b'': ''bee''} AS st', -- sql
+  0::UBIGINT                                        -- tls_config_id
+);
 
 -- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');
@@ -475,6 +496,12 @@ SELECT ducknng_stop_server('sql_client_demo');
     │    10 │ false   │
     │    11 │ true    │
     └───────┴─────────┘
+    ┌─────────┬─────────┬────────────┬─────────┬───────────┐
+    │ date_ok │  ts_ok  │ decimal_ok │ list_ok │ struct_ok │
+    │ boolean │ boolean │  boolean   │ boolean │  boolean  │
+    ├─────────┼─────────┼────────────┼─────────┼───────────┤
+    │ true    │ true    │ true       │ true    │ true      │
+    └─────────┴─────────┴────────────┴─────────┴───────────┘
     ┌────────────────────────────┐
     │ ducknng_open_socket('req') │
     │           uint64           │
@@ -1836,7 +1863,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_20880f3b6be0a1.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_25db1067be89ac.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

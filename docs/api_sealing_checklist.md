@@ -65,12 +65,9 @@ What matters is not maximizing surface area, but freezing a clear model: aio lau
 
 ### 5. Final type and fetch ergonomics stance
 
-The documented long-term Arrow type target is broader than the currently emitted unary row subset. Before sealing, the project should either:
+The unary Arrow row path now covers the next planned type wave for practical DuckDB tabular values: temporal types, decimals, lists, and structs in addition to the original scalar subset. Before sealing, the remaining type question is whether that documented set is the initial public contract or whether any additional Arrow features, such as map values, dictionary-preserving roundtrips, extension types, or broader deep-nesting guarantees, must land first.
 
-- finish the next planned type wave, especially for the explicitly named gaps, or
-- freeze and document the narrower supported set as the sealed initial contract
-
-The same applies to fetched Arrow payload ergonomics: decide whether the stable public story is control metadata plus raw Arrow payloads only, or whether a SQL-side row decoder for fetch payloads is part of the sealed API.
+Fetched Arrow payload ergonomics are still a separate sealing question: decide whether the stable public story is control metadata plus raw Arrow payloads only, or whether a SQL-side row decoder for fetch payloads is part of the sealed API.
 
 ## Strongly recommended before sealing
 
@@ -92,6 +89,7 @@ These items were worth resolving before the API hardens further and should stay 
 - the vendored NNG Windows MinGW fallback is now documented through an explicit local patch file and patch ledger under `patches/nng/`
 - README examples now include representative raw protocol slices beyond req/pair, including `push` / `pull`, `pub` / `sub`, and `surveyor` / `respondent`
 - the README and `docs/lifetime.md` now make the low-level manual-lifecycle contract explicit instead of implying a nanonext-style GC/finalizer model that DuckDB SQL does not actually provide for user-visible handles
+- the unary Arrow row path now includes `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `LIST`, and `STRUCT` coverage with SQL-visible regression tests
 
 ## Not sealing blockers by themselves
 

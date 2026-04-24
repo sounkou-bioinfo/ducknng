@@ -70,6 +70,96 @@ SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELE
 7	false
 8	true
 
+query IIII
+SELECT d = DATE '2024-01-02',
+       t = TIME '03:04:05.123456',
+       ts = TIMESTAMP '2024-01-02 03:04:05.123456',
+       dec = 123.45::DECIMAL(10,2)
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT DATE ''2024-01-02'' AS d,
+          TIME ''03:04:05.123456'' AS t,
+          TIMESTAMP ''2024-01-02 03:04:05.123456'' AS ts,
+          123.45::DECIMAL(10,2) AS dec',
+  0::UBIGINT
+)
+----
+1	1	1	1
+
+query TTTIII
+SELECT typeof(ts_s), typeof(ts_ms), typeof(ts_ns),
+       ts_s = '2024-01-02 03:04:05'::TIMESTAMP_S,
+       ts_ms = '2024-01-02 03:04:05.123'::TIMESTAMP_MS,
+       ts_ns = '2024-01-02 03:04:05.123456789'::TIMESTAMP_NS
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT ''2024-01-02 03:04:05''::TIMESTAMP_S AS ts_s,
+          ''2024-01-02 03:04:05.123''::TIMESTAMP_MS AS ts_ms,
+          ''2024-01-02 03:04:05.123456789''::TIMESTAMP_NS AS ts_ns',
+  0::UBIGINT
+)
+----
+TIMESTAMP_S	TIMESTAMP_MS	TIMESTAMP_NS	1	1	1
+
+query TI
+SELECT typeof(t_ns), t_ns = '03:04:05.123456789'::TIME_NS
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT ''03:04:05.123456789''::TIME_NS AS t_ns',
+  0::UBIGINT
+)
+----
+TIME_NS	1
+
+query IIIII
+SELECT xs[1] = 1, xs[2] IS NULL, xs[3] = 3, st.a = 7, st.b = 'bee'
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT [1, NULL, 3]::INTEGER[] AS xs,
+          {''a'': 7::INTEGER, ''b'': ''bee''} AS st',
+  0::UBIGINT
+)
+----
+1	1	1	1	1
+
+query IIIII
+SELECT st IS NULL, st.a IS NULL, xs[1] IS NULL, xs[1].a IS NULL, xs[2].b IS NULL
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT NULL::STRUCT(a INTEGER, b VARCHAR) AS st,
+          [NULL::STRUCT(a INTEGER, b VARCHAR),
+           {''a'': 2::INTEGER, ''b'': NULL}] AS xs',
+  0::UBIGINT
+)
+----
+1	1	1	1	1
+
+query III
+SELECT id, xs[2], st.a
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT 1 AS id, [1, 2]::INTEGER[] AS xs,
+          {''a'': 10::INTEGER, ''b'': ''x''} AS st
+   UNION ALL
+   SELECT 2 AS id, [3, 4]::INTEGER[] AS xs,
+          {''a'': 20::INTEGER, ''b'': ''y''} AS st
+   ORDER BY id',
+  0::UBIGINT
+)
+----
+1	2	10
+2	4	20
+
+statement error
+SELECT *
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT TIMESTAMPTZ ''2024-01-02 03:04:05+00'' AS tsz',
+  0::UBIGINT
+)
+----
+ducknng: unary exec row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, and STRUCT
+
 query IITT
 SELECT ok, session_id, state, next_method
 FROM ducknng_open_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i FROM remote_t ORDER BY i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)

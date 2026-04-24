@@ -78,10 +78,54 @@ static int ducknng_set_arrow_schema_type(duckdb_logical_type logical_type, struc
             return ArrowSchemaSetType(schema, NANOARROW_TYPE_STRING) == NANOARROW_OK ? 0 : -1;
         case DUCKDB_TYPE_BLOB:
             return ArrowSchemaSetType(schema, NANOARROW_TYPE_BINARY) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_DATE:
+            return ArrowSchemaSetType(schema, NANOARROW_TYPE_DATE32) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIME:
+            return ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIME64, NANOARROW_TIME_UNIT_MICRO, NULL) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIME_NS:
+            return ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIME64, NANOARROW_TIME_UNIT_NANO, NULL) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP:
+            return ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_MICRO, NULL) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP_S:
+            return ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_SECOND, NULL) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP_MS:
+            return ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_MILLI, NULL) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP_NS:
+            return ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, NULL) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_DECIMAL:
+            return ArrowSchemaSetTypeDecimal(schema, NANOARROW_TYPE_DECIMAL128,
+                (int32_t)duckdb_decimal_width(logical_type), (int32_t)duckdb_decimal_scale(logical_type)) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_LIST: {
+            duckdb_logical_type child_type = duckdb_list_type_child_type(logical_type);
+            int ok;
+            if (ArrowSchemaSetType(schema, NANOARROW_TYPE_LIST) != NANOARROW_OK) {
+                if (child_type) duckdb_destroy_logical_type(&child_type);
+                return -1;
+            }
+            ok = child_type && ducknng_set_arrow_schema_type(child_type, schema->children[0], errmsg) == 0;
+            if (child_type) duckdb_destroy_logical_type(&child_type);
+            return ok ? 0 : -1;
+        }
+        case DUCKDB_TYPE_STRUCT: {
+            idx_t nchildren = duckdb_struct_type_child_count(logical_type);
+            idx_t i;
+            if (ArrowSchemaSetTypeStruct(schema, (int64_t)nchildren) != NANOARROW_OK) return -1;
+            for (i = 0; i < nchildren; i++) {
+                duckdb_logical_type child_type = duckdb_struct_type_child_type(logical_type, i);
+                char *child_name = duckdb_struct_type_child_name(logical_type, i);
+                int child_ok = child_type &&
+                    ArrowSchemaSetName(schema->children[i], child_name ? child_name : "") == NANOARROW_OK &&
+                    ducknng_set_arrow_schema_type(child_type, schema->children[i], errmsg) == 0;
+                if (child_name) duckdb_free(child_name);
+                if (child_type) duckdb_destroy_logical_type(&child_type);
+                if (!child_ok) return -1;
+            }
+            return 0;
+        }
         default:
             if (errmsg) {
                 *errmsg = ducknng_strdup(
-                    "ducknng: unary exec row replies currently support BOOLEAN, signed/unsigned integers, FLOAT/DOUBLE, VARCHAR, and BLOB only");
+                    "ducknng: unary exec row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, and STRUCT");
             }
             return -1;
     }
@@ -117,8 +161,37 @@ static int ducknng_is_valid(uint64_t *validity, idx_t row) {
     return validity ? duckdb_validity_row_is_valid(validity, row) : 1;
 }
 
-static int ducknng_append_vector_value(duckdb_type type_id, duckdb_vector vector,
-    struct ArrowArray *array, idx_t row, char **errmsg) {
+static int ducknng_append_decimal_value(duckdb_logical_type logical_type, duckdb_vector vector,
+    struct ArrowArray *array, idx_t row) {
+    struct ArrowDecimal decimal;
+    duckdb_type internal_type = duckdb_decimal_internal_type(logical_type);
+    void *data = duckdb_vector_get_data(vector);
+    ArrowDecimalInit(&decimal, 128, (int32_t)duckdb_decimal_width(logical_type),
+        (int32_t)duckdb_decimal_scale(logical_type));
+    switch (internal_type) {
+        case DUCKDB_TYPE_SMALLINT:
+            ArrowDecimalSetInt(&decimal, ((int16_t *)data)[row]);
+            break;
+        case DUCKDB_TYPE_INTEGER:
+            ArrowDecimalSetInt(&decimal, ((int32_t *)data)[row]);
+            break;
+        case DUCKDB_TYPE_BIGINT:
+            ArrowDecimalSetInt(&decimal, ((int64_t *)data)[row]);
+            break;
+        case DUCKDB_TYPE_HUGEINT: {
+            duckdb_hugeint value = ((duckdb_hugeint *)data)[row];
+            decimal.words[decimal.low_word_index] = value.lower;
+            decimal.words[decimal.high_word_index] = (uint64_t)value.upper;
+            break;
+        }
+        default:
+            return -1;
+    }
+    return ArrowArrayAppendDecimal(array, &decimal) == NANOARROW_OK ? 0 : -1;
+}
+
+static int ducknng_append_vector_value(duckdb_logical_type logical_type, duckdb_type type_id,
+    duckdb_vector vector, struct ArrowArray *array, idx_t row, char **errmsg) {
     uint64_t *validity = duckdb_vector_get_validity(vector);
     void *data = duckdb_vector_get_data(vector);
     if (!ducknng_is_valid(validity, row)) {
@@ -161,6 +234,55 @@ static int ducknng_append_vector_value(duckdb_type type_id, duckdb_vector vector
             value.size_bytes = (int64_t)duckdb_string_t_length(strings[row]);
             return ArrowArrayAppendBytes(array, value) == NANOARROW_OK ? 0 : -1;
         }
+        case DUCKDB_TYPE_DATE:
+            return ArrowArrayAppendInt(array, ((duckdb_date *)data)[row].days) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIME:
+            return ArrowArrayAppendInt(array, ((duckdb_time *)data)[row].micros) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIME_NS:
+            return ArrowArrayAppendInt(array, ((duckdb_time_ns *)data)[row].nanos) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP:
+            return ArrowArrayAppendInt(array, ((duckdb_timestamp *)data)[row].micros) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP_S:
+            return ArrowArrayAppendInt(array, ((duckdb_timestamp_s *)data)[row].seconds) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP_MS:
+            return ArrowArrayAppendInt(array, ((duckdb_timestamp_ms *)data)[row].millis) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP_NS:
+            return ArrowArrayAppendInt(array, ((duckdb_timestamp_ns *)data)[row].nanos) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_DECIMAL:
+            return ducknng_append_decimal_value(logical_type, vector, array, row);
+        case DUCKDB_TYPE_LIST: {
+            duckdb_list_entry *entries = (duckdb_list_entry *)data;
+            duckdb_logical_type child_type = duckdb_list_type_child_type(logical_type);
+            duckdb_type child_type_id = child_type ? duckdb_get_type_id(child_type) : DUCKDB_TYPE_INVALID;
+            duckdb_vector child_vector = duckdb_list_vector_get_child(vector);
+            uint64_t offset = entries[row].offset;
+            uint64_t length = entries[row].length;
+            uint64_t j;
+            if (!child_type) return -1;
+            for (j = 0; j < length; j++) {
+                if (ducknng_append_vector_value(child_type, child_type_id, child_vector,
+                        array->children[0], (idx_t)(offset + j), errmsg) != 0) {
+                    duckdb_destroy_logical_type(&child_type);
+                    return -1;
+                }
+            }
+            duckdb_destroy_logical_type(&child_type);
+            return ArrowArrayFinishElement(array) == NANOARROW_OK ? 0 : -1;
+        }
+        case DUCKDB_TYPE_STRUCT: {
+            idx_t nchildren = duckdb_struct_type_child_count(logical_type);
+            idx_t i;
+            for (i = 0; i < nchildren; i++) {
+                duckdb_logical_type child_type = duckdb_struct_type_child_type(logical_type, i);
+                duckdb_type child_type_id = child_type ? duckdb_get_type_id(child_type) : DUCKDB_TYPE_INVALID;
+                duckdb_vector child_vector = duckdb_struct_vector_get_child(vector, i);
+                int ok = child_type && ducknng_append_vector_value(child_type, child_type_id,
+                    child_vector, array->children[i], row, errmsg) == 0;
+                if (child_type) duckdb_destroy_logical_type(&child_type);
+                if (!ok) return -1;
+            }
+            return ArrowArrayFinishElement(array) == NANOARROW_OK ? 0 : -1;
+        }
         default:
             if (errmsg) {
                 *errmsg = ducknng_strdup(
@@ -177,44 +299,52 @@ static int ducknng_append_chunk_to_arrow(duckdb_data_chunk chunk, struct ArrowAr
     idx_t col;
     idx_t row;
     duckdb_vector *vectors = NULL;
+    duckdb_logical_type *logical_types = NULL;
     duckdb_type *types = NULL;
     ncols = duckdb_data_chunk_get_column_count(chunk);
     nrows = duckdb_data_chunk_get_size(chunk);
     if (ncols == 0) return 0;
     vectors = (duckdb_vector *)duckdb_malloc(sizeof(*vectors) * (size_t)ncols);
+    logical_types = (duckdb_logical_type *)duckdb_malloc(sizeof(*logical_types) * (size_t)ncols);
     types = (duckdb_type *)duckdb_malloc(sizeof(*types) * (size_t)ncols);
-    if (!vectors || !types) {
+    if (!vectors || !logical_types || !types) {
         if (vectors) duckdb_free(vectors);
+        if (logical_types) duckdb_free(logical_types);
         if (types) duckdb_free(types);
         if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory preparing result chunk encoding");
         return -1;
     }
+    memset(logical_types, 0, sizeof(*logical_types) * (size_t)ncols);
     for (col = 0; col < ncols; col++) {
-        duckdb_logical_type logical_type;
         vectors[col] = duckdb_data_chunk_get_vector(chunk, col);
-        logical_type = duckdb_vector_get_column_type(vectors[col]);
-        types[col] = logical_type ? duckdb_get_type_id(logical_type) : DUCKDB_TYPE_INVALID;
-        if (logical_type) duckdb_destroy_logical_type(&logical_type);
+        logical_types[col] = duckdb_vector_get_column_type(vectors[col]);
+        types[col] = logical_types[col] ? duckdb_get_type_id(logical_types[col]) : DUCKDB_TYPE_INVALID;
     }
     for (row = 0; row < nrows; row++) {
         for (col = 0; col < ncols; col++) {
-            if (ducknng_append_vector_value(types[col], vectors[col], root->children[col], row, errmsg) != 0) {
+            if (ducknng_append_vector_value(logical_types[col], types[col], vectors[col], root->children[col], row, errmsg) != 0) {
                 if ((!errmsg || !*errmsg) && errmsg) {
                     *errmsg = ducknng_strdup("ducknng: failed to append DuckDB result value to Arrow array");
                 }
+                for (col = 0; col < ncols; col++) if (logical_types[col]) duckdb_destroy_logical_type(&logical_types[col]);
                 duckdb_free(vectors);
+                duckdb_free(logical_types);
                 duckdb_free(types);
                 return -1;
             }
         }
         if (ArrowArrayFinishElement(root) != NANOARROW_OK) {
             if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to finalize Arrow row element");
+            for (col = 0; col < ncols; col++) if (logical_types[col]) duckdb_destroy_logical_type(&logical_types[col]);
             duckdb_free(vectors);
+            duckdb_free(logical_types);
             duckdb_free(types);
             return -1;
         }
     }
+    for (col = 0; col < ncols; col++) if (logical_types[col]) duckdb_destroy_logical_type(&logical_types[col]);
     duckdb_free(vectors);
+    duckdb_free(logical_types);
     duckdb_free(types);
     return 0;
 }

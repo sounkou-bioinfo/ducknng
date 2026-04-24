@@ -168,7 +168,28 @@ SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE 
 SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'INSERT INTO client_side_demo VALUES (10), (11)', 0::UBIGINT);
 
 -- RPC helper: fetch row results through the unary query path.
-SELECT * FROM ducknng_query_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i', 0::UBIGINT);
+SELECT *
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_sql_client_demo.ipc',          -- url
+  'SELECT i, i > 10 AS gt_10 FROM client_side_demo ORDER BY i', -- sql
+  0::UBIGINT                                        -- tls_config_id
+);
+
+-- The Arrow IPC row path also carries temporal, decimal, list, and struct values.
+SELECT d = DATE '2024-01-02' AS date_ok,
+       ts = TIMESTAMP '2024-01-02 03:04:05.123456' AS ts_ok,
+       dec = 123.45::DECIMAL(10,2) AS decimal_ok,
+       xs[2] IS NULL AND xs[3] = 3 AS list_ok,
+       st.a = 7 AND st.b = 'bee' AS struct_ok
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_sql_client_demo.ipc',          -- url
+  'SELECT DATE ''2024-01-02'' AS d,
+          TIMESTAMP ''2024-01-02 03:04:05.123456'' AS ts,
+          123.45::DECIMAL(10,2) AS dec,
+          [1, NULL, 3]::INTEGER[] AS xs,
+          {''a'': 7::INTEGER, ''b'': ''bee''} AS st', -- sql
+  0::UBIGINT                                        -- tls_config_id
+);
 
 -- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');

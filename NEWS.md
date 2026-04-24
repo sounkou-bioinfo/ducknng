@@ -13,6 +13,7 @@
 - Hardened client socket lifetime management with runtime-owned retain/release tracking so close/destroy waits for in-flight users, pending socket-bound aio operations keep their socket alive while they are actually pending, and terminal aio handles no longer block later socket close just because the caller has not dropped the collected aio row yet.
 - Hardened server-side query session lifetime tracking so `fetch` now runs against an acquired session reference instead of an unlocked borrowed pointer, close/cancel/prune/stop detach sessions before destroy and wait for in-flight users to drain, service introspection reads a published session-count snapshot instead of re-locking service state from inside service-owned SQL, and `query_open` now refuses to publish a fresh session while shutdown is already in progress.
 - Hardened service-owned SQL execution and HTTP shutdown around `init_con`: service-side `exec` / `query_open` now serialize through a runtime-owned init-connection gate, HTTP shutdown waits for handler finalization before freeing handler-owned state, and self-stop from a service's own request path is rejected instead of deadlocking or tearing the service out from under the active request.
+- Expanded Arrow IPC row mapping for unary `ducknng_query_rpc(...)` / `exec(..., want_result = true)` paths beyond the initial scalar subset to include `DATE`, `TIME`, timezone-free `TIMESTAMP` units, DuckDB `DECIMAL` via Arrow `decimal128`, Arrow lists as DuckDB lists, and Arrow structs as DuckDB structs, with sqllogictest coverage for scalar temporal/decimal and nested list/struct roundtrips.
 - Added the first raw unary RPC aio wrappers: `ducknng_get_rpc_manifest_raw_aio(...)` and `ducknng_run_rpc_raw_aio(...)`.
 - Added a documented local NNG patch under `patches/nng/` so the vendored Windows clock fallback for DuckDB CI's Rtools42 MinGW environment is explicit rather than an undocumented edit inside `third_party/nng/`.
 - Fixed the next Windows MinGW portability blocker after the vendored NNG gate: self-signed TLS material generation now uses portable temp-directory helpers instead of calling `mkdtemp()` directly from `ducknng_sql_api.c`.
@@ -51,7 +52,7 @@
 - `exec` request payloads are now Arrow IPC tables containing `sql` and `want_result` fields.
 - `manifest` replies are now JSON exported from the runtime method registry.
 - `exec` metadata replies are now Arrow IPC generated with vendored nanoarrow C.
-- Unary `exec(..., want_result = true)` now returns Arrow IPC row payloads for the current scalar subset: BOOLEAN, signed/unsigned integers, FLOAT/DOUBLE, VARCHAR, and BLOB.
+- Unary `exec(..., want_result = true)` initially returned Arrow IPC row payloads for the first scalar subset: BOOLEAN, signed/unsigned integers, FLOAT/DOUBLE, VARCHAR, and BLOB.
 - Removed unstable and deprecated DuckDB Arrow entrypoints from the implementation and kept the row-result Arrow path on explicit nanoarrow-based schema and batch mapping.
 - Removed the dead deprecated Arrow-wrapper compatibility layer so the tree no longer carries unused `duckdb_query_arrow*` scaffolding.
 - Added a registry-backed built-in method surface with `manifest` and `exec` descriptors.
@@ -79,6 +80,6 @@
 ## Planned next steps
 
 - Extend the async RPC wrapper family beyond the first raw unary slice only where that can be done honestly on top of the existing aio substrate, and decide whether any HTTP aio helpers belong in the sealed public story.
-- Continue broader Arrow type coverage and add a clean SQL-side decoder path for fetched Arrow payloads if richer session ergonomics are desired.
+- Continue Arrow type coverage beyond the current practical core where needed, and add a clean SQL-side decoder path for fetched Arrow payloads if richer session ergonomics are desired.
 - Bind session ownership to a concrete multi-client identity model so the session family can stop being documented as experimental.
 - Keep tightening lifetime and concurrency behavior around runtime-owned sockets, sessions, and aio handles now that the transport matrix is broader.
