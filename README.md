@@ -89,7 +89,7 @@ make release
 ```
 
 Load it into DuckDB, start a local IPC listener, inspect the built-in
-manifest, and stop it again:
+manifest result shape, and stop it again:
 
 ``` sql
 LOAD 'build/release/ducknng.duckdb_extension';
@@ -103,6 +103,11 @@ SELECT ducknng_start_server(
   0
 );
 
+-- DESCRIBE shows the manifest helper's table shape without printing the full JSON document.
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT *
+      FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT));
+
 SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
 FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
 SELECT ducknng_stop_server('sql0');
@@ -113,6 +118,13 @@ SELECT ducknng_stop_server('sql0');
     +--------------------------------------------------------------------------------------+
     | true                                                                                 |
     +--------------------------------------------------------------------------------------+
+    +-------------+-------------+
+    | column_name | column_type |
+    +-------------+-------------+
+    | ok          | BOOLEAN     |
+    | error       | VARCHAR     |
+    | manifest    | VARCHAR     |
+    +-------------+-------------+
     +------+--------------+
     |  ok  | has_manifest |
     +------+--------------+
@@ -1303,7 +1315,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | 25845aa88596b4447d8c47f2049e6b36 | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | b72752ff3933ffb6a46c40d0792c6221 | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1731,8 +1743,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_31c4065bc7b905.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                              TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_31e8c19c5752d.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

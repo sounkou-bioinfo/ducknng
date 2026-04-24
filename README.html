@@ -694,7 +694,7 @@ per-session connection model lands.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">make</span> configure</span>
 <span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">make</span> release</span></code></pre></div>
 <p>Load it into DuckDB, start a local IPC listener, inspect the built-in
-manifest, and stop it again:</p>
+manifest result shape, and stop it again:</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>LOAD <span class="st">&#39;build/release/ducknng.duckdb_extension&#39;</span>;</span>
 <span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_server(</span>
@@ -706,14 +706,26 @@ manifest, and stop it again:</p>
 <span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>  <span class="dv">0</span></span>
 <span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a>);</span>
 <span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a></span>
-<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="kw">SELECT</span> ok, position(<span class="st">&#39;&quot;name&quot;:&quot;manifest&quot;&#39;</span> <span class="kw">IN</span> manifest) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_manifest</span>
-<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="kw">FROM</span> ducknng_get_rpc_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql0.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
-<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql0&#39;</span>);</span></code></pre></div>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="co">-- DESCRIBE shows the manifest helper&#39;s table shape without printing the full JSON document.</span></span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="kw">SELECT</span> column_name, column_type</span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a><span class="kw">FROM</span> (DESCRIBE <span class="kw">SELECT</span> <span class="op">*</span></span>
+<span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a>      <span class="kw">FROM</span> ducknng_get_rpc_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql0.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>));</span>
+<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a></span>
+<span id="cb2-17"><a href="#cb2-17" tabindex="-1"></a><span class="kw">SELECT</span> ok, position(<span class="st">&#39;&quot;name&quot;:&quot;manifest&quot;&#39;</span> <span class="kw">IN</span> manifest) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_manifest</span>
+<span id="cb2-18"><a href="#cb2-18" tabindex="-1"></a><span class="kw">FROM</span> ducknng_get_rpc_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql0.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
+<span id="cb2-19"><a href="#cb2-19" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql0&#39;</span>);</span></code></pre></div>
 <pre><code>+--------------------------------------------------------------------------------------+
 | ducknng_start_server(&#39;sql0&#39;, &#39;ipc:///tmp/ducknng_sql0.ipc&#39;, 1, 134217728, 300000, 0) |
 +--------------------------------------------------------------------------------------+
 | true                                                                                 |
 +--------------------------------------------------------------------------------------+
++-------------+-------------+
+| column_name | column_type |
++-------------+-------------+
+| ok          | BOOLEAN     |
+| error       | VARCHAR     |
+| manifest    | VARCHAR     |
++-------------+-------------+
 +------+--------------+
 |  ok  | has_manifest |
 +------+--------------+
@@ -2279,7 +2291,7 @@ and close a query session explicitly</h3>
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-| true | NULL  | 1          | 25845aa88596b4447d8c47f2049e6b36 | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
+| true | NULL  | 1          | b72752ff3933ffb6a46c40d0792c6221 | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 +-----------------------------------------+
 | ducknng_stop_server(&#39;sql_session_demo&#39;) |
@@ -2686,8 +2698,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_31c4065bc7b905.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_31e8c19c5752d.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>

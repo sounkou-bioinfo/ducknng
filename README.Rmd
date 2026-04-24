@@ -57,7 +57,7 @@ make configure
 make release
 ```
 
-Load it into DuckDB, start a local IPC listener, inspect the built-in manifest, and stop it again:
+Load it into DuckDB, start a local IPC listener, inspect the built-in manifest result shape, and stop it again:
 
 ```{sql eval=TRUE, autoload=FALSE, collapse=FALSE, comment=""}
 LOAD 'build/release/ducknng.duckdb_extension';
@@ -70,6 +70,11 @@ SELECT ducknng_start_server(
   300000,
   0
 );
+
+-- DESCRIBE shows the manifest helper's table shape without printing the full JSON document.
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT *
+      FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT));
 
 SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
 FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
