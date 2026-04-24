@@ -199,7 +199,8 @@ FROM ducknng_list_methods()
 ORDER BY name;
 
 -- Register exec explicitly before exposing SQL execution over RPC.
-SELECT ducknng_register_exec_method();
+-- Pass TRUE to require verified transport-derived peer identity for exec dispatch.
+SELECT ducknng_register_exec_method(false) AS registered_exec;
 SELECT name, family, response_mode, requires_auth, disabled
 FROM ducknng_list_methods()
 ORDER BY name;

@@ -117,6 +117,29 @@ SELECT ducknng_unregister_method('exec')
 ----
 1
 
+query I
+SELECT ducknng_register_exec_method(true)
+----
+1
+
+query TI
+SELECT name, requires_auth
+FROM ducknng_list_methods()
+WHERE name = 'exec'
+----
+exec	true
+
+query IT
+SELECT ok, error
+FROM ducknng_run_rpc('ipc:///tmp/ducknng_phase1_sql0.ipc', 'CREATE TABLE should_not_run(i INTEGER)', 0::UBIGINT)
+----
+0	ducknng: method requires verified peer identity
+
+query I
+SELECT ducknng_unregister_method('exec')
+----
+1
+
 query T
 SELECT name
 FROM ducknng_list_methods()

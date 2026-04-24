@@ -315,6 +315,11 @@ static uint64_t arg_u64(duckdb_vector vec, idx_t row, uint64_t dflt) {
     if (arg_is_null(vec, row)) return dflt;
     return data[row];
 }
+static bool arg_bool(duckdb_vector vec, idx_t row, bool dflt) {
+    bool *data = (bool *)duckdb_vector_get_data(vec);
+    if (arg_is_null(vec, row)) return dflt;
+    return data[row];
+}
 static void set_null(duckdb_vector vec, idx_t row) {
     uint64_t *validity;
     duckdb_vector_ensure_validity_writable(vec);
@@ -1189,18 +1194,19 @@ static void ducknng_drop_tls_config_scalar(duckdb_function_info info, duckdb_dat
 
 static void ducknng_register_exec_method_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t ncols = duckdb_data_chunk_get_column_count(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
     bool *out = (bool *)duckdb_vector_get_data(output);
     char *errmsg = NULL;
-    (void)input;
     if (!ctx || !ctx->rt) {
         duckdb_scalar_function_set_error(info, "ducknng: missing runtime");
         return;
     }
     for (row = 0; row < count; row++) {
+        int requires_auth = ncols > 0 ? (arg_bool(duckdb_data_chunk_get_vector(input, 0), row, false) ? 1 : 0) : 0;
         ducknng_mutex_lock(&ctx->rt->mu);
-        if (!ducknng_register_exec_method(ctx->rt, &errmsg)) {
+        if (!ducknng_register_exec_method_with_auth(ctx->rt, requires_auth, &errmsg)) {
             ducknng_mutex_unlock(&ctx->rt->mu);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to register exec method");
             if (errmsg) duckdb_free(errmsg);
@@ -6562,6 +6568,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type tls_id_types[1] = {DUCKDB_TYPE_UBIGINT};
     duckdb_type method_name_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type method_family_types[1] = {DUCKDB_TYPE_VARCHAR};
+    duckdb_type register_exec_auth_types[1] = {DUCKDB_TYPE_BOOLEAN};
     ctx.rt = rt;
     ctx.is_init_connection = connection == rt->init_con;
     if (!register_scalar(connection, "ducknng_start_server", 6, ducknng_server_start_tls_config_scalar, &ctx, start_tls_config_types, DUCKDB_TYPE_BOOLEAN)) return 0;
@@ -6572,6 +6579,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_self_signed_tls_config", 3, ducknng_self_signed_tls_config_scalar, &ctx, tls_self_signed_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_drop_tls_config", 1, ducknng_drop_tls_config_scalar, &ctx, tls_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_register_exec_method", 0, ducknng_register_exec_method_scalar, &ctx, NULL, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(connection, "ducknng_register_exec_method", 1, ducknng_register_exec_method_scalar, &ctx, register_exec_auth_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_unregister_method", 1, ducknng_unregister_method_scalar, &ctx, method_name_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_unregister_family", 1, ducknng_unregister_family_scalar, &ctx, method_family_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_run_rpc_raw", 3, ducknng_run_rpc_raw_scalar, &ctx, rpc_exec_raw_types, DUCKDB_TYPE_BLOB)) return 0;

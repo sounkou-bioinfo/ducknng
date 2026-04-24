@@ -69,16 +69,19 @@
       "name": "ducknng_register_exec_method",
       "kind": "scalar",
       "category": "Method Registry",
-      "signature": "ducknng_register_exec_method()",
+      "signature": "ducknng_register_exec_method([requires_auth])",
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
       "description": "Register the built-in exec RPC method explicitly.",
       "notes": [
-        "exec is not registered by default. Call this deliberately before exposing SQL execution over RPC."
+        "exec is not registered by default. Call this deliberately before exposing SQL execution over RPC.",
+        "requires_auth defaults to false for backwards compatibility. Pass true to require a verified transport-derived peer identity for exec dispatch.",
+        "Listener TLS authentication mode 2 still requires verified peer identity for every method, independent of this per-method setting."
       ],
       "examples": [
-        "SELECT ducknng_register_exec_method();"
+        "SELECT ducknng_register_exec_method();",
+        "SELECT ducknng_register_exec_method(true);"
       ]
     },
     {

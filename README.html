@@ -884,7 +884,7 @@ Expand the full generated function catalog
 <tr class="odd">
 <td><code>ducknng_register_exec_method</code></td>
 <td>scalar</td>
-<td></td>
+<td><code>[requires_auth]</code></td>
 <td><code>BOOLEAN</code></td>
 <td>Register the built-in exec RPC method explicitly.</td>
 </tr>
@@ -1433,113 +1433,114 @@ client</h3>
 <span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> name;</span>
 <span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a></span>
 <span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a><span class="co">-- Register exec explicitly before exposing SQL execution over RPC.</span></span>
-<span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_register_exec_method();</span>
-<span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a><span class="kw">SELECT</span> name, family, response_mode, requires_auth, disabled</span>
-<span id="cb8-29"><a href="#cb8-29" tabindex="-1"></a><span class="kw">FROM</span> ducknng_list_methods()</span>
-<span id="cb8-30"><a href="#cb8-30" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> name;</span>
-<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a><span class="kw">WITH</span> manifest_row <span class="kw">AS</span> (</span>
-<span id="cb8-32"><a href="#cb8-32" tabindex="-1"></a>  <span class="kw">SELECT</span> manifest</span>
-<span id="cb8-33"><a href="#cb8-33" tabindex="-1"></a>  <span class="kw">FROM</span> ducknng_get_rpc_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
-<span id="cb8-34"><a href="#cb8-34" tabindex="-1"></a>  <span class="kw">WHERE</span> ok</span>
-<span id="cb8-35"><a href="#cb8-35" tabindex="-1"></a>)</span>
-<span id="cb8-36"><a href="#cb8-36" tabindex="-1"></a><span class="kw">SELECT</span> json_extract_string(manifest:<span class="ch">:JSON</span>, <span class="st">&#39;$.server.name&#39;</span>) <span class="kw">AS</span> server_name,</span>
-<span id="cb8-37"><a href="#cb8-37" tabindex="-1"></a>       json_array_length(json_extract(manifest:<span class="ch">:JSON</span>, <span class="st">&#39;$.methods&#39;</span>)) <span class="kw">AS</span> method_count,</span>
-<span id="cb8-38"><a href="#cb8-38" tabindex="-1"></a>       position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> manifest) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_exec</span>
-<span id="cb8-39"><a href="#cb8-39" tabindex="-1"></a><span class="kw">FROM</span> manifest_row;</span>
-<span id="cb8-40"><a href="#cb8-40" tabindex="-1"></a></span>
-<span id="cb8-41"><a href="#cb8-41" tabindex="-1"></a><span class="co">-- RPC helper: run non-row statements and keep errors in-band.</span></span>
-<span id="cb8-42"><a href="#cb8-42" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_run_rpc(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
-<span id="cb8-43"><a href="#cb8-43" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_run_rpc(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;INSERT INTO client_side_demo VALUES (10), (11)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
-<span id="cb8-44"><a href="#cb8-44" tabindex="-1"></a></span>
-<span id="cb8-45"><a href="#cb8-45" tabindex="-1"></a><span class="co">-- RPC helper: fetch row results through the unary query path.</span></span>
-<span id="cb8-46"><a href="#cb8-46" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
-<span id="cb8-47"><a href="#cb8-47" tabindex="-1"></a><span class="kw">FROM</span> ducknng_query_rpc(</span>
-<span id="cb8-48"><a href="#cb8-48" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
-<span id="cb8-49"><a href="#cb8-49" tabindex="-1"></a>  <span class="st">&#39;SELECT i, i &gt; 10 AS gt_10 FROM client_side_demo ORDER BY i&#39;</span>, <span class="co">-- sql</span></span>
-<span id="cb8-50"><a href="#cb8-50" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                        <span class="co">-- tls_config_id</span></span>
-<span id="cb8-51"><a href="#cb8-51" tabindex="-1"></a>);</span>
-<span id="cb8-52"><a href="#cb8-52" tabindex="-1"></a></span>
-<span id="cb8-53"><a href="#cb8-53" tabindex="-1"></a><span class="co">-- The Arrow IPC row path also carries temporal, decimal, list, and struct values.</span></span>
-<span id="cb8-54"><a href="#cb8-54" tabindex="-1"></a><span class="kw">SELECT</span> d <span class="op">=</span> <span class="dt">DATE</span> <span class="st">&#39;2024-01-02&#39;</span> <span class="kw">AS</span> date_ok,</span>
-<span id="cb8-55"><a href="#cb8-55" tabindex="-1"></a>       ts <span class="op">=</span> <span class="dt">TIMESTAMP</span> <span class="st">&#39;2024-01-02 03:04:05.123456&#39;</span> <span class="kw">AS</span> ts_ok,</span>
-<span id="cb8-56"><a href="#cb8-56" tabindex="-1"></a>       <span class="dt">dec</span> <span class="op">=</span> <span class="fl">123.45</span>:<span class="ch">:DECIMAL</span>(<span class="dv">10</span>,<span class="dv">2</span>) <span class="kw">AS</span> decimal_ok,</span>
-<span id="cb8-57"><a href="#cb8-57" tabindex="-1"></a>       xs[<span class="dv">2</span>] <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AND</span> xs[<span class="dv">3</span>] <span class="op">=</span> <span class="dv">3</span> <span class="kw">AS</span> list_ok,</span>
-<span id="cb8-58"><a href="#cb8-58" tabindex="-1"></a>       st.a <span class="op">=</span> <span class="dv">7</span> <span class="kw">AND</span> st.b <span class="op">=</span> <span class="st">&#39;bee&#39;</span> <span class="kw">AS</span> struct_ok</span>
-<span id="cb8-59"><a href="#cb8-59" tabindex="-1"></a><span class="kw">FROM</span> ducknng_query_rpc(</span>
-<span id="cb8-60"><a href="#cb8-60" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
-<span id="cb8-61"><a href="#cb8-61" tabindex="-1"></a>  <span class="st">&#39;SELECT DATE </span><span class="ch">&#39;&#39;</span><span class="st">2024-01-02</span><span class="ch">&#39;&#39;</span><span class="st"> AS d,</span></span>
-<span id="cb8-62"><a href="#cb8-62" tabindex="-1"></a><span class="st">          TIMESTAMP </span><span class="ch">&#39;&#39;</span><span class="st">2024-01-02 03:04:05.123456</span><span class="ch">&#39;&#39;</span><span class="st"> AS ts,</span></span>
-<span id="cb8-63"><a href="#cb8-63" tabindex="-1"></a><span class="st">          123.45::DECIMAL(10,2) AS dec,</span></span>
-<span id="cb8-64"><a href="#cb8-64" tabindex="-1"></a><span class="st">          [1, NULL, 3]::INTEGER[] AS xs,</span></span>
-<span id="cb8-65"><a href="#cb8-65" tabindex="-1"></a><span class="st">          {</span><span class="ch">&#39;&#39;</span><span class="st">a</span><span class="ch">&#39;&#39;</span><span class="st">: 7::INTEGER, </span><span class="ch">&#39;&#39;</span><span class="st">b</span><span class="ch">&#39;&#39;</span><span class="st">: </span><span class="ch">&#39;&#39;</span><span class="st">bee</span><span class="ch">&#39;&#39;</span><span class="st">} AS st&#39;</span>, <span class="co">-- sql</span></span>
-<span id="cb8-66"><a href="#cb8-66" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                        <span class="co">-- tls_config_id</span></span>
-<span id="cb8-67"><a href="#cb8-67" tabindex="-1"></a>);</span>
-<span id="cb8-68"><a href="#cb8-68" tabindex="-1"></a></span>
-<span id="cb8-69"><a href="#cb8-69" tabindex="-1"></a><span class="co">-- Body codec helpers parse content-type-tagged BLOBs into SQL tables.</span></span>
-<span id="cb8-70"><a href="#cb8-70" tabindex="-1"></a><span class="kw">SELECT</span> provider, output</span>
-<span id="cb8-71"><a href="#cb8-71" tabindex="-1"></a><span class="kw">FROM</span> ducknng_list_codecs()</span>
-<span id="cb8-72"><a href="#cb8-72" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> provider;</span>
-<span id="cb8-73"><a href="#cb8-73" tabindex="-1"></a></span>
-<span id="cb8-74"><a href="#cb8-74" tabindex="-1"></a><span class="kw">SELECT</span> a, b</span>
-<span id="cb8-75"><a href="#cb8-75" tabindex="-1"></a><span class="kw">FROM</span> ducknng_parse_body(</span>
-<span id="cb8-76"><a href="#cb8-76" tabindex="-1"></a>  <span class="st">&#39;[{&quot;a&quot;:1,&quot;b&quot;:&quot;x&quot;},{&quot;a&quot;:2,&quot;b&quot;:&quot;y&quot;}]&#39;</span>:<span class="ch">:BLOB</span>,</span>
-<span id="cb8-77"><a href="#cb8-77" tabindex="-1"></a>  <span class="st">&#39;application/json; charset=utf-8&#39;</span></span>
-<span id="cb8-78"><a href="#cb8-78" tabindex="-1"></a>)</span>
-<span id="cb8-79"><a href="#cb8-79" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> a;</span>
-<span id="cb8-80"><a href="#cb8-80" tabindex="-1"></a></span>
-<span id="cb8-81"><a href="#cb8-81" tabindex="-1"></a><span class="co">-- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.</span></span>
-<span id="cb8-82"><a href="#cb8-82" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_open_socket(<span class="st">&#39;req&#39;</span>);</span>
-<span id="cb8-83"><a href="#cb8-83" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_dial_socket(<span class="dv">1</span>, <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
-<span id="cb8-84"><a href="#cb8-84" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_list_sockets();</span>
-<span id="cb8-85"><a href="#cb8-85" tabindex="-1"></a></span>
-<span id="cb8-86"><a href="#cb8-86" tabindex="-1"></a><span class="co">-- Primitive transport layer: send the built-in manifest request frame.</span></span>
-<span id="cb8-87"><a href="#cb8-87" tabindex="-1"></a><span class="co">-- The hex literal here is the current wire-format request for the always-on manifest method.</span></span>
-<span id="cb8-88"><a href="#cb8-88" tabindex="-1"></a><span class="kw">SELECT</span> ok, error, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload</span>
-<span id="cb8-89"><a href="#cb8-89" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request_socket(</span>
-<span id="cb8-90"><a href="#cb8-90" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>,                                        <span class="co">-- socket_id</span></span>
-<span id="cb8-91"><a href="#cb8-91" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
-<span id="cb8-92"><a href="#cb8-92" tabindex="-1"></a>  <span class="dv">1000</span>                                               <span class="co">-- timeout_ms</span></span>
-<span id="cb8-93"><a href="#cb8-93" tabindex="-1"></a>);</span>
-<span id="cb8-94"><a href="#cb8-94" tabindex="-1"></a></span>
-<span id="cb8-95"><a href="#cb8-95" tabindex="-1"></a><span class="kw">SELECT</span> ok, error, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload</span>
-<span id="cb8-96"><a href="#cb8-96" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request(</span>
-<span id="cb8-97"><a href="#cb8-97" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
-<span id="cb8-98"><a href="#cb8-98" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
-<span id="cb8-99"><a href="#cb8-99" tabindex="-1"></a>  <span class="dv">1000</span>,                                              <span class="co">-- timeout_ms</span></span>
-<span id="cb8-100"><a href="#cb8-100" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                         <span class="co">-- tls_config_id</span></span>
-<span id="cb8-101"><a href="#cb8-101" tabindex="-1"></a>);</span>
-<span id="cb8-102"><a href="#cb8-102" tabindex="-1"></a></span>
-<span id="cb8-103"><a href="#cb8-103" tabindex="-1"></a><span class="co">-- Raw scalar forms now mean raw reply frames as BLOBs.</span></span>
-<span id="cb8-104"><a href="#cb8-104" tabindex="-1"></a><span class="kw">SELECT</span> <span class="fu">substr</span>(</span>
-<span id="cb8-105"><a href="#cb8-105" tabindex="-1"></a>  hex(</span>
-<span id="cb8-106"><a href="#cb8-106" tabindex="-1"></a>    ducknng_request_socket_raw(</span>
-<span id="cb8-107"><a href="#cb8-107" tabindex="-1"></a>      <span class="dv">1</span>,                                             <span class="co">-- socket_id</span></span>
-<span id="cb8-108"><a href="#cb8-108" tabindex="-1"></a>      from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
-<span id="cb8-109"><a href="#cb8-109" tabindex="-1"></a>      <span class="dv">1000</span>                                           <span class="co">-- timeout_ms</span></span>
-<span id="cb8-110"><a href="#cb8-110" tabindex="-1"></a>    )</span>
-<span id="cb8-111"><a href="#cb8-111" tabindex="-1"></a>  ),</span>
-<span id="cb8-112"><a href="#cb8-112" tabindex="-1"></a>  <span class="dv">1</span>,</span>
-<span id="cb8-113"><a href="#cb8-113" tabindex="-1"></a>  <span class="dv">28</span></span>
-<span id="cb8-114"><a href="#cb8-114" tabindex="-1"></a>);</span>
-<span id="cb8-115"><a href="#cb8-115" tabindex="-1"></a></span>
-<span id="cb8-116"><a href="#cb8-116" tabindex="-1"></a><span class="co">-- Decode raw manifest and exec replies into envelope fields plus extracted text payload.</span></span>
-<span id="cb8-117"><a href="#cb8-117" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span></span>
-<span id="cb8-118"><a href="#cb8-118" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(ducknng_get_rpc_manifest_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>));</span>
-<span id="cb8-119"><a href="#cb8-119" tabindex="-1"></a></span>
-<span id="cb8-120"><a href="#cb8-120" tabindex="-1"></a><span class="kw">SELECT</span> ok, type_name, name</span>
-<span id="cb8-121"><a href="#cb8-121" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
-<span id="cb8-122"><a href="#cb8-122" tabindex="-1"></a>  ducknng_run_rpc_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
-<span id="cb8-123"><a href="#cb8-123" tabindex="-1"></a>);</span>
-<span id="cb8-124"><a href="#cb8-124" tabindex="-1"></a></span>
-<span id="cb8-125"><a href="#cb8-125" tabindex="-1"></a><span class="co">-- The generic raw request helper can be decoded the same way.</span></span>
-<span id="cb8-126"><a href="#cb8-126" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_exec</span>
-<span id="cb8-127"><a href="#cb8-127" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
-<span id="cb8-128"><a href="#cb8-128" tabindex="-1"></a>  ducknng_request_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
-<span id="cb8-129"><a href="#cb8-129" tabindex="-1"></a>);</span>
-<span id="cb8-130"><a href="#cb8-130" tabindex="-1"></a></span>
-<span id="cb8-131"><a href="#cb8-131" tabindex="-1"></a><span class="co">-- Close the client socket handle and stop the demo server.</span></span>
-<span id="cb8-132"><a href="#cb8-132" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_close_socket(<span class="dv">1</span>);</span>
-<span id="cb8-133"><a href="#cb8-133" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
+<span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a><span class="co">-- Pass TRUE to require verified transport-derived peer identity for exec dispatch.</span></span>
+<span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_register_exec_method(<span class="kw">false</span>) <span class="kw">AS</span> registered_exec;</span>
+<span id="cb8-29"><a href="#cb8-29" tabindex="-1"></a><span class="kw">SELECT</span> name, family, response_mode, requires_auth, disabled</span>
+<span id="cb8-30"><a href="#cb8-30" tabindex="-1"></a><span class="kw">FROM</span> ducknng_list_methods()</span>
+<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> name;</span>
+<span id="cb8-32"><a href="#cb8-32" tabindex="-1"></a><span class="kw">WITH</span> manifest_row <span class="kw">AS</span> (</span>
+<span id="cb8-33"><a href="#cb8-33" tabindex="-1"></a>  <span class="kw">SELECT</span> manifest</span>
+<span id="cb8-34"><a href="#cb8-34" tabindex="-1"></a>  <span class="kw">FROM</span> ducknng_get_rpc_manifest(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
+<span id="cb8-35"><a href="#cb8-35" tabindex="-1"></a>  <span class="kw">WHERE</span> ok</span>
+<span id="cb8-36"><a href="#cb8-36" tabindex="-1"></a>)</span>
+<span id="cb8-37"><a href="#cb8-37" tabindex="-1"></a><span class="kw">SELECT</span> json_extract_string(manifest:<span class="ch">:JSON</span>, <span class="st">&#39;$.server.name&#39;</span>) <span class="kw">AS</span> server_name,</span>
+<span id="cb8-38"><a href="#cb8-38" tabindex="-1"></a>       json_array_length(json_extract(manifest:<span class="ch">:JSON</span>, <span class="st">&#39;$.methods&#39;</span>)) <span class="kw">AS</span> method_count,</span>
+<span id="cb8-39"><a href="#cb8-39" tabindex="-1"></a>       position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> manifest) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_exec</span>
+<span id="cb8-40"><a href="#cb8-40" tabindex="-1"></a><span class="kw">FROM</span> manifest_row;</span>
+<span id="cb8-41"><a href="#cb8-41" tabindex="-1"></a></span>
+<span id="cb8-42"><a href="#cb8-42" tabindex="-1"></a><span class="co">-- RPC helper: run non-row statements and keep errors in-band.</span></span>
+<span id="cb8-43"><a href="#cb8-43" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_run_rpc(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
+<span id="cb8-44"><a href="#cb8-44" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_run_rpc(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;INSERT INTO client_side_demo VALUES (10), (11)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
+<span id="cb8-45"><a href="#cb8-45" tabindex="-1"></a></span>
+<span id="cb8-46"><a href="#cb8-46" tabindex="-1"></a><span class="co">-- RPC helper: fetch row results through the unary query path.</span></span>
+<span id="cb8-47"><a href="#cb8-47" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
+<span id="cb8-48"><a href="#cb8-48" tabindex="-1"></a><span class="kw">FROM</span> ducknng_query_rpc(</span>
+<span id="cb8-49"><a href="#cb8-49" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
+<span id="cb8-50"><a href="#cb8-50" tabindex="-1"></a>  <span class="st">&#39;SELECT i, i &gt; 10 AS gt_10 FROM client_side_demo ORDER BY i&#39;</span>, <span class="co">-- sql</span></span>
+<span id="cb8-51"><a href="#cb8-51" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                        <span class="co">-- tls_config_id</span></span>
+<span id="cb8-52"><a href="#cb8-52" tabindex="-1"></a>);</span>
+<span id="cb8-53"><a href="#cb8-53" tabindex="-1"></a></span>
+<span id="cb8-54"><a href="#cb8-54" tabindex="-1"></a><span class="co">-- The Arrow IPC row path also carries temporal, decimal, list, and struct values.</span></span>
+<span id="cb8-55"><a href="#cb8-55" tabindex="-1"></a><span class="kw">SELECT</span> d <span class="op">=</span> <span class="dt">DATE</span> <span class="st">&#39;2024-01-02&#39;</span> <span class="kw">AS</span> date_ok,</span>
+<span id="cb8-56"><a href="#cb8-56" tabindex="-1"></a>       ts <span class="op">=</span> <span class="dt">TIMESTAMP</span> <span class="st">&#39;2024-01-02 03:04:05.123456&#39;</span> <span class="kw">AS</span> ts_ok,</span>
+<span id="cb8-57"><a href="#cb8-57" tabindex="-1"></a>       <span class="dt">dec</span> <span class="op">=</span> <span class="fl">123.45</span>:<span class="ch">:DECIMAL</span>(<span class="dv">10</span>,<span class="dv">2</span>) <span class="kw">AS</span> decimal_ok,</span>
+<span id="cb8-58"><a href="#cb8-58" tabindex="-1"></a>       xs[<span class="dv">2</span>] <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AND</span> xs[<span class="dv">3</span>] <span class="op">=</span> <span class="dv">3</span> <span class="kw">AS</span> list_ok,</span>
+<span id="cb8-59"><a href="#cb8-59" tabindex="-1"></a>       st.a <span class="op">=</span> <span class="dv">7</span> <span class="kw">AND</span> st.b <span class="op">=</span> <span class="st">&#39;bee&#39;</span> <span class="kw">AS</span> struct_ok</span>
+<span id="cb8-60"><a href="#cb8-60" tabindex="-1"></a><span class="kw">FROM</span> ducknng_query_rpc(</span>
+<span id="cb8-61"><a href="#cb8-61" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
+<span id="cb8-62"><a href="#cb8-62" tabindex="-1"></a>  <span class="st">&#39;SELECT DATE </span><span class="ch">&#39;&#39;</span><span class="st">2024-01-02</span><span class="ch">&#39;&#39;</span><span class="st"> AS d,</span></span>
+<span id="cb8-63"><a href="#cb8-63" tabindex="-1"></a><span class="st">          TIMESTAMP </span><span class="ch">&#39;&#39;</span><span class="st">2024-01-02 03:04:05.123456</span><span class="ch">&#39;&#39;</span><span class="st"> AS ts,</span></span>
+<span id="cb8-64"><a href="#cb8-64" tabindex="-1"></a><span class="st">          123.45::DECIMAL(10,2) AS dec,</span></span>
+<span id="cb8-65"><a href="#cb8-65" tabindex="-1"></a><span class="st">          [1, NULL, 3]::INTEGER[] AS xs,</span></span>
+<span id="cb8-66"><a href="#cb8-66" tabindex="-1"></a><span class="st">          {</span><span class="ch">&#39;&#39;</span><span class="st">a</span><span class="ch">&#39;&#39;</span><span class="st">: 7::INTEGER, </span><span class="ch">&#39;&#39;</span><span class="st">b</span><span class="ch">&#39;&#39;</span><span class="st">: </span><span class="ch">&#39;&#39;</span><span class="st">bee</span><span class="ch">&#39;&#39;</span><span class="st">} AS st&#39;</span>, <span class="co">-- sql</span></span>
+<span id="cb8-67"><a href="#cb8-67" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                        <span class="co">-- tls_config_id</span></span>
+<span id="cb8-68"><a href="#cb8-68" tabindex="-1"></a>);</span>
+<span id="cb8-69"><a href="#cb8-69" tabindex="-1"></a></span>
+<span id="cb8-70"><a href="#cb8-70" tabindex="-1"></a><span class="co">-- Body codec helpers parse content-type-tagged BLOBs into SQL tables.</span></span>
+<span id="cb8-71"><a href="#cb8-71" tabindex="-1"></a><span class="kw">SELECT</span> provider, output</span>
+<span id="cb8-72"><a href="#cb8-72" tabindex="-1"></a><span class="kw">FROM</span> ducknng_list_codecs()</span>
+<span id="cb8-73"><a href="#cb8-73" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> provider;</span>
+<span id="cb8-74"><a href="#cb8-74" tabindex="-1"></a></span>
+<span id="cb8-75"><a href="#cb8-75" tabindex="-1"></a><span class="kw">SELECT</span> a, b</span>
+<span id="cb8-76"><a href="#cb8-76" tabindex="-1"></a><span class="kw">FROM</span> ducknng_parse_body(</span>
+<span id="cb8-77"><a href="#cb8-77" tabindex="-1"></a>  <span class="st">&#39;[{&quot;a&quot;:1,&quot;b&quot;:&quot;x&quot;},{&quot;a&quot;:2,&quot;b&quot;:&quot;y&quot;}]&#39;</span>:<span class="ch">:BLOB</span>,</span>
+<span id="cb8-78"><a href="#cb8-78" tabindex="-1"></a>  <span class="st">&#39;application/json; charset=utf-8&#39;</span></span>
+<span id="cb8-79"><a href="#cb8-79" tabindex="-1"></a>)</span>
+<span id="cb8-80"><a href="#cb8-80" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> a;</span>
+<span id="cb8-81"><a href="#cb8-81" tabindex="-1"></a></span>
+<span id="cb8-82"><a href="#cb8-82" tabindex="-1"></a><span class="co">-- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.</span></span>
+<span id="cb8-83"><a href="#cb8-83" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_open_socket(<span class="st">&#39;req&#39;</span>);</span>
+<span id="cb8-84"><a href="#cb8-84" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_dial_socket(<span class="dv">1</span>, <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
+<span id="cb8-85"><a href="#cb8-85" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_list_sockets();</span>
+<span id="cb8-86"><a href="#cb8-86" tabindex="-1"></a></span>
+<span id="cb8-87"><a href="#cb8-87" tabindex="-1"></a><span class="co">-- Primitive transport layer: send the built-in manifest request frame.</span></span>
+<span id="cb8-88"><a href="#cb8-88" tabindex="-1"></a><span class="co">-- The hex literal here is the current wire-format request for the always-on manifest method.</span></span>
+<span id="cb8-89"><a href="#cb8-89" tabindex="-1"></a><span class="kw">SELECT</span> ok, error, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload</span>
+<span id="cb8-90"><a href="#cb8-90" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request_socket(</span>
+<span id="cb8-91"><a href="#cb8-91" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>,                                        <span class="co">-- socket_id</span></span>
+<span id="cb8-92"><a href="#cb8-92" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
+<span id="cb8-93"><a href="#cb8-93" tabindex="-1"></a>  <span class="dv">1000</span>                                               <span class="co">-- timeout_ms</span></span>
+<span id="cb8-94"><a href="#cb8-94" tabindex="-1"></a>);</span>
+<span id="cb8-95"><a href="#cb8-95" tabindex="-1"></a></span>
+<span id="cb8-96"><a href="#cb8-96" tabindex="-1"></a><span class="kw">SELECT</span> ok, error, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload</span>
+<span id="cb8-97"><a href="#cb8-97" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request(</span>
+<span id="cb8-98"><a href="#cb8-98" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
+<span id="cb8-99"><a href="#cb8-99" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
+<span id="cb8-100"><a href="#cb8-100" tabindex="-1"></a>  <span class="dv">1000</span>,                                              <span class="co">-- timeout_ms</span></span>
+<span id="cb8-101"><a href="#cb8-101" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                         <span class="co">-- tls_config_id</span></span>
+<span id="cb8-102"><a href="#cb8-102" tabindex="-1"></a>);</span>
+<span id="cb8-103"><a href="#cb8-103" tabindex="-1"></a></span>
+<span id="cb8-104"><a href="#cb8-104" tabindex="-1"></a><span class="co">-- Raw scalar forms now mean raw reply frames as BLOBs.</span></span>
+<span id="cb8-105"><a href="#cb8-105" tabindex="-1"></a><span class="kw">SELECT</span> <span class="fu">substr</span>(</span>
+<span id="cb8-106"><a href="#cb8-106" tabindex="-1"></a>  hex(</span>
+<span id="cb8-107"><a href="#cb8-107" tabindex="-1"></a>    ducknng_request_socket_raw(</span>
+<span id="cb8-108"><a href="#cb8-108" tabindex="-1"></a>      <span class="dv">1</span>,                                             <span class="co">-- socket_id</span></span>
+<span id="cb8-109"><a href="#cb8-109" tabindex="-1"></a>      from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
+<span id="cb8-110"><a href="#cb8-110" tabindex="-1"></a>      <span class="dv">1000</span>                                           <span class="co">-- timeout_ms</span></span>
+<span id="cb8-111"><a href="#cb8-111" tabindex="-1"></a>    )</span>
+<span id="cb8-112"><a href="#cb8-112" tabindex="-1"></a>  ),</span>
+<span id="cb8-113"><a href="#cb8-113" tabindex="-1"></a>  <span class="dv">1</span>,</span>
+<span id="cb8-114"><a href="#cb8-114" tabindex="-1"></a>  <span class="dv">28</span></span>
+<span id="cb8-115"><a href="#cb8-115" tabindex="-1"></a>);</span>
+<span id="cb8-116"><a href="#cb8-116" tabindex="-1"></a></span>
+<span id="cb8-117"><a href="#cb8-117" tabindex="-1"></a><span class="co">-- Decode raw manifest and exec replies into envelope fields plus extracted text payload.</span></span>
+<span id="cb8-118"><a href="#cb8-118" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb8-119"><a href="#cb8-119" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(ducknng_get_rpc_manifest_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>));</span>
+<span id="cb8-120"><a href="#cb8-120" tabindex="-1"></a></span>
+<span id="cb8-121"><a href="#cb8-121" tabindex="-1"></a><span class="kw">SELECT</span> ok, type_name, name</span>
+<span id="cb8-122"><a href="#cb8-122" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
+<span id="cb8-123"><a href="#cb8-123" tabindex="-1"></a>  ducknng_run_rpc_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
+<span id="cb8-124"><a href="#cb8-124" tabindex="-1"></a>);</span>
+<span id="cb8-125"><a href="#cb8-125" tabindex="-1"></a></span>
+<span id="cb8-126"><a href="#cb8-126" tabindex="-1"></a><span class="co">-- The generic raw request helper can be decoded the same way.</span></span>
+<span id="cb8-127"><a href="#cb8-127" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_exec</span>
+<span id="cb8-128"><a href="#cb8-128" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
+<span id="cb8-129"><a href="#cb8-129" tabindex="-1"></a>  ducknng_request_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
+<span id="cb8-130"><a href="#cb8-130" tabindex="-1"></a>);</span>
+<span id="cb8-131"><a href="#cb8-131" tabindex="-1"></a></span>
+<span id="cb8-132"><a href="#cb8-132" tabindex="-1"></a><span class="co">-- Close the client socket handle and stop the demo server.</span></span>
+<span id="cb8-133"><a href="#cb8-133" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_close_socket(<span class="dv">1</span>);</span>
+<span id="cb8-134"><a href="#cb8-134" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
 <pre><code>+------------------------------------------------------------------------------------------------------------+
 | ducknng_start_server(&#39;sql_client_demo&#39;, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1, 134217728, 300000, 0) |
 +------------------------------------------------------------------------------------------------------------+
@@ -1559,11 +1560,11 @@ client</h3>
 | manifest   | control | metadata_only | false         | false    |
 | query_open | query   | session_open  | false         | false    |
 +------------+---------+---------------+---------------+----------+
-+--------------------------------+
-| ducknng_register_exec_method() |
-+--------------------------------+
-| true                           |
-+--------------------------------+
++-----------------+
+| registered_exec |
++-----------------+
+| true            |
++-----------------+
 +------------+---------+------------------+---------------+----------+
 |    name    | family  |  response_mode   | requires_auth | disabled |
 +------------+---------+------------------+---------------+----------+
@@ -2334,7 +2335,7 @@ and close a query session explicitly</h3>
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-| true | NULL  | 1          | 230ea6cbac1debb90f07480fb2d553d3 | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
+| true | NULL  | 1          | 1fe2d1aaf94ce28ffa802cad07f7179b | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 +-----------------------------------------+
 | ducknng_stop_server(&#39;sql_session_demo&#39;) |
@@ -2741,7 +2742,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_3447aa40fa464d.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_3480a2358f5782.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>

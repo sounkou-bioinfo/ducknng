@@ -6,7 +6,7 @@ This checklist tracks the implementation status of the main architecture, transp
 
 - [x] Make `exec` opt-in instead of always-on.
   - `manifest` remains always registered.
-  - `exec` must be enabled explicitly with `ducknng_register_exec_method()`.
+  - `exec` must be enabled explicitly with `ducknng_register_exec_method()`, or `ducknng_register_exec_method(true)` when the `exec` descriptor should require verified transport-derived peer identity.
 - [x] Add SQL-visible method registry administration.
   - `ducknng_register_exec_method()`
   - `ducknng_unregister_method(name)`

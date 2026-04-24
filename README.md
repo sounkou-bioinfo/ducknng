@@ -224,12 +224,12 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Method Registry
 
-| name                           | kind   | arguments | returns                                                                                                                                                                                                                                                                       | description                                                        |
-|--------------------------------|--------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
-| `ducknng_register_exec_method` | scalar |           | `BOOLEAN`                                                                                                                                                                                                                                                                     | Register the built-in exec RPC method explicitly.                  |
-| `ducknng_unregister_method`    | scalar | `name`    | `BOOLEAN`                                                                                                                                                                                                                                                                     | Unregister a method from the runtime registry.                     |
-| `ducknng_unregister_family`    | scalar | `family`  | `UBIGINT`                                                                                                                                                                                                                                                                     | Unregister all methods in a family and return the number removed.  |
-| `ducknng_list_methods`         | table  |           | `TABLE(name VARCHAR, family VARCHAR, summary VARCHAR, transport_pattern VARCHAR, request_payload_format VARCHAR, response_payload_format VARCHAR, response_mode VARCHAR, request_schema_json VARCHAR, response_schema_json VARCHAR, requires_auth BOOLEAN, disabled BOOLEAN)` | List the currently registered RPC methods in the runtime registry. |
+| name                           | kind   | arguments         | returns                                                                                                                                                                                                                                                                       | description                                                        |
+|--------------------------------|--------|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+| `ducknng_register_exec_method` | scalar | `[requires_auth]` | `BOOLEAN`                                                                                                                                                                                                                                                                     | Register the built-in exec RPC method explicitly.                  |
+| `ducknng_unregister_method`    | scalar | `name`            | `BOOLEAN`                                                                                                                                                                                                                                                                     | Unregister a method from the runtime registry.                     |
+| `ducknng_unregister_family`    | scalar | `family`          | `UBIGINT`                                                                                                                                                                                                                                                                     | Unregister all methods in a family and return the number removed.  |
+| `ducknng_list_methods`         | table  |                   | `TABLE(name VARCHAR, family VARCHAR, summary VARCHAR, transport_pattern VARCHAR, request_payload_format VARCHAR, response_payload_format VARCHAR, response_mode VARCHAR, request_schema_json VARCHAR, response_schema_json VARCHAR, requires_auth BOOLEAN, disabled BOOLEAN)` | List the currently registered RPC methods in the runtime registry. |
 
 ## Primitive Transport
 
@@ -413,7 +413,8 @@ FROM ducknng_list_methods()
 ORDER BY name;
 
 -- Register exec explicitly before exposing SQL execution over RPC.
-SELECT ducknng_register_exec_method();
+-- Pass TRUE to require verified transport-derived peer identity for exec dispatch.
+SELECT ducknng_register_exec_method(false) AS registered_exec;
 SELECT name, family, response_mode, requires_auth, disabled
 FROM ducknng_list_methods()
 ORDER BY name;
@@ -541,11 +542,11 @@ SELECT ducknng_stop_server('sql_client_demo');
     | manifest   | control | metadata_only | false         | false    |
     | query_open | query   | session_open  | false         | false    |
     +------------+---------+---------------+---------------+----------+
-    +--------------------------------+
-    | ducknng_register_exec_method() |
-    +--------------------------------+
-    | true                           |
-    +--------------------------------+
+    +-----------------+
+    | registered_exec |
+    +-----------------+
+    | true            |
+    +-----------------+
     +------------+---------+------------------+---------------+----------+
     |    name    | family  |  response_mode   | requires_auth | disabled |
     +------------+---------+------------------+---------------+----------+
@@ -1354,7 +1355,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | 230ea6cbac1debb90f07480fb2d553d3 | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | 1fe2d1aaf94ce28ffa802cad07f7179b | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1782,7 +1783,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_3447aa40fa464d.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_3480a2358f5782.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
