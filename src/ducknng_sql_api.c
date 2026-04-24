@@ -226,6 +226,7 @@ typedef struct {
     char *sql;
     char *method_name;
     uint64_t session_id;
+    char *session_token;
     uint64_t batch_rows;
     uint64_t batch_bytes;
     uint64_t tls_config_id;
@@ -751,6 +752,7 @@ static void destroy_session_result_bind_data(void *ptr) {
     if (data->url) duckdb_free(data->url);
     if (data->sql) duckdb_free(data->sql);
     if (data->method_name) duckdb_free(data->method_name);
+    if (data->session_token) duckdb_free(data->session_token);
     if (data->error) duckdb_free(data->error);
     if (data->state) duckdb_free(data->state);
     if (data->next_method) duckdb_free(data->next_method);
@@ -1589,10 +1591,13 @@ static char *ducknng_json_extract_string_dup(const char *json, const char *key) 
     return out;
 }
 
-static char *ducknng_session_json_request(uint64_t session_id, uint64_t batch_rows, uint64_t batch_bytes) {
-    char buf[256];
+static char *ducknng_session_json_request(uint64_t session_id, const char *session_token,
+    uint64_t batch_rows, uint64_t batch_bytes) {
+    char buf[320];
     int n;
-    n = snprintf(buf, sizeof(buf), "{\"session_id\":%llu", (unsigned long long)session_id);
+    if (!session_token || !session_token[0]) return NULL;
+    n = snprintf(buf, sizeof(buf), "{\"session_id\":%llu,\"session_token\":\"%s\"",
+        (unsigned long long)session_id, session_token);
     if (n < 0 || (size_t)n >= sizeof(buf)) return NULL;
     if (batch_rows > 0) {
         n += snprintf(buf + n, sizeof(buf) - (size_t)n, ",\"batch_rows\":%llu", (unsigned long long)batch_rows);
@@ -1664,6 +1669,7 @@ static void ducknng_session_result_fill_from_response(ducknng_session_result_bin
         if (frame.payload_len) memcpy(bind->control_json, frame.payload, (size_t)frame.payload_len);
         bind->control_json[frame.payload_len] = '\0';
         (void)ducknng_json_extract_u64_value(bind->control_json, "session_id", &bind->session_id);
+        if (!bind->session_token) bind->session_token = ducknng_json_extract_string_dup(bind->control_json, "session_token");
         bind->state = ducknng_json_extract_string_dup(bind->control_json, "state");
         bind->next_method = ducknng_json_extract_string_dup(bind->control_json, "next_method");
         bind->ok = true;
@@ -3791,6 +3797,7 @@ static void ducknng_session_bind_add_control_columns(duckdb_bind_info info) {
     duckdb_bind_add_result_column(info, "session_id", type);
     duckdb_destroy_logical_type(&type);
     type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "session_token", type);
     duckdb_bind_add_result_column(info, "state", type);
     duckdb_bind_add_result_column(info, "next_method", type);
     duckdb_bind_add_result_column(info, "control_json", type);
@@ -3879,6 +3886,7 @@ static void ducknng_close_query_bind(duckdb_bind_info info) {
     ducknng_session_result_bind_data *bind;
     duckdb_value url_val;
     duckdb_value session_val;
+    duckdb_value token_val;
     duckdb_value tls_val;
     bind = (ducknng_session_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
@@ -3889,17 +3897,20 @@ static void ducknng_close_query_bind(duckdb_bind_info info) {
     bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
     url_val = duckdb_bind_get_parameter(info, 0);
     session_val = duckdb_bind_get_parameter(info, 1);
-    tls_val = duckdb_bind_get_parameter(info, 2);
+    token_val = duckdb_bind_get_parameter(info, 2);
+    tls_val = duckdb_bind_get_parameter(info, 3);
     bind->url = duckdb_get_varchar(url_val);
     bind->session_id = (uint64_t)duckdb_get_uint64(session_val);
+    bind->session_token = duckdb_get_varchar(token_val);
     bind->tls_config_id = (uint64_t)duckdb_get_uint64(tls_val);
     bind->method_name = ducknng_strdup("close");
     bind->expect_json_only = 1;
     duckdb_destroy_value(&url_val);
     duckdb_destroy_value(&session_val);
+    duckdb_destroy_value(&token_val);
     duckdb_destroy_value(&tls_val);
-    if (!bind->url || !bind->url[0] || bind->session_id == 0) {
-        bind->error = ducknng_strdup("ducknng: close_query requires non-empty url and session_id");
+    if (!bind->url || !bind->url[0] || bind->session_id == 0 || !bind->session_token || !bind->session_token[0]) {
+        bind->error = ducknng_strdup("ducknng: close_query requires non-empty url, session_id, and session_token");
     } else if (!bind->method_name) {
         bind->error = ducknng_strdup("ducknng: out of memory preparing close_query call");
     }
@@ -3912,6 +3923,7 @@ static void ducknng_cancel_query_bind(duckdb_bind_info info) {
     ducknng_session_result_bind_data *bind;
     duckdb_value url_val;
     duckdb_value session_val;
+    duckdb_value token_val;
     duckdb_value tls_val;
     bind = (ducknng_session_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
@@ -3922,17 +3934,20 @@ static void ducknng_cancel_query_bind(duckdb_bind_info info) {
     bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
     url_val = duckdb_bind_get_parameter(info, 0);
     session_val = duckdb_bind_get_parameter(info, 1);
-    tls_val = duckdb_bind_get_parameter(info, 2);
+    token_val = duckdb_bind_get_parameter(info, 2);
+    tls_val = duckdb_bind_get_parameter(info, 3);
     bind->url = duckdb_get_varchar(url_val);
     bind->session_id = (uint64_t)duckdb_get_uint64(session_val);
+    bind->session_token = duckdb_get_varchar(token_val);
     bind->tls_config_id = (uint64_t)duckdb_get_uint64(tls_val);
     bind->method_name = ducknng_strdup("cancel");
     bind->expect_json_only = 1;
     duckdb_destroy_value(&url_val);
     duckdb_destroy_value(&session_val);
+    duckdb_destroy_value(&token_val);
     duckdb_destroy_value(&tls_val);
-    if (!bind->url || !bind->url[0] || bind->session_id == 0) {
-        bind->error = ducknng_strdup("ducknng: cancel_query requires non-empty url and session_id");
+    if (!bind->url || !bind->url[0] || bind->session_id == 0 || !bind->session_token || !bind->session_token[0]) {
+        bind->error = ducknng_strdup("ducknng: cancel_query requires non-empty url, session_id, and session_token");
     } else if (!bind->method_name) {
         bind->error = ducknng_strdup("ducknng: out of memory preparing cancel_query call");
     }
@@ -3946,6 +3961,7 @@ static void ducknng_fetch_query_bind(duckdb_bind_info info) {
     duckdb_logical_type type;
     duckdb_value url_val;
     duckdb_value session_val;
+    duckdb_value token_val;
     duckdb_value batch_rows_val;
     duckdb_value batch_bytes_val;
     duckdb_value tls_val;
@@ -3958,11 +3974,13 @@ static void ducknng_fetch_query_bind(duckdb_bind_info info) {
     bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
     url_val = duckdb_bind_get_parameter(info, 0);
     session_val = duckdb_bind_get_parameter(info, 1);
-    batch_rows_val = duckdb_bind_get_parameter(info, 2);
-    batch_bytes_val = duckdb_bind_get_parameter(info, 3);
-    tls_val = duckdb_bind_get_parameter(info, 4);
+    token_val = duckdb_bind_get_parameter(info, 2);
+    batch_rows_val = duckdb_bind_get_parameter(info, 3);
+    batch_bytes_val = duckdb_bind_get_parameter(info, 4);
+    tls_val = duckdb_bind_get_parameter(info, 5);
     bind->url = duckdb_get_varchar(url_val);
     bind->session_id = (uint64_t)duckdb_get_uint64(session_val);
+    bind->session_token = duckdb_get_varchar(token_val);
     bind->batch_rows = (uint64_t)duckdb_get_uint64(batch_rows_val);
     bind->batch_bytes = (uint64_t)duckdb_get_uint64(batch_bytes_val);
     bind->tls_config_id = (uint64_t)duckdb_get_uint64(tls_val);
@@ -3970,11 +3988,12 @@ static void ducknng_fetch_query_bind(duckdb_bind_info info) {
     bind->expect_json_only = 0;
     duckdb_destroy_value(&url_val);
     duckdb_destroy_value(&session_val);
+    duckdb_destroy_value(&token_val);
     duckdb_destroy_value(&batch_rows_val);
     duckdb_destroy_value(&batch_bytes_val);
     duckdb_destroy_value(&tls_val);
-    if (!bind->url || !bind->url[0] || bind->session_id == 0) {
-        bind->error = ducknng_strdup("ducknng: fetch_query requires non-empty url and session_id");
+    if (!bind->url || !bind->url[0] || bind->session_id == 0 || !bind->session_token || !bind->session_token[0]) {
+        bind->error = ducknng_strdup("ducknng: fetch_query requires non-empty url, session_id, and session_token");
     } else if (!bind->method_name) {
         bind->error = ducknng_strdup("ducknng: out of memory preparing fetch_query call");
     }
@@ -4006,9 +4025,13 @@ static void ducknng_session_result_init(duckdb_init_info info) {
                 bind->error = errmsg ? errmsg : ducknng_strdup("ducknng: failed to encode query_open payload");
             } else {
                 ducknng_session_bind_common(bind, bind->ctx, bind->url, bind->method_name, payload, payload_len, bind->tls_config_id, 0, bind->expect_json_only);
+                if (bind->ok && (bind->session_id == 0 || !bind->session_token || !bind->session_token[0])) {
+                    bind->ok = false;
+                    if (!bind->error) bind->error = ducknng_strdup("ducknng: query_open reply did not include session_id and session_token");
+                }
             }
         } else {
-            json = ducknng_session_json_request(bind->session_id, bind->batch_rows, bind->batch_bytes);
+            json = ducknng_session_json_request(bind->session_id, bind->session_token, bind->batch_rows, bind->batch_bytes);
             if (!json) {
                 bind->error = ducknng_strdup("ducknng: failed to build session request payload");
             } else {
@@ -4044,12 +4067,14 @@ static void ducknng_session_control_scan(duckdb_function_info info, duckdb_data_
     if (bind->error) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), 0, bind->error);
     else set_null(duckdb_data_chunk_get_vector(output, 1), 0);
     session_ids[0] = bind->session_id;
-    if (bind->state) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 3), 0, bind->state);
+    if (bind->session_token) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 3), 0, bind->session_token);
     else set_null(duckdb_data_chunk_get_vector(output, 3), 0);
-    if (bind->next_method) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 4), 0, bind->next_method);
+    if (bind->state) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 4), 0, bind->state);
     else set_null(duckdb_data_chunk_get_vector(output, 4), 0);
-    if (bind->control_json) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 5), 0, bind->control_json);
+    if (bind->next_method) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 5), 0, bind->next_method);
     else set_null(duckdb_data_chunk_get_vector(output, 5), 0);
+    if (bind->control_json) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 6), 0, bind->control_json);
+    else set_null(duckdb_data_chunk_get_vector(output, 6), 0);
     duckdb_data_chunk_set_size(output, 1);
     init->emitted = 1;
 }
@@ -4066,19 +4091,21 @@ static void ducknng_fetch_query_scan(duckdb_function_info info, duckdb_data_chun
     }
     ok_data = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 0));
     session_ids = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 2));
-    end_of_stream = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 7));
+    end_of_stream = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 8));
     ok_data[0] = bind->ok;
     if (bind->error) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), 0, bind->error);
     else set_null(duckdb_data_chunk_get_vector(output, 1), 0);
     session_ids[0] = bind->session_id;
-    if (bind->state) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 3), 0, bind->state);
+    if (bind->session_token) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 3), 0, bind->session_token);
     else set_null(duckdb_data_chunk_get_vector(output, 3), 0);
-    if (bind->next_method) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 4), 0, bind->next_method);
+    if (bind->state) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 4), 0, bind->state);
     else set_null(duckdb_data_chunk_get_vector(output, 4), 0);
-    if (bind->control_json) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 5), 0, bind->control_json);
+    if (bind->next_method) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 5), 0, bind->next_method);
     else set_null(duckdb_data_chunk_get_vector(output, 5), 0);
-    if (bind->payload) assign_blob(duckdb_data_chunk_get_vector(output, 6), 0, bind->payload, bind->payload_len);
+    if (bind->control_json) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 6), 0, bind->control_json);
     else set_null(duckdb_data_chunk_get_vector(output, 6), 0);
+    if (bind->payload) assign_blob(duckdb_data_chunk_get_vector(output, 7), 0, bind->payload, bind->payload_len);
+    else set_null(duckdb_data_chunk_get_vector(output, 7), 0);
     end_of_stream[0] = bind->end_of_stream;
     duckdb_data_chunk_set_size(output, 1);
     init->emitted = 1;
@@ -6380,6 +6407,7 @@ static int register_session_control_table_named(duckdb_connection con, ducknng_s
     type_u64 = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
     duckdb_table_function_add_parameter(tf, type_varchar);
     duckdb_table_function_add_parameter(tf, type_u64);
+    duckdb_table_function_add_parameter(tf, type_varchar);
     duckdb_table_function_add_parameter(tf, type_u64);
     duckdb_destroy_logical_type(&type_varchar);
     duckdb_destroy_logical_type(&type_u64);
@@ -6407,6 +6435,7 @@ static int register_fetch_query_table_named(duckdb_connection con, ducknng_sql_c
     type_u64 = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
     duckdb_table_function_add_parameter(tf, type_varchar);
     duckdb_table_function_add_parameter(tf, type_u64);
+    duckdb_table_function_add_parameter(tf, type_varchar);
     duckdb_table_function_add_parameter(tf, type_u64);
     duckdb_table_function_add_parameter(tf, type_u64);
     duckdb_table_function_add_parameter(tf, type_u64);

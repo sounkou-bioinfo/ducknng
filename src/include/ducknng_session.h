@@ -11,6 +11,7 @@ typedef struct ducknng_schema_cache {
 
 typedef struct ducknng_session {
     uint64_t session_id;
+    char *owner_token;
     duckdb_result result;
     int result_open;
     int eos;
@@ -27,11 +28,15 @@ typedef struct ducknng_session {
 
 typedef struct ducknng_service ducknng_service;
 
-ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_id, char **errmsg);
+ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_id,
+    const char *owner_token, char **errmsg);
 void ducknng_session_destroy(ducknng_session *session);
 void ducknng_session_release(ducknng_session *session);
-int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result, uint64_t *out_session_id, char **errmsg);
-ducknng_session *ducknng_service_acquire_session(ducknng_service *svc, uint64_t session_id);
-ducknng_session *ducknng_service_remove_session(ducknng_service *svc, uint64_t session_id);
+int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result,
+    uint64_t *out_session_id, char **out_owner_token, char **errmsg);
+ducknng_session *ducknng_service_acquire_session(ducknng_service *svc, uint64_t session_id,
+    const char *owner_token, int *out_unauthorized);
+ducknng_session *ducknng_service_remove_session(ducknng_service *svc, uint64_t session_id,
+    const char *owner_token, int *out_unauthorized);
 ducknng_session **ducknng_service_detach_all_sessions(ducknng_service *svc, size_t *out_count);
 size_t ducknng_service_prune_idle_sessions(ducknng_service *svc, uint64_t now_ms);

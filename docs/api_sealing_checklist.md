@@ -23,19 +23,11 @@ That is enough for serious use and interop work, but it is not yet enough to cal
 
 ## Must-resolve before sealing
 
-### 1. Session ownership and identity
+### 1. Session execution isolation and ownership policy review
 
-The largest blocker is the session-family ownership model.
+The previous bare-`session_id` ownership blocker is addressed by the current query-family bearer token model: `query_open` returns `session_token`, and `fetch`, `close`, and `cancel` must present it with the session id. Before sealing, the remaining session question is whether that bearer-token model is the stable public owner contract or whether a broader transport-derived or RPC-authenticated identity layer must land first.
 
-Before the API is considered sealed, `query_open`, `fetch`, `close`, and `cancel` need a concrete owner identity model that works across multiple clients. A bare `session_id` lookup is not acceptable as the final security and lifecycle contract.
-
-This means the project must choose and implement one coherent identity model:
-
-- transport-derived identity
-- RPC-level authentication and capability binding
-- per-pipe identity
-
-Until that lands, the session family should remain documented as experimental.
+The deeper remaining session blocker is execution isolation. Service-owned SQL is still serialized through the runtime init connection. That avoids concurrent connection misuse, but it does not yet provide isolated per-session DuckDB state. Before declaring multi-client session semantics sealed, decide whether per-session or per-request DuckDB connections with locked-down configuration are required for the stable surface.
 
 ### 2. Final HTTP async scope
 
@@ -91,6 +83,7 @@ These items were worth resolving before the API hardens further and should stay 
 - README examples now include representative raw protocol slices beyond req/pair, including `push` / `pull`, `pub` / `sub`, and `surveyor` / `respondent`
 - the README and `docs/lifetime.md` now make the low-level manual-lifecycle contract explicit instead of implying a nanonext-style GC/finalizer model that DuckDB SQL does not actually provide for user-visible handles
 - the unary Arrow row path now includes `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `LIST`, and `STRUCT` coverage with SQL-visible regression tests
+- query sessions now bind ownership to an explicit `session_token` bearer capability instead of treating `session_id` as a capability
 
 ## Not sealing blockers by themselves
 

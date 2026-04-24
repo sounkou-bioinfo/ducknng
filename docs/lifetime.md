@@ -101,7 +101,7 @@ If you open a query session with:
 
 - `ducknng_open_query(...)`
 
-then close it explicitly with:
+keep both the returned `session_id` and `session_token`, then close it explicitly with:
 
 - `ducknng_close_query(...)`
 
@@ -137,7 +137,7 @@ The recent lifetime pass improved internal destruction and ownership correctness
 
 The main remaining lifetime-adjacent sealing blockers are still:
 
-- final session ownership/identity semantics
+- final decision on whether the current `session_token` bearer capability is the sealed ownership model or whether broader transport/RPC authentication must land first
 - any remaining borrowed-pointer or concurrent-handle edge cases that should be eliminated before calling the API sealed
 - clear documentation of which resources are user-managed and which are statement-local/internal
 

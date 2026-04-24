@@ -34,6 +34,12 @@ FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIG
 ----
 1	1
 
+query I
+SELECT position('"session_token"' IN manifest) > 0
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIGINT)
+----
+1
+
 query IIIIIII
 SELECT ok, version, type, flags, type_name, name, position('"name":"exec"' IN payload_text) > 0
 FROM ducknng_decode_frame(ducknng_get_rpc_manifest_raw('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIGINT))
@@ -160,11 +166,21 @@ FROM ducknng_query_rpc(
 ----
 ducknng: unary exec row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, and STRUCT
 
-query IITT
-SELECT ok, session_id, state, next_method
+statement ok
+CREATE TEMP TABLE rpc_open AS
+SELECT *
 FROM ducknng_open_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i FROM remote_t ORDER BY i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+
+query IIITT
+SELECT ok, session_id, length(session_token) = 32, state, next_method
+FROM rpc_open
 ----
-1	1	open	fetch
+1	1	1	open	fetch
+
+statement ok
+SET VARIABLE rpc_session_token = (
+  SELECT session_token FROM rpc_open
+)
 
 query I
 SELECT sessions
@@ -173,23 +189,38 @@ WHERE name = 'rpc_smoke'
 ----
 1
 
+query IT
+SELECT ok, error
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, '00000000000000000000000000000000', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+0	ducknng: session owner token mismatch
+
+query IT
+SELECT ok, error
+FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, '00000000000000000000000000000000', 0::UBIGINT)
+----
+0	ducknng: session owner token mismatch
+
 query IIIII
 SELECT ok, session_id, state IS NULL, octet_length(payload) > 0, end_of_stream
-FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
 ----
 1	1	1	1	0
 
 query IITII
 SELECT ok, session_id, state, payload IS NULL, end_of_stream
-FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
 ----
 1	1	exhausted	1	1
 
 query IIT
 SELECT ok, session_id, state
-FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, 0::UBIGINT)
+FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT)
 ----
 1	1	closed
+
+statement ok
+DROP TABLE rpc_open
 
 query I
 SELECT sessions
@@ -198,17 +229,36 @@ WHERE name = 'rpc_smoke'
 ----
 0
 
-query IITT
-SELECT ok, session_id, state, next_method
+statement ok
+CREATE TEMP TABLE rpc_open_cancel AS
+SELECT *
 FROM ducknng_open_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i FROM remote_t ORDER BY i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+
+query IIITT
+SELECT ok, session_id, length(session_token) = 32, state, next_method
+FROM rpc_open_cancel
 ----
-1	2	open	fetch
+1	2	1	open	fetch
+
+statement ok
+SET VARIABLE rpc_cancel_session_token = (
+  SELECT session_token FROM rpc_open_cancel
+)
+
+query IT
+SELECT ok, error
+FROM ducknng_cancel_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 2::UBIGINT, '00000000000000000000000000000000', 0::UBIGINT)
+----
+0	ducknng: session owner token mismatch
 
 query IIT
 SELECT ok, session_id, state
-FROM ducknng_cancel_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 2::UBIGINT, 0::UBIGINT)
+FROM ducknng_cancel_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 2::UBIGINT, getvariable('rpc_cancel_session_token')::VARCHAR, 0::UBIGINT)
 ----
 1	2	cancelled
+
+statement ok
+DROP TABLE rpc_open_cancel
 
 query I
 SELECT sessions

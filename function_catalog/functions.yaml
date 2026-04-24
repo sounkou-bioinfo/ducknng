@@ -758,14 +758,14 @@
       "kind": "table",
       "category": "RPC Session",
       "signature": "ducknng_open_query(url, sql, batch_rows, batch_bytes, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Open a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "batch_rows and batch_bytes are optional fetch-hint fields carried in the query_open payload.",
-        "This surface is still development scaffolding until session ownership is bound to a real client identity model."
+        "The returned session_token is a bearer capability; pass it unchanged to fetch, close, and cancel helpers."
       ],
       "examples": [
         "SELECT * FROM ducknng_open_query('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT);"
@@ -775,53 +775,55 @@
       "name": "ducknng_fetch_query",
       "kind": "table",
       "category": "RPC Session",
-      "signature": "ducknng_fetch_query(url, session_id, batch_rows, batch_bytes, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)",
+      "signature": "ducknng_fetch_query(url, session_id, session_token, batch_rows, batch_bytes, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.",
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
+        "session_token must match the bearer capability returned by ducknng_open_query().",
         "When a row batch is returned, payload contains one Arrow IPC batch and control_json is NULL.",
         "When the session is exhausted, payload is NULL, state is usually exhausted, and end_of_stream is TRUE."
       ],
       "examples": [
-        "SELECT * FROM ducknng_fetch_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT);"
+        "SELECT * FROM ducknng_fetch_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, '<session_token>', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT);"
       ]
     },
     {
       "name": "ducknng_close_query",
       "kind": "table",
       "category": "RPC Session",
-      "signature": "ducknng_close_query(url, session_id, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "signature": "ducknng_close_query(url, session_id, session_token, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Close a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
+        "session_token must match the bearer capability returned by ducknng_open_query().",
         "This is the normal explicit cleanup path after fetch reaches end-of-stream."
       ],
       "examples": [
-        "SELECT * FROM ducknng_close_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, 0::UBIGINT);"
+        "SELECT * FROM ducknng_close_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, '<session_token>', 0::UBIGINT);"
       ]
     },
     {
       "name": "ducknng_cancel_query",
       "kind": "table",
       "category": "RPC Session",
-      "signature": "ducknng_cancel_query(url, session_id, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "signature": "ducknng_cancel_query(url, session_id, session_token, tls_config_id)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Request cancellation for a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
-        "This is best-effort cancellation and does not replace the normal explicit close path unless the server reports that the session is already closed.",
-        "This is still part of the development session surface."
+        "session_token must match the bearer capability returned by ducknng_open_query().",
+        "This is best-effort cancellation and does not replace the normal explicit close path unless the server reports that the session is already closed."
       ],
       "examples": [
-        "SELECT * FROM ducknng_cancel_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, 0::UBIGINT);"
+        "SELECT * FROM ducknng_cancel_query('ipc:///tmp/ducknng_sql0.ipc', 1::UBIGINT, '<session_token>', 0::UBIGINT);"
       ]
     },
     {

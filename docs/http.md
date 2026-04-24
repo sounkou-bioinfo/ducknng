@@ -112,19 +112,19 @@ The HTTP adapter does not alter the session contract. It carries the same method
 
 `query_open` still accepts an Arrow IPC payload containing exactly one logical request row with `sql` and optional batch controls. Over HTTP, that Arrow IPC payload remains the payload inside a `ducknng` request frame, and that frame becomes the HTTP request body.
 
-`fetch` still accepts JSON control metadata keyed by `session_id`. Over HTTP, that JSON control payload remains the payload inside a `ducknng` request frame, and that frame becomes the HTTP request body.
+`fetch` still accepts JSON control metadata keyed by `session_id` and `session_token`. Over HTTP, that JSON control payload remains the payload inside a `ducknng` request frame, and that frame becomes the HTTP request body.
 
 `fetch` still returns either Arrow IPC row data or JSON control metadata. When rows are returned, the Arrow IPC bytes remain inside the `ducknng` reply frame payload exactly as they do over NNG. The HTTP response body is therefore still one `ducknng` frame whose payload contains Arrow IPC record-batch bytes. When only control metadata is returned, the HTTP response body is one `ducknng` frame whose payload contains JSON.
 
 `close` and `cancel` retain the same JSON control request and response shapes. They do not become path-specialized HTTP endpoints and they do not gain alternate payload encodings just because the outer carrier is HTTP.
 
-This means Arrow record batches remain Arrow record batches. They do not become JSON arrays, text tables, or bespoke HTTP chunking formats in the first HTTP adapter. Session ids remain session ids. They do not migrate into path segments or query parameters. The same state machine in `docs/protocol.md` continues to govern `query_open`, `fetch`, `close`, and `cancel`.
+This means Arrow record batches remain Arrow record batches. They do not become JSON arrays, text tables, or bespoke HTTP chunking formats in the first HTTP adapter. Session ids and session tokens remain frame payload fields. They do not migrate into path segments, query parameters, or HTTP cookies. The same state machine in `docs/protocol.md` continues to govern `query_open`, `fetch`, `close`, and `cancel`.
 
 ## TLS and security
 
 The HTTP adapter inherits the same trust model and ownership rules described in `docs/security.md`. It does not introduce a second authentication model. HTTPS uses the same TLS handle model already established for the NNG transport direction, and session ownership remains a protocol-level concern rather than a carrier-local shortcut.
 
-A successful HTTPS deployment therefore still needs deliberate TLS configuration and still does not make bare `session_id` ownership rules acceptable. The transport may encrypt the bytes, but the multi-client session contract remains the same problem it already is over NNG.
+A successful HTTPS deployment therefore still needs deliberate TLS configuration. Session ownership is proven with the same `session_token` bearer capability used over NNG, and HTTPS protects that token from network observers; it does not turn the HTTP adapter into a separate authentication system.
 
 ## Deferred items
 
