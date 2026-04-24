@@ -27,26 +27,37 @@ knitr::knit_engines$set(sql = function(options) {
 
 # ducknng: a DuckDB binding to the NNG Scalability Protocols library and an Arrow IPC-based RPC framework
 
-`ducknng` is the pure C DuckDB extension that implements that binding/framework inside DuckDB.
+`ducknng` is a pure C DuckDB extension that exposes NNG messaging and a small framed RPC layer to SQL. The SQL ergonomics are inspired by [`r-lib/nanonext`](https://github.com/r-lib/nanonext), while the RPC direction is a thin versioned envelope carrying Arrow IPC or JSON payloads.
 
-It gives DuckDB SQL a `nanonext`-like messaging surface and uses a thin, versioned RPC envelope with Arrow IPC payloads. The SQL ergonomics are inspired by [`r-lib/nanonext`](https://github.com/r-lib/nanonext), and the thin-envelope + Arrow IPC direction is informed by projects such as [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro).
+The current implementation is easiest to understand as three layers.
 
-Today the extension already includes:
+1. **NNG transports and socket patterns.**
+   `ducknng_start_server(...)` starts the framed RPC service on NNG `REP`, and the generic socket API (`ducknng_open_socket(...)`, `ducknng_dial_socket(...)`, `ducknng_listen_socket(...)`, raw send/recv, and socket AIO helpers) exposes NNG socket patterns such as `req`, `rep`, `pair`, `push`, `pull`, `pub`, `sub`, `bus`, `surveyor`, and `respondent`. This family uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`. `tls+tcp://` is NNG's TLS-over-TCP transport; `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes.
 
-- server lifecycle control through `ducknng_start_server()`, `ducknng_start_http_server()`, `ducknng_stop_server()`, and `ducknng_list_servers()`
-- generic NNG socket handles for `bus`, `pair`, `poly`, `push`, `pull`, `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`
-- NNG transport schemes across `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`
-- raw socket send/recv primitives plus req-style raw request/reply helpers
-- raw aio helpers for socket send/recv, req-style request/reply futures, and the first raw unary RPC futures
-- a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS routing for the synchronous request/RPC/session helper family
-- built-in content-type driven body codec helpers for raw/text/JSON/Arrow IPC/frame payloads, with CSV/TSV/Parquet recognized and safely returned through the generic BLOB fallback until a memory-backed DuckDB filesystem path lands
-- explicit query-session helpers and TLS config handles
+2. **HTTP/HTTPS as a framed RPC carrier.**
+   `ducknng_start_http_server(...)` mounts the same framed RPC protocol at an `http://` or `https://` URL path. The endpoint accepts `POST` with `Content-Type: application/vnd.ducknng.frame`, and the body is one complete `ducknng` frame. The synchronous request/RPC/session helpers route over `http://` and `https://` by URL scheme, so there are no duplicate method names such as `http_exec` or `http_fetch`. `https://` means HTTP over TLS; it is separate from NNG `tls+tcp://` because HTTP has methods, headers, status codes, and paths, while NNG exposes socket patterns directly.
 
-`ducknng` is also intentionally low-level. Long-lived runtime handles are **manually managed**. In normal use that means you should stop servers, close sockets, drop aio handles, drop TLS config handles, and close query sessions explicitly rather than expecting a nanonext-style GC/finalizer layer.
+3. **Payload and body codecs.**
+   RPC row payloads use Arrow IPC. RPC control metadata and the manifest are JSON text inside framed payloads; SQL helper columns such as `manifest` keep that JSON as `VARCHAR`, and examples cast to `JSON` only when extracting fields. `ducknng_ncurl(...)` intentionally stays raw (`status`, headers, `body BLOB`, `body_text`). The opt-in body codec layer (`ducknng_list_codecs()`, `ducknng_parse_body(...)`, `ducknng_ncurl_table(...)`) parses selected content types. JSON is parsed in memory through DuckDB JSON functions; Arrow IPC and frame bodies are decoded by their providers; CSV, TSV, and Parquet are currently recognized but returned through the generic `body BLOB` fallback until a memory-backed reader/provider path lands.
 
-Transport is selected from the URL scheme. Today the NNG-facing operations work across `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`, while `ducknng_start_http_server(...)` and `ducknng_ncurl(...)` provide the separate HTTP/HTTPS carrier layer. The generic socket layer is explicitly modeled on `nanonext`: open a protocol-specific socket, dial or listen it, and then use raw send/recv or aio helpers as appropriate. The higher-level RPC helpers wrap manifest-declared request/reply methods, and the session helpers wrap the fixed `query_open` / `fetch` / `close` / `cancel` lifecycle over repeated request/reply exchanges rather than acting as a generic abstraction over all socket patterns. The synchronous request, RPC, and session helpers now route over `http://` and `https://` automatically, but the generic socket API stays NNG-only. The current async RPC wrappers are also layered this way: they launch one ordinary request/reply method call asynchronously and later return the collected raw reply frame for decoding, rather than introducing a second background-job protocol. Query sessions are no longer bearer-by-`session_id`: `ducknng_open_query(...)` returns a `session_token` that must accompany `fetch`, `close`, and `cancel`; when a session is opened over verified mTLS, later session calls must also arrive with the same transport-derived peer identity. WebSocket here means NNG's `ws://` and `wss://` transports, not a second HTTP-specific RPC surface.
+Implemented now:
 
-`ducknng_ncurl(...)` intentionally stays raw: it returns status, headers, `body BLOB`, and best-effort UTF-8 `body_text`. When you want nanonext-style serialization/deserialization providers, use the opt-in body codec layer instead: `ducknng_list_codecs()` shows the built-ins, `ducknng_parse_body(body, content_type)` parses an existing BLOB, and `ducknng_ncurl_table(...)` fetches a 2xx HTTP/HTTPS response and parses it into a table according to the response `Content-Type`. These helpers parse JSON in memory through DuckDB JSON functions, use nanoarrow for Arrow IPC stream bytes, and use the existing frame decoder for `application/vnd.ducknng.frame`. CSV, TSV, and Parquet media types are recognized but currently use the generic `body BLOB` fallback rather than spilling to temp files; the right next step is a scalarfs-style in-memory filesystem/provider layer. JSON parsing currently runs through the runtime init-connection execution gate and fails fast inside service-owned SQL until the broader per-session connection model lands.
+- service lifecycle: `ducknng_start_server()`, `ducknng_start_http_server()`, `ducknng_stop_server()`, `ducknng_list_servers()`
+- generic NNG sockets and raw send/recv across the NNG transport schemes above
+- raw AIO handles for NNG socket send/recv, req-style request/reply futures, and the first raw unary RPC futures
+- manifest-driven RPC helpers, opt-in `exec`, and query sessions (`query_open`, `fetch`, `close`, `cancel`)
+- automatic synchronous helper routing over NNG or HTTP/HTTPS based on URL scheme
+- TLS config handles for `tls+tcp://`, `wss://`, and `https://`; `auth_mode = 2` enables required peer verification/mTLS
+- session ownership by `session_token`, additionally bound to verified mTLS peer identity when present
+
+Still intentionally deferred or not sealed:
+
+- HTTP async helpers are not part of the stable surface yet
+- CSV/TSV/Parquet body parsers are not implemented beyond the safe BLOB fallback
+- full SQL-side decoding of session `fetch` Arrow batch BLOBs is still a future table-function layer
+- envelope-level application authentication is not implemented; the current contract is `session_token` plus optional verified mTLS owner identity
+
+`ducknng` is intentionally low-level. Long-lived runtime handles are **manually managed**: stop servers, close sockets, drop AIO handles, drop TLS config handles, and close query sessions explicitly rather than expecting a nanonext-style GC/finalizer layer.
 
 ## Getting started
 

@@ -606,89 +606,95 @@ padding-top: 0px;
 <h1 id="ducknng-a-duckdb-binding-to-the-nng-scalability-protocols-library-and-an-arrow-ipc-based-rpc-framework">ducknng:
 a DuckDB binding to the NNG Scalability Protocols library and an Arrow
 IPC-based RPC framework</h1>
-<p><code>ducknng</code> is the pure C DuckDB extension that implements
-that binding/framework inside DuckDB.</p>
-<p>It gives DuckDB SQL a <code>nanonext</code>-like messaging surface
-and uses a thin, versioned RPC envelope with Arrow IPC payloads. The SQL
-ergonomics are inspired by <a href="https://github.com/r-lib/nanonext"><code>r-lib/nanonext</code></a>,
-and the thin-envelope + Arrow IPC direction is informed by projects such
-as <a href="https://github.com/sounkou-bioinfo/mangoro"><code>sounkou-bioinfo/mangoro</code></a>.</p>
-<p>Today the extension already includes:</p>
-<ul>
-<li>server lifecycle control through
-<code>ducknng_start_server()</code>,
-<code>ducknng_start_http_server()</code>,
-<code>ducknng_stop_server()</code>, and
-<code>ducknng_list_servers()</code></li>
-<li>generic NNG socket handles for <code>bus</code>, <code>pair</code>,
-<code>poly</code>, <code>push</code>, <code>pull</code>,
-<code>pub</code>, <code>sub</code>, <code>req</code>, <code>rep</code>,
-<code>surveyor</code>, and <code>respondent</code></li>
-<li>NNG transport schemes across <code>inproc://</code>,
-<code>ipc://</code>, <code>tcp://</code>, <code>tls+tcp://</code>,
-<code>ws://</code>, and <code>wss://</code></li>
-<li>raw socket send/recv primitives plus req-style raw request/reply
-helpers</li>
-<li>raw aio helpers for socket send/recv, req-style request/reply
-futures, and the first raw unary RPC futures</li>
-<li>a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS
-routing for the synchronous request/RPC/session helper family</li>
-<li>built-in content-type driven body codec helpers for
-raw/text/JSON/Arrow IPC/frame payloads, with CSV/TSV/Parquet recognized
-and safely returned through the generic BLOB fallback until a
-memory-backed DuckDB filesystem path lands</li>
-<li>explicit query-session helpers and TLS config handles</li>
-</ul>
-<p><code>ducknng</code> is also intentionally low-level. Long-lived
-runtime handles are <strong>manually managed</strong>. In normal use
-that means you should stop servers, close sockets, drop aio handles,
-drop TLS config handles, and close query sessions explicitly rather than
-expecting a nanonext-style GC/finalizer layer.</p>
-<p>Transport is selected from the URL scheme. Today the NNG-facing
-operations work across <code>inproc://</code>, <code>ipc://</code>,
+<p><code>ducknng</code> is a pure C DuckDB extension that exposes NNG
+messaging and a small framed RPC layer to SQL. The SQL ergonomics are
+inspired by <a href="https://github.com/r-lib/nanonext"><code>r-lib/nanonext</code></a>,
+while the RPC direction is a thin versioned envelope carrying Arrow IPC
+or JSON payloads.</p>
+<p>The current implementation is easiest to understand as three
+layers.</p>
+<ol style="list-style-type: decimal">
+<li><p><strong>NNG transports and socket patterns.</strong>
+<code>ducknng_start_server(...)</code> starts the framed RPC service on
+NNG <code>REP</code>, and the generic socket API
+(<code>ducknng_open_socket(...)</code>,
+<code>ducknng_dial_socket(...)</code>,
+<code>ducknng_listen_socket(...)</code>, raw send/recv, and socket AIO
+helpers) exposes NNG socket patterns such as <code>req</code>,
+<code>rep</code>, <code>pair</code>, <code>push</code>,
+<code>pull</code>, <code>pub</code>, <code>sub</code>, <code>bus</code>,
+<code>surveyor</code>, and <code>respondent</code>. This family uses NNG
+URL schemes: <code>inproc://</code>, <code>ipc://</code>,
 <code>tcp://</code>, <code>tls+tcp://</code>, <code>ws://</code>, and
-<code>wss://</code>, while <code>ducknng_start_http_server(...)</code>
-and <code>ducknng_ncurl(...)</code> provide the separate HTTP/HTTPS
-carrier layer. The generic socket layer is explicitly modeled on
-<code>nanonext</code>: open a protocol-specific socket, dial or listen
-it, and then use raw send/recv or aio helpers as appropriate. The
-higher-level RPC helpers wrap manifest-declared request/reply methods,
-and the session helpers wrap the fixed <code>query_open</code> /
-<code>fetch</code> / <code>close</code> / <code>cancel</code> lifecycle
-over repeated request/reply exchanges rather than acting as a generic
-abstraction over all socket patterns. The synchronous request, RPC, and
-session helpers now route over <code>http://</code> and
-<code>https://</code> automatically, but the generic socket API stays
-NNG-only. The current async RPC wrappers are also layered this way: they
-launch one ordinary request/reply method call asynchronously and later
-return the collected raw reply frame for decoding, rather than
-introducing a second background-job protocol. Query sessions are no
-longer bearer-by-<code>session_id</code>:
-<code>ducknng_open_query(...)</code> returns a
-<code>session_token</code> that must accompany <code>fetch</code>,
-<code>close</code>, and <code>cancel</code>; when a session is opened
-over verified mTLS, later session calls must also arrive with the same
-transport-derived peer identity. WebSocket here means NNG’s
-<code>ws://</code> and <code>wss://</code> transports, not a second
-HTTP-specific RPC surface.</p>
-<p><code>ducknng_ncurl(...)</code> intentionally stays raw: it returns
-status, headers, <code>body BLOB</code>, and best-effort UTF-8
-<code>body_text</code>. When you want nanonext-style
-serialization/deserialization providers, use the opt-in body codec layer
-instead: <code>ducknng_list_codecs()</code> shows the built-ins,
-<code>ducknng_parse_body(body, content_type)</code> parses an existing
-BLOB, and <code>ducknng_ncurl_table(...)</code> fetches a 2xx HTTP/HTTPS
-response and parses it into a table according to the response
-<code>Content-Type</code>. These helpers parse JSON in memory through
-DuckDB JSON functions, use nanoarrow for Arrow IPC stream bytes, and use
-the existing frame decoder for
-<code>application/vnd.ducknng.frame</code>. CSV, TSV, and Parquet media
-types are recognized but currently use the generic
-<code>body BLOB</code> fallback rather than spilling to temp files; the
-right next step is a scalarfs-style in-memory filesystem/provider layer.
-JSON parsing currently runs through the runtime init-connection
-execution gate and fails fast inside service-owned SQL until the broader
-per-session connection model lands.</p>
+<code>wss://</code>. <code>tls+tcp://</code> is NNG’s TLS-over-TCP
+transport; <code>wss://</code> is NNG WebSocket-over-TLS. They are not
+HTTP routes.</p></li>
+<li><p><strong>HTTP/HTTPS as a framed RPC carrier.</strong>
+<code>ducknng_start_http_server(...)</code> mounts the same framed RPC
+protocol at an <code>http://</code> or <code>https://</code> URL path.
+The endpoint accepts <code>POST</code> with
+<code>Content-Type: application/vnd.ducknng.frame</code>, and the body
+is one complete <code>ducknng</code> frame. The synchronous
+request/RPC/session helpers route over <code>http://</code> and
+<code>https://</code> by URL scheme, so there are no duplicate method
+names such as <code>http_exec</code> or <code>http_fetch</code>.
+<code>https://</code> means HTTP over TLS; it is separate from NNG
+<code>tls+tcp://</code> because HTTP has methods, headers, status codes,
+and paths, while NNG exposes socket patterns directly.</p></li>
+<li><p><strong>Payload and body codecs.</strong> RPC row payloads use
+Arrow IPC. RPC control metadata and the manifest are JSON text inside
+framed payloads; SQL helper columns such as <code>manifest</code> keep
+that JSON as <code>VARCHAR</code>, and examples cast to
+<code>JSON</code> only when extracting fields.
+<code>ducknng_ncurl(...)</code> intentionally stays raw
+(<code>status</code>, headers, <code>body BLOB</code>,
+<code>body_text</code>). The opt-in body codec layer
+(<code>ducknng_list_codecs()</code>,
+<code>ducknng_parse_body(...)</code>,
+<code>ducknng_ncurl_table(...)</code>) parses selected content types.
+JSON is parsed in memory through DuckDB JSON functions; Arrow IPC and
+frame bodies are decoded by their providers; CSV, TSV, and Parquet are
+currently recognized but returned through the generic
+<code>body BLOB</code> fallback until a memory-backed reader/provider
+path lands.</p></li>
+</ol>
+<p>Implemented now:</p>
+<ul>
+<li>service lifecycle: <code>ducknng_start_server()</code>,
+<code>ducknng_start_http_server()</code>,
+<code>ducknng_stop_server()</code>,
+<code>ducknng_list_servers()</code></li>
+<li>generic NNG sockets and raw send/recv across the NNG transport
+schemes above</li>
+<li>raw AIO handles for NNG socket send/recv, req-style request/reply
+futures, and the first raw unary RPC futures</li>
+<li>manifest-driven RPC helpers, opt-in <code>exec</code>, and query
+sessions (<code>query_open</code>, <code>fetch</code>,
+<code>close</code>, <code>cancel</code>)</li>
+<li>automatic synchronous helper routing over NNG or HTTP/HTTPS based on
+URL scheme</li>
+<li>TLS config handles for <code>tls+tcp://</code>, <code>wss://</code>,
+and <code>https://</code>; <code>auth_mode = 2</code> enables required
+peer verification/mTLS</li>
+<li>session ownership by <code>session_token</code>, additionally bound
+to verified mTLS peer identity when present</li>
+</ul>
+<p>Still intentionally deferred or not sealed:</p>
+<ul>
+<li>HTTP async helpers are not part of the stable surface yet</li>
+<li>CSV/TSV/Parquet body parsers are not implemented beyond the safe
+BLOB fallback</li>
+<li>full SQL-side decoding of session <code>fetch</code> Arrow batch
+BLOBs is still a future table-function layer</li>
+<li>envelope-level application authentication is not implemented; the
+current contract is <code>session_token</code> plus optional verified
+mTLS owner identity</li>
+</ul>
+<p><code>ducknng</code> is intentionally low-level. Long-lived runtime
+handles are <strong>manually managed</strong>: stop servers, close
+sockets, drop AIO handles, drop TLS config handles, and close query
+sessions explicitly rather than expecting a nanonext-style GC/finalizer
+layer.</p>
 <h2 id="getting-started">Getting started</h2>
 <p>Build the extension locally:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">make</span> configure</span>
@@ -2318,7 +2324,7 @@ and close a query session explicitly</h3>
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-| true | NULL  | 1          | 9209b49ac104e851118ef6ad2bd72199 | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
+| true | NULL  | 1          | 280bb3598254aa2b9d498fd55f480bca | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 +-----------------------------------------+
 | ducknng_stop_server(&#39;sql_session_demo&#39;) |
@@ -2725,7 +2731,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_326000193ee08f.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_33bd3a1d840b95.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
