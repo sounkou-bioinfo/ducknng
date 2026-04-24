@@ -14,9 +14,26 @@ knitr::knit_engines$set(sql = function(options) {
     code <- paste(sprintf("LOAD '%s';", extension_path), code, sep = "\n")
   }
   if (isTRUE(options$eval)) {
-    out <- system2("duckdb", "-unsigned", input = code, stdout = TRUE, stderr = TRUE)
+    run_code <- paste(".mode markdown", code, sep = "\n")
+    out <- system2("duckdb", "-unsigned", input = run_code, stdout = TRUE, stderr = TRUE)
     status <- attr(out, "status")
     if (!is.null(status) && status != 0) stop(paste(out, collapse = "\n"))
+    if (length(out) > 1) {
+      # DuckDB's markdown mode does not separate consecutive result tables.
+      # Insert a blank line before each new table so GitHub renders them
+      # as separate tables instead of a malformed combined table.
+      is_separator <- grepl("^\\|[-: |]+\\|$", out)
+      formatted <- character()
+      for (i in seq_along(out)) {
+        is_header <- startsWith(out[[i]], "|") && i < length(out) && is_separator[[i + 1]]
+        if (is_header && length(formatted) > 0 && tail(formatted, 1) != "") {
+          formatted <- c(formatted, "")
+        }
+        formatted <- c(formatted, out[[i]])
+      }
+      out <- formatted
+    }
+    options$results <- "asis"
     knitr::engine_output(options, code, out)
   } else {
     knitr::engine_output(options, code, NULL)
@@ -453,17 +470,32 @@ SELECT ducknng_stop_server('http_demo');
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
 -- Open one listening pair socket and one dialed peer.
-SELECT ducknng_open_socket('pair');
-SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 134217728, 0::UBIGINT);
-SELECT ducknng_open_socket('pair');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc', 1000, 0::UBIGINT);
+-- SET VARIABLE keeps setup handles out of the rendered output.
+SET VARIABLE pair_a = ducknng_open_socket('pair');
+SET VARIABLE pair_listen_ok = ducknng_listen_socket(
+  getvariable('pair_a')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc',
+  134217728,
+  0::UBIGINT
+);
+SET VARIABLE pair_b = ducknng_open_socket('pair');
+SET VARIABLE pair_dial_ok = ducknng_dial_socket(
+  getvariable('pair_b')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_pair_aio_demo.ipc',
+  1000,
+  0::UBIGINT
+);
 
 -- Start one async receive and one async send.
 CREATE TEMP TABLE pair_recv AS
-SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+SELECT ducknng_recv_socket_raw_aio(getvariable('pair_a')::UBIGINT, 1000) AS recv_aio;
 
 CREATE TEMP TABLE pair_send AS
-SELECT ducknng_send_socket_raw_aio(2::UBIGINT, from_hex('6173796e632072657175657374'), 1000) AS send_aio;
+SELECT ducknng_send_socket_raw_aio(
+  getvariable('pair_b')::UBIGINT,
+  from_hex('6173796e632072657175657374'),
+  1000
+) AS send_aio;
 
 -- Collect the terminal send result. Send-only airos succeed with frame = NULL.
 SELECT aio_id, ok, frame IS NULL AS no_frame
@@ -478,95 +510,149 @@ SELECT kind, state, phase, send_done, send_ok, recv_done, recv_ok IS NULL AS rec
 FROM ducknng_aio_status((SELECT send_aio FROM pair_send));
 
 -- Clean up the terminal aio handles, temp state, and socket handles.
-SELECT ducknng_aio_drop((SELECT send_aio FROM pair_send));
-SELECT ducknng_aio_drop((SELECT recv_aio FROM pair_recv));
+SET VARIABLE pair_drop_send = ducknng_aio_drop((SELECT send_aio FROM pair_send));
+SET VARIABLE pair_drop_recv = ducknng_aio_drop((SELECT recv_aio FROM pair_recv));
 DROP TABLE pair_send;
 DROP TABLE pair_recv;
-SELECT ducknng_close_socket(2);
-SELECT ducknng_close_socket(1);
+SET VARIABLE pair_close_b = ducknng_close_socket(getvariable('pair_b')::UBIGINT);
+SET VARIABLE pair_close_a = ducknng_close_socket(getvariable('pair_a')::UBIGINT);
 ```
 
 ### Push one raw message through `push` / `pull`
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
 -- Open one pull socket, listen on it, then dial it from a push peer.
-SELECT ducknng_open_socket('pull');
-SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 134217728, 0::UBIGINT);
-SELECT ducknng_open_socket('push');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pushpull_demo.ipc', 1000, 0::UBIGINT);
+SET VARIABLE pull_socket = ducknng_open_socket('pull');
+SET VARIABLE pull_listen_ok = ducknng_listen_socket(
+  getvariable('pull_socket')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_pushpull_demo.ipc',
+  134217728,
+  0::UBIGINT
+);
+SET VARIABLE push_socket = ducknng_open_socket('push');
+SET VARIABLE push_dial_ok = ducknng_dial_socket(
+  getvariable('push_socket')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_pushpull_demo.ipc',
+  1000,
+  0::UBIGINT
+);
 
 -- Receive asynchronously on pull so the send side can return immediately.
 CREATE TEMP TABLE pushpull_recv AS
-SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+SELECT ducknng_recv_socket_raw_aio(getvariable('pull_socket')::UBIGINT, 1000) AS recv_aio;
 
-SELECT ducknng_send_socket_raw(2::UBIGINT, from_hex('707573682d70756c6c'), 1000) AS sent;
+SET VARIABLE pushpull_sent = ducknng_send_socket_raw(
+  getvariable('push_socket')::UBIGINT,
+  from_hex('707573682d70756c6c'),
+  1000
+);
 
-SELECT ok, hex(frame) = '707573682D70756C6C' AS got_payload
+SELECT getvariable('pushpull_sent')::BOOLEAN AS sent,
+       ok,
+       hex(frame) = '707573682D70756C6C' AS got_payload
 FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM pushpull_recv), 1000);
 
-SELECT ducknng_aio_drop((SELECT recv_aio FROM pushpull_recv));
+SET VARIABLE pushpull_drop = ducknng_aio_drop((SELECT recv_aio FROM pushpull_recv));
 DROP TABLE pushpull_recv;
-SELECT ducknng_close_socket(2);
-SELECT ducknng_close_socket(1);
+SET VARIABLE push_close = ducknng_close_socket(getvariable('push_socket')::UBIGINT);
+SET VARIABLE pull_close = ducknng_close_socket(getvariable('pull_socket')::UBIGINT);
 ```
 
 ### Publish one raw message through `pub` / `sub`
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
 -- Open one publisher, then subscribe from a sub peer to all topics.
-SELECT ducknng_open_socket('pub');
-SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 134217728, 0::UBIGINT);
-SELECT ducknng_open_socket('sub');
-SELECT ducknng_subscribe_socket(2::UBIGINT, from_hex(''));
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_pubsub_demo.ipc', 1000, 0::UBIGINT);
+SET VARIABLE pub_socket = ducknng_open_socket('pub');
+SET VARIABLE pub_listen_ok = ducknng_listen_socket(
+  getvariable('pub_socket')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_pubsub_demo.ipc',
+  134217728,
+  0::UBIGINT
+);
+SET VARIABLE sub_socket = ducknng_open_socket('sub');
+SET VARIABLE sub_subscribe_ok = ducknng_subscribe_socket(getvariable('sub_socket')::UBIGINT, from_hex(''));
+SET VARIABLE sub_dial_ok = ducknng_dial_socket(
+  getvariable('sub_socket')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_pubsub_demo.ipc',
+  1000,
+  0::UBIGINT
+);
 
 CREATE TEMP TABLE pubsub_recv AS
-SELECT ducknng_recv_socket_raw_aio(2::UBIGINT, 1000) AS recv_aio;
+SELECT ducknng_recv_socket_raw_aio(getvariable('sub_socket')::UBIGINT, 1000) AS recv_aio;
 
-SELECT ducknng_send_socket_raw(1::UBIGINT, from_hex('7075622d737562'), 1000) AS sent;
+SET VARIABLE pubsub_sent = ducknng_send_socket_raw(
+  getvariable('pub_socket')::UBIGINT,
+  from_hex('7075622d737562'),
+  1000
+);
 
-SELECT ok, hex(frame) = '7075622D737562' AS got_payload
+SELECT getvariable('pubsub_sent')::BOOLEAN AS sent,
+       ok,
+       hex(frame) = '7075622D737562' AS got_payload
 FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM pubsub_recv), 1000);
 
-SELECT ducknng_aio_drop((SELECT recv_aio FROM pubsub_recv));
+SET VARIABLE pubsub_drop = ducknng_aio_drop((SELECT recv_aio FROM pubsub_recv));
 DROP TABLE pubsub_recv;
-SELECT ducknng_close_socket(2);
-SELECT ducknng_close_socket(1);
+SET VARIABLE sub_close = ducknng_close_socket(getvariable('sub_socket')::UBIGINT);
+SET VARIABLE pub_close = ducknng_close_socket(getvariable('pub_socket')::UBIGINT);
 ```
 
 ### Exchange one survey and one response through `surveyor` / `respondent`
 
 ```{sql eval=TRUE, collapse=FALSE, comment=""}
 -- Open one respondent listener and one surveyor peer.
-SELECT ducknng_open_socket('respondent');
-SELECT ducknng_listen_socket(1, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 134217728, 0::UBIGINT);
-SELECT ducknng_open_socket('surveyor');
-SELECT ducknng_dial_socket(2, 'ipc:///tmp/ducknng_sql_survey_demo.ipc', 1000, 0::UBIGINT);
+SET VARIABLE respondent_socket = ducknng_open_socket('respondent');
+SET VARIABLE respondent_listen_ok = ducknng_listen_socket(
+  getvariable('respondent_socket')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_survey_demo.ipc',
+  134217728,
+  0::UBIGINT
+);
+SET VARIABLE surveyor_socket = ducknng_open_socket('surveyor');
+SET VARIABLE surveyor_dial_ok = ducknng_dial_socket(
+  getvariable('surveyor_socket')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_survey_demo.ipc',
+  1000,
+  0::UBIGINT
+);
 
 -- Receive the survey on the respondent side first.
 CREATE TEMP TABLE respondent_recv AS
-SELECT ducknng_recv_socket_raw_aio(1::UBIGINT, 1000) AS recv_aio;
+SELECT ducknng_recv_socket_raw_aio(getvariable('respondent_socket')::UBIGINT, 1000) AS recv_aio;
 
-SELECT ducknng_send_socket_raw(2::UBIGINT, from_hex('737572766579'), 1000) AS sent_survey;
+SET VARIABLE survey_sent = ducknng_send_socket_raw(
+  getvariable('surveyor_socket')::UBIGINT,
+  from_hex('737572766579'),
+  1000
+);
 
-SELECT ok, hex(frame) = '737572766579' AS got_survey
+SELECT getvariable('survey_sent')::BOOLEAN AS sent_survey,
+       ok,
+       hex(frame) = '737572766579' AS got_survey
 FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM respondent_recv), 1000);
 
 -- Then receive the respondent reply back on the surveyor side.
 CREATE TEMP TABLE surveyor_recv AS
-SELECT ducknng_recv_socket_raw_aio(2::UBIGINT, 1000) AS recv_aio;
+SELECT ducknng_recv_socket_raw_aio(getvariable('surveyor_socket')::UBIGINT, 1000) AS recv_aio;
 
-SELECT ducknng_send_socket_raw(1::UBIGINT, from_hex('726573706f6e7365'), 1000) AS sent_response;
+SET VARIABLE response_sent = ducknng_send_socket_raw(
+  getvariable('respondent_socket')::UBIGINT,
+  from_hex('726573706f6e7365'),
+  1000
+);
 
-SELECT ok, hex(frame) = '726573706F6E7365' AS got_response
+SELECT getvariable('response_sent')::BOOLEAN AS sent_response,
+       ok,
+       hex(frame) = '726573706F6E7365' AS got_response
 FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM surveyor_recv), 1000);
 
-SELECT ducknng_aio_drop((SELECT recv_aio FROM respondent_recv));
-SELECT ducknng_aio_drop((SELECT recv_aio FROM surveyor_recv));
+SET VARIABLE respondent_drop = ducknng_aio_drop((SELECT recv_aio FROM respondent_recv));
+SET VARIABLE surveyor_drop = ducknng_aio_drop((SELECT recv_aio FROM surveyor_recv));
 DROP TABLE respondent_recv;
 DROP TABLE surveyor_recv;
-SELECT ducknng_close_socket(2);
-SELECT ducknng_close_socket(1);
+SET VARIABLE surveyor_close = ducknng_close_socket(getvariable('surveyor_socket')::UBIGINT);
+SET VARIABLE respondent_close = ducknng_close_socket(getvariable('respondent_socket')::UBIGINT);
 ```
 
 ### Launch raw requests asynchronously and collect the reply frames later

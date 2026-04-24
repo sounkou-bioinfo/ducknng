@@ -148,55 +148,6 @@ FROM ducknng_decode_frame(
 ----
 1	result	manifest	1	1
 
-statement ok
-CREATE TEMP TABLE mtls_http_open AS
-SELECT *
-FROM ducknng_open_query(
-  getvariable('mtls_http_url')::VARCHAR,
-  'SELECT 7 AS answer',
-  0::UBIGINT,
-  0::UBIGINT,
-  getvariable('mtls_tls_config_id')::UBIGINT
-)
-
-statement ok
-SET VARIABLE mtls_http_session_token = (
-  SELECT session_token FROM mtls_http_open
-)
-
-query IIITT
-SELECT ok, session_id, length(session_token) = 32, state, next_method
-FROM mtls_http_open
-----
-1	1	1	open	fetch
-
-query IIIII
-SELECT ok, session_id, state IS NULL, octet_length(payload) > 0, end_of_stream
-FROM ducknng_fetch_query(
-  getvariable('mtls_http_url')::VARCHAR,
-  1::UBIGINT,
-  getvariable('mtls_http_session_token')::VARCHAR,
-  0::UBIGINT,
-  0::UBIGINT,
-  getvariable('mtls_tls_config_id')::UBIGINT
-)
-----
-1	1	1	1	0
-
-query IIT
-SELECT ok, session_id, state
-FROM ducknng_close_query(
-  getvariable('mtls_http_url')::VARCHAR,
-  1::UBIGINT,
-  getvariable('mtls_http_session_token')::VARCHAR,
-  getvariable('mtls_tls_config_id')::UBIGINT
-)
-----
-1	1	closed
-
-statement ok
-DROP TABLE mtls_http_open
-
 query I
 SELECT CASE WHEN ducknng_stop_server('mtls_http') THEN 1 ELSE 0 END
 ----
@@ -250,5 +201,160 @@ SELECT CASE WHEN ducknng_stop_server('mtls_wss') THEN 1 ELSE 0 END
 
 query I
 SELECT ducknng_drop_tls_config(getvariable('mtls_tls_config_id')::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_tls_config_from_files('test/certs/mtls/server-cert-key.pem', 'test/certs/mtls/ca.pem', NULL, 2) > 0
+----
+1
+
+statement ok
+SET VARIABLE mtls_server_config_id = (
+  SELECT max(tls_config_id) FROM ducknng_list_tls_configs()
+)
+
+query I
+SELECT ducknng_tls_config_from_files('test/certs/mtls/client-a-cert-key.pem', 'test/certs/mtls/ca.pem', NULL, 2) > 0
+----
+1
+
+statement ok
+SET VARIABLE mtls_client_a_config_id = (
+  SELECT max(tls_config_id) FROM ducknng_list_tls_configs()
+)
+
+query I
+SELECT ducknng_tls_config_from_files('test/certs/mtls/client-b-cert-key.pem', 'test/certs/mtls/ca.pem', NULL, 2) > 0
+----
+1
+
+statement ok
+SET VARIABLE mtls_client_b_config_id = (
+  SELECT max(tls_config_id) FROM ducknng_list_tls_configs()
+)
+
+query I
+SELECT ducknng_tls_config_from_files(NULL, 'test/certs/mtls/ca.pem', NULL, 2) > 0
+----
+1
+
+statement ok
+SET VARIABLE mtls_no_client_config_id = (
+  SELECT max(tls_config_id) FROM ducknng_list_tls_configs()
+)
+
+query I
+SELECT CASE
+  WHEN ducknng_start_server(
+    'mtls_negative_rpc',
+    'tls+tcp://127.0.0.1:0',
+    1,
+    134217728,
+    300000,
+    getvariable('mtls_server_config_id')::UBIGINT
+  )
+  THEN 1 ELSE 0 END
+----
+1
+
+statement ok
+SET VARIABLE mtls_negative_rpc_url = (
+  SELECT listen FROM ducknng_list_servers() WHERE name = 'mtls_negative_rpc'
+)
+
+query I
+SELECT CASE WHEN ok THEN 0 ELSE 1 END
+FROM ducknng_request(
+  getvariable('mtls_negative_rpc_url')::VARCHAR,
+  from_hex('01000000000000000000000000000000000000000000'),
+  2000,
+  getvariable('mtls_no_client_config_id')::UBIGINT
+)
+----
+1
+
+statement ok
+CREATE TEMP TABLE mtls_identity_open AS
+SELECT *
+FROM ducknng_open_query(
+  getvariable('mtls_negative_rpc_url')::VARCHAR,
+  'SELECT 99 AS answer',
+  0::UBIGINT,
+  0::UBIGINT,
+  getvariable('mtls_client_a_config_id')::UBIGINT
+)
+
+statement ok
+SET VARIABLE mtls_identity_session_token = (
+  SELECT session_token FROM mtls_identity_open
+)
+
+query IIITT
+SELECT ok, session_id, length(session_token) = 32, state, next_method
+FROM mtls_identity_open
+----
+1	1	1	open	fetch
+
+query IT
+SELECT ok, error
+FROM ducknng_fetch_query(
+  getvariable('mtls_negative_rpc_url')::VARCHAR,
+  1::UBIGINT,
+  getvariable('mtls_identity_session_token')::VARCHAR,
+  0::UBIGINT,
+  0::UBIGINT,
+  getvariable('mtls_client_b_config_id')::UBIGINT
+)
+----
+0	ducknng: session owner identity mismatch
+
+query IT
+SELECT ok, error
+FROM ducknng_close_query(
+  getvariable('mtls_negative_rpc_url')::VARCHAR,
+  1::UBIGINT,
+  getvariable('mtls_identity_session_token')::VARCHAR,
+  getvariable('mtls_client_b_config_id')::UBIGINT
+)
+----
+0	ducknng: session owner identity mismatch
+
+query IIT
+SELECT ok, session_id, state
+FROM ducknng_close_query(
+  getvariable('mtls_negative_rpc_url')::VARCHAR,
+  1::UBIGINT,
+  getvariable('mtls_identity_session_token')::VARCHAR,
+  getvariable('mtls_client_a_config_id')::UBIGINT
+)
+----
+1	1	closed
+
+statement ok
+DROP TABLE mtls_identity_open
+
+query I
+SELECT CASE WHEN ducknng_stop_server('mtls_negative_rpc') THEN 1 ELSE 0 END
+----
+1
+
+query I
+SELECT ducknng_drop_tls_config(getvariable('mtls_server_config_id')::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_drop_tls_config(getvariable('mtls_client_a_config_id')::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_drop_tls_config(getvariable('mtls_client_b_config_id')::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_drop_tls_config(getvariable('mtls_no_client_config_id')::UBIGINT)
 ----
 1
