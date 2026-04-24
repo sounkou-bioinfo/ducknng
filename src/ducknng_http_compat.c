@@ -529,11 +529,27 @@ typedef struct ducknng_http_server_state {
     struct ducknng_service *svc;
     nng_http_server *server;
     nng_http_handler *handler;
+    ducknng_mutex mu;
+    ducknng_cond cv;
+    int stopping;
+    int handler_finalized;
+    int handler_data_installed;
+    int mu_initialized;
+    int cv_initialized;
 } ducknng_http_server_state;
 
 static const char *DUCKNNG_HTTP_FRAME_MEDIA_TYPE = "application/vnd.ducknng.frame";
 static const char *DUCKNNG_HTTP_FRAME_HEADERS_JSON =
     "[{\"name\":\"Content-Type\",\"value\":\"application/vnd.ducknng.frame\"}]";
+
+static void ducknng_http_server_state_handler_dtor(void *arg) {
+    ducknng_http_server_state *state = (ducknng_http_server_state *)arg;
+    if (!state || !state->mu_initialized) return;
+    ducknng_mutex_lock(&state->mu);
+    state->handler_finalized = 1;
+    if (state->cv_initialized) ducknng_cond_broadcast(&state->cv);
+    ducknng_mutex_unlock(&state->mu);
+}
 
 static uint16_t ducknng_http_be16_to_host(uint16_t value) {
     return (uint16_t)(((value & 0x00ffu) << 8) | ((value & 0xff00u) >> 8));
@@ -649,13 +665,32 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
     nng_msg *reply_msg = NULL;
     nng_http_res *res = NULL;
     ducknng_frame frame;
-    int rv;
+    int rv = 0;
+    int stopping = 0;
+    int service_stopping = 0;
     if (!aio) return;
     req = (nng_http_req *)nng_aio_get_input(aio, 0);
     handler = (nng_http_handler *)nng_aio_get_input(aio, 1);
     state = handler ? (ducknng_http_server_state *)nng_http_handler_get_data(handler) : NULL;
     if (!req || !state || !state->svc) {
         rv = ducknng_http_alloc_text_response(&res, 500, "ducknng: missing HTTP server state");
+        ducknng_http_finish_response(aio, res, rv);
+        return;
+    }
+    if (state->mu_initialized) {
+        ducknng_mutex_lock(&state->mu);
+        stopping = state->stopping;
+        ducknng_mutex_unlock(&state->mu);
+    }
+    if (state->svc->mu_initialized) {
+        ducknng_mutex_lock(&state->svc->mu);
+        service_stopping = state->svc->shutting_down;
+        ducknng_mutex_unlock(&state->svc->mu);
+    } else {
+        service_stopping = state->svc->shutting_down;
+    }
+    if (stopping || service_stopping) {
+        rv = ducknng_http_alloc_text_response(&res, 503, "ducknng: HTTP server is stopping");
         ducknng_http_finish_response(aio, res, rv);
         return;
     }
@@ -796,6 +831,21 @@ int ducknng_http_server_start(struct ducknng_service *svc, ducknng_http_server_s
     }
     memset(state, 0, sizeof(*state));
     state->svc = svc;
+    if (ducknng_mutex_init(&state->mu) != 0) {
+        nng_url_free(up);
+        duckdb_free(state);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize HTTP server mutex");
+        return -1;
+    }
+    state->mu_initialized = 1;
+    if (ducknng_cond_init(&state->cv) != 0) {
+        ducknng_mutex_destroy(&state->mu);
+        nng_url_free(up);
+        duckdb_free(state);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize HTTP server condition variable");
+        return -1;
+    }
+    state->cv_initialized = 1;
     rv = nng_http_server_hold(&state->server, up);
     if (rv != 0) goto fail;
     rv = nng_http_handler_alloc(&state->handler, up->u_path, ducknng_http_rpc_handler);
@@ -804,8 +854,9 @@ int ducknng_http_server_start(struct ducknng_service *svc, ducknng_http_server_s
     if (rv != 0) goto fail;
     rv = nng_http_handler_collect_body(state->handler, true, svc->recv_max_bytes);
     if (rv != 0) goto fail;
-    rv = nng_http_handler_set_data(state->handler, state, NULL);
+    rv = nng_http_handler_set_data(state->handler, state, ducknng_http_server_state_handler_dtor);
     if (rv != 0) goto fail;
+    state->handler_data_installed = 1;
     rv = nng_http_server_add_handler(state->server, state->handler);
     if (rv != 0) goto fail;
     if (ducknng_http_tls_requested(&svc->tls_opts)) {
@@ -826,11 +877,23 @@ fail:
     if (tls_cfg) nng_tls_config_free(tls_cfg);
     if (state) {
         if (state->server && state->handler) (void)nng_http_server_del_handler(state->server, state->handler);
-        if (state->handler) nng_http_handler_free(state->handler);
+        if (state->handler) {
+            nng_http_handler_free(state->handler);
+            state->handler = NULL;
+        }
+        if (state->mu_initialized && state->handler_data_installed) {
+            ducknng_mutex_lock(&state->mu);
+            while (!state->handler_finalized && state->cv_initialized) {
+                ducknng_cond_wait(&state->cv, &state->mu);
+            }
+            ducknng_mutex_unlock(&state->mu);
+        }
         if (state->server) {
             nng_http_server_stop(state->server);
             nng_http_server_release(state->server);
         }
+        if (state->cv_initialized) ducknng_cond_destroy(&state->cv);
+        if (state->mu_initialized) ducknng_mutex_destroy(&state->mu);
         duckdb_free(state);
     }
     if (up) nng_url_free(up);
@@ -840,9 +903,30 @@ fail:
 
 void ducknng_http_server_stop(ducknng_http_server_state *state) {
     if (!state) return;
-    if (state->server) nng_http_server_stop(state->server);
+    if (state->mu_initialized) {
+        ducknng_mutex_lock(&state->mu);
+        state->stopping = 1;
+        ducknng_mutex_unlock(&state->mu);
+    }
     if (state->server && state->handler) (void)nng_http_server_del_handler(state->server, state->handler);
-    if (state->handler) nng_http_handler_free(state->handler);
+    if (state->server) nng_http_server_stop(state->server);
+    if (state->handler) {
+        nng_http_handler_free(state->handler);
+        state->handler = NULL;
+    } else if (state->mu_initialized) {
+        ducknng_mutex_lock(&state->mu);
+        state->handler_finalized = 1;
+        ducknng_mutex_unlock(&state->mu);
+    }
+    if (state->mu_initialized) {
+        ducknng_mutex_lock(&state->mu);
+        while (!state->handler_finalized && state->cv_initialized) {
+            ducknng_cond_wait(&state->cv, &state->mu);
+        }
+        ducknng_mutex_unlock(&state->mu);
+    }
     if (state->server) nng_http_server_release(state->server);
+    if (state->cv_initialized) ducknng_cond_destroy(&state->cv);
+    if (state->mu_initialized) ducknng_mutex_destroy(&state->mu);
     duckdb_free(state);
 }

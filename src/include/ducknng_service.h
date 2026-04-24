@@ -6,6 +6,7 @@
 #include "ducknng_wire.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 typedef struct ducknng_runtime ducknng_runtime;
 typedef struct ducknng_service ducknng_service;
@@ -46,6 +47,7 @@ struct ducknng_service {
     int mu_initialized;
     ducknng_session **sessions;
     size_t session_count;
+    atomic_size_t session_count_visible;
     size_t session_cap;
     uint64_t next_session_id;
     uint64_t session_idle_ms;

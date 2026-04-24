@@ -5,6 +5,44 @@
 
 DUCKDB_EXTENSION_EXTERN
 
+static void ducknng_session_mark_closing(ducknng_session *session) {
+    if (!session || !session->mu_initialized) return;
+    ducknng_mutex_lock(&session->mu);
+    session->closing = 1;
+    if (session->refcount == 0 && session->cv_initialized) ducknng_cond_broadcast(&session->cv);
+    ducknng_mutex_unlock(&session->mu);
+}
+
+static int ducknng_session_try_acquire(ducknng_session *session) {
+    int ok = 0;
+    if (!session || !session->mu_initialized) return 0;
+    ducknng_mutex_lock(&session->mu);
+    if (!session->closing) {
+        session->refcount++;
+        ok = 1;
+    }
+    ducknng_mutex_unlock(&session->mu);
+    return ok;
+}
+
+static void ducknng_service_publish_session_count(ducknng_service *svc) {
+    if (!svc) return;
+    atomic_store_explicit(&svc->session_count_visible, svc->session_count, memory_order_release);
+}
+
+static ducknng_session *ducknng_service_detach_session_locked(ducknng_service *svc, size_t idx) {
+    ducknng_session *session;
+    size_t i;
+    if (!svc || idx >= svc->session_count) return NULL;
+    session = svc->sessions[idx];
+    for (i = idx; i + 1 < svc->session_count; i++) svc->sessions[i] = svc->sessions[i + 1];
+    svc->session_count--;
+    if (svc->sessions) svc->sessions[svc->session_count] = NULL;
+    ducknng_service_publish_session_count(svc);
+    ducknng_session_mark_closing(session);
+    return session;
+}
+
 ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_id, char **errmsg) {
     ducknng_session *session = (ducknng_session *)duckdb_malloc(sizeof(*session));
     if (!session) {
@@ -20,30 +58,77 @@ ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_
         session->result_open = 1;
     }
     session->last_touch_ms = ducknng_now_ms();
-    ducknng_mutex_init(&session->mu);
+    if (ducknng_mutex_init(&session->mu) != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize session mutex");
+        if (session->result_open) duckdb_destroy_result(&session->result);
+        duckdb_free(session);
+        return NULL;
+    }
+    session->mu_initialized = 1;
+    if (ducknng_cond_init(&session->cv) != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize session condition variable");
+        if (session->result_open) duckdb_destroy_result(&session->result);
+        ducknng_mutex_destroy(&session->mu);
+        duckdb_free(session);
+        return NULL;
+    }
+    session->cv_initialized = 1;
     return session;
 }
 
 void ducknng_session_destroy(ducknng_session *session) {
     if (!session) return;
+    if (session->mu_initialized) {
+        ducknng_mutex_lock(&session->mu);
+        session->closing = 1;
+        while (session->refcount > 0 && session->cv_initialized) {
+            ducknng_cond_wait(&session->cv, &session->mu);
+        }
+        ducknng_mutex_unlock(&session->mu);
+    }
     if (session->result_open) {
         duckdb_destroy_result(&session->result);
         session->result_open = 0;
     }
-    ducknng_mutex_destroy(&session->mu);
+    if (session->cv_initialized) {
+        ducknng_cond_destroy(&session->cv);
+        session->cv_initialized = 0;
+    }
+    if (session->mu_initialized) {
+        ducknng_mutex_destroy(&session->mu);
+        session->mu_initialized = 0;
+    }
     duckdb_free(session);
 }
 
-ducknng_session *ducknng_service_add_session(ducknng_service *svc, duckdb_result *result, char **errmsg) {
+void ducknng_session_release(ducknng_session *session) {
+    if (!session || !session->mu_initialized) return;
+    ducknng_mutex_lock(&session->mu);
+    if (session->refcount > 0) session->refcount--;
+    if (session->closing && session->refcount == 0 && session->cv_initialized) {
+        ducknng_cond_broadcast(&session->cv);
+    }
+    ducknng_mutex_unlock(&session->mu);
+}
+
+int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result, uint64_t *out_session_id, char **errmsg) {
     ducknng_session **new_sessions;
     size_t new_cap;
     ducknng_session *session;
+    uint64_t session_id;
+    if (out_session_id) *out_session_id = 0;
     if (!svc) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: missing service for session add");
         if (result) duckdb_destroy_result(result);
-        return NULL;
+        return -1;
     }
     ducknng_mutex_lock(&svc->mu);
+    if (svc->shutting_down) {
+        ducknng_mutex_unlock(&svc->mu);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service is stopping");
+        if (result) duckdb_destroy_result(result);
+        return 1;
+    }
     if (svc->session_count == svc->session_cap) {
         new_cap = svc->session_cap ? svc->session_cap * 2 : 4;
         new_sessions = (ducknng_session **)duckdb_malloc(sizeof(*new_sessions) * new_cap);
@@ -51,7 +136,7 @@ ducknng_session *ducknng_service_add_session(ducknng_service *svc, duckdb_result
             ducknng_mutex_unlock(&svc->mu);
             if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory growing session table");
             if (result) duckdb_destroy_result(result);
-            return NULL;
+            return -1;
         }
         memset(new_sessions, 0, sizeof(*new_sessions) * new_cap);
         if (svc->sessions && svc->session_count) {
@@ -61,24 +146,28 @@ ducknng_session *ducknng_service_add_session(ducknng_service *svc, duckdb_result
         svc->sessions = new_sessions;
         svc->session_cap = new_cap;
     }
-    session = ducknng_session_create(result, svc->next_session_id++, errmsg);
+    session_id = svc->next_session_id;
+    session = ducknng_session_create(result, session_id, errmsg);
     if (!session) {
         ducknng_mutex_unlock(&svc->mu);
-        return NULL;
+        return -1;
     }
+    svc->next_session_id++;
     svc->sessions[svc->session_count++] = session;
+    ducknng_service_publish_session_count(svc);
     ducknng_mutex_unlock(&svc->mu);
-    return session;
+    if (out_session_id) *out_session_id = session_id;
+    return 0;
 }
 
-ducknng_session *ducknng_service_find_session(ducknng_service *svc, uint64_t session_id) {
+ducknng_session *ducknng_service_acquire_session(ducknng_service *svc, uint64_t session_id) {
     size_t i;
     ducknng_session *session = NULL;
     if (!svc || session_id == 0) return NULL;
     ducknng_mutex_lock(&svc->mu);
     for (i = 0; i < svc->session_count; i++) {
         if (svc->sessions[i] && svc->sessions[i]->session_id == session_id) {
-            session = svc->sessions[i];
+            if (ducknng_session_try_acquire(svc->sessions[i])) session = svc->sessions[i];
             break;
         }
     }
@@ -93,14 +182,43 @@ ducknng_session *ducknng_service_remove_session(ducknng_service *svc, uint64_t s
     ducknng_mutex_lock(&svc->mu);
     for (i = 0; i < svc->session_count; i++) {
         if (svc->sessions[i] && svc->sessions[i]->session_id == session_id) {
-            session = svc->sessions[i];
-            for (; i + 1 < svc->session_count; i++) svc->sessions[i] = svc->sessions[i + 1];
-            svc->session_count--;
+            session = ducknng_service_detach_session_locked(svc, i);
             break;
         }
     }
     ducknng_mutex_unlock(&svc->mu);
     return session;
+}
+
+ducknng_session **ducknng_service_detach_all_sessions(ducknng_service *svc, size_t *out_count) {
+    ducknng_session **sessions;
+    size_t count;
+    size_t i;
+    if (out_count) *out_count = 0;
+    if (!svc) return NULL;
+    if (!svc->mu_initialized) {
+        sessions = svc->sessions;
+        count = svc->session_count;
+        svc->sessions = NULL;
+        svc->session_count = 0;
+        svc->session_cap = 0;
+        ducknng_service_publish_session_count(svc);
+        if (out_count) *out_count = count;
+        return sessions;
+    }
+    ducknng_mutex_lock(&svc->mu);
+    sessions = svc->sessions;
+    count = svc->session_count;
+    svc->sessions = NULL;
+    svc->session_count = 0;
+    svc->session_cap = 0;
+    ducknng_service_publish_session_count(svc);
+    for (i = 0; i < count; i++) {
+        ducknng_session_mark_closing(sessions ? sessions[i] : NULL);
+    }
+    ducknng_mutex_unlock(&svc->mu);
+    if (out_count) *out_count = count;
+    return sessions;
 }
 
 size_t ducknng_service_prune_idle_sessions(ducknng_service *svc, uint64_t now_ms) {
@@ -110,10 +228,15 @@ size_t ducknng_service_prune_idle_sessions(ducknng_service *svc, uint64_t now_ms
     ducknng_mutex_lock(&svc->mu);
     while (i < svc->session_count) {
         ducknng_session *session = svc->sessions[i];
-        if (session && !session->cancelled && !session->eos && now_ms >= session->last_touch_ms &&
-            (now_ms - session->last_touch_ms) > svc->session_idle_ms) {
-            for (; i + 1 < svc->session_count; i++) svc->sessions[i] = svc->sessions[i + 1];
-            svc->session_count--;
+        int should_remove = 0;
+        if (session && session->mu_initialized) {
+            ducknng_mutex_lock(&session->mu);
+            should_remove = !session->closing && session->refcount == 0 && !session->cancelled && !session->eos &&
+                now_ms >= session->last_touch_ms && (now_ms - session->last_touch_ms) > svc->session_idle_ms;
+            ducknng_mutex_unlock(&session->mu);
+        }
+        if (should_remove) {
+            session = ducknng_service_detach_session_locked(svc, i);
             removed++;
             ducknng_mutex_unlock(&svc->mu);
             ducknng_session_destroy(session);

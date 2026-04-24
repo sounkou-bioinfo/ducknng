@@ -79,6 +79,33 @@ FROM ducknng_get_rpc_manifest('http://127.0.0.1:45458/_ducknng', 0::UBIGINT)
 ----
 1	1
 
+query I
+SELECT *
+FROM ducknng_query_rpc(
+  'http://127.0.0.1:45458/_ducknng',
+  'SELECT sessions FROM ducknng_list_servers() WHERE name = ''http_rpc''',
+  0::UBIGINT
+)
+----
+0
+
+query I
+SELECT ok
+FROM ducknng_run_rpc(
+  'http://127.0.0.1:45458/_ducknng',
+  'SELECT ducknng_stop_server(''http_rpc'')',
+  0::UBIGINT
+)
+----
+0
+
+query I
+SELECT running::INTEGER
+FROM ducknng_list_servers()
+WHERE name = 'http_rpc'
+----
+1
+
 query IIII
 SELECT ok, rows_changed, statement_type, result_type
 FROM ducknng_run_rpc('http://127.0.0.1:45458/_ducknng', 'CREATE TABLE IF NOT EXISTS http_remote_t(i INTEGER)', 0::UBIGINT)

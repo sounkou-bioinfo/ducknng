@@ -90,12 +90,27 @@ int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info inf
     rt->next_client_socket_id = 1;
     rt->next_client_aio_id = 1;
     rt->next_tls_config_id = 1;
-    ducknng_mutex_init(&rt->mu);
+    atomic_store_explicit(&rt->current_request_service_ptr, (uintptr_t)0, memory_order_release);
+    if (ducknng_mutex_init(&rt->mu) != 0) {
+        duckdb_free(rt);
+        reg_unlock();
+        access->set_error(info, "ducknng: failed to initialize runtime mutex");
+        return 0;
+    }
+    if (ducknng_mutex_init(&rt->init_con_mu) != 0) {
+        ducknng_mutex_destroy(&rt->mu);
+        duckdb_free(rt);
+        reg_unlock();
+        access->set_error(info, "ducknng: failed to initialize runtime init connection mutex");
+        return 0;
+    }
+    rt->init_con_mu_initialized = 1;
     if (ducknng_cond_init(&rt->aio_cv) == 0) rt->aio_cv_initialized = 1;
     ducknng_method_registry_init(&rt->registry);
     if (!ducknng_register_builtin_methods(rt, &errmsg)) {
         ducknng_method_registry_destroy(&rt->registry);
         if (rt->aio_cv_initialized) ducknng_cond_destroy(&rt->aio_cv);
+        if (rt->init_con_mu_initialized) ducknng_mutex_destroy(&rt->init_con_mu);
         ducknng_mutex_destroy(&rt->mu);
         duckdb_free(rt);
         reg_unlock();
@@ -222,8 +237,30 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
     ducknng_method_registry_destroy(&rt->registry);
     if (rt->aio_cv_initialized) ducknng_cond_destroy(&rt->aio_cv);
     if (rt->init_con) duckdb_disconnect(&rt->init_con);
+    if (rt->init_con_mu_initialized) ducknng_mutex_destroy(&rt->init_con_mu);
     ducknng_mutex_destroy(&rt->mu);
     duckdb_free(rt);
+}
+
+void ducknng_runtime_init_con_lock(ducknng_runtime *rt) {
+    if (!rt || !rt->init_con_mu_initialized) return;
+    ducknng_mutex_lock(&rt->init_con_mu);
+}
+
+void ducknng_runtime_init_con_unlock(ducknng_runtime *rt) {
+    if (!rt || !rt->init_con_mu_initialized) return;
+    ducknng_runtime_current_request_service_set(rt, NULL);
+    ducknng_mutex_unlock(&rt->init_con_mu);
+}
+
+void ducknng_runtime_current_request_service_set(ducknng_runtime *rt, ducknng_service *svc) {
+    if (!rt) return;
+    atomic_store_explicit(&rt->current_request_service_ptr, (uintptr_t)svc, memory_order_release);
+}
+
+ducknng_service *ducknng_runtime_current_request_service_get(ducknng_runtime *rt) {
+    if (!rt) return NULL;
+    return (ducknng_service *)atomic_load_explicit(&rt->current_request_service_ptr, memory_order_acquire);
 }
 
 ducknng_service *ducknng_runtime_find_service(ducknng_runtime *rt, const char *name) {

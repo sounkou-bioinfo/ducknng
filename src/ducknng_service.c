@@ -219,6 +219,7 @@ ducknng_service *ducknng_service_create(ducknng_runtime *rt, const char *name, c
     ducknng_service *svc = (ducknng_service *)duckdb_malloc(sizeof(*svc));
     if (!svc) return NULL;
     memset(svc, 0, sizeof(*svc));
+    atomic_store_explicit(&svc->session_count_visible, 0, memory_order_release);
     ducknng_tls_opts_init(&svc->tls_opts);
     svc->rt = rt;
     svc->name = ducknng_strdup(name);
@@ -233,29 +234,32 @@ ducknng_service *ducknng_service_create(ducknng_runtime *rt, const char *name, c
         ducknng_service_destroy(svc);
         return NULL;
     }
-    ducknng_mutex_init(&svc->mu);
+    if (ducknng_mutex_init(&svc->mu) != 0) {
+        ducknng_service_destroy(svc);
+        return NULL;
+    }
     svc->mu_initialized = 1;
     return svc;
 }
 
 void ducknng_service_destroy(ducknng_service *svc) {
+    ducknng_session **sessions = NULL;
+    size_t session_count = 0;
+    size_t i;
     if (!svc) return;
+    if (svc->running || svc->http_state || svc->ctxs || svc->listener.id != 0 || svc->rep_sock.id != 0) {
+        (void)ducknng_service_stop(svc, NULL);
+    }
+    sessions = ducknng_service_detach_all_sessions(svc, &session_count);
     if (svc->name) duckdb_free(svc->name);
     if (svc->listen_url) duckdb_free(svc->listen_url);
     if (svc->resolved_listen_url) duckdb_free(svc->resolved_listen_url);
     if (svc->tls_config_source) duckdb_free(svc->tls_config_source);
     ducknng_tls_opts_reset(&svc->tls_opts);
-    if (svc->sessions) {
-        size_t i;
-        for (i = 0; i < svc->session_count; i++) {
-            if (svc->sessions[i]) ducknng_session_destroy(svc->sessions[i]);
-        }
-        duckdb_free(svc->sessions);
+    for (i = 0; i < session_count; i++) {
+        if (sessions && sessions[i]) ducknng_session_destroy(sessions[i]);
     }
-    if (svc->http_state) {
-        ducknng_http_server_stop(svc->http_state);
-        svc->http_state = NULL;
-    }
+    if (sessions) duckdb_free(sessions);
     if (svc->ctxs) duckdb_free(svc->ctxs);
     if (svc->mu_initialized) {
         ducknng_mutex_destroy(&svc->mu);
@@ -297,7 +301,13 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
         else if (parse_err) duckdb_free(parse_err);
         return -1;
     }
-    svc->shutting_down = 0;
+    if (svc->mu_initialized) {
+        ducknng_mutex_lock(&svc->mu);
+        svc->shutting_down = 0;
+        ducknng_mutex_unlock(&svc->mu);
+    } else {
+        svc->shutting_down = 0;
+    }
 
     if (ducknng_transport_url_is_http(&transport)) {
         char *resolved_url = NULL;
@@ -391,9 +401,18 @@ fail:
 
 int ducknng_service_stop(ducknng_service *svc, char **errmsg) {
     int i;
+    ducknng_session **sessions = NULL;
+    size_t session_count = 0;
+    size_t j;
     (void)errmsg;
     if (!svc) return -1;
-    svc->shutting_down = 1;
+    if (svc->mu_initialized) {
+        ducknng_mutex_lock(&svc->mu);
+        svc->shutting_down = 1;
+        ducknng_mutex_unlock(&svc->mu);
+    } else {
+        svc->shutting_down = 1;
+    }
     if (svc->listener.id != 0) {
         ducknng_listener_close(svc->listener);
         memset(&svc->listener, 0, sizeof(svc->listener));
@@ -402,10 +421,6 @@ int ducknng_service_stop(ducknng_service *svc, char **errmsg) {
         ducknng_socket_close(svc->rep_sock);
         memset(&svc->rep_sock, 0, sizeof(svc->rep_sock));
     }
-    if (svc->http_state) {
-        ducknng_http_server_stop(svc->http_state);
-        svc->http_state = NULL;
-    }
     if (svc->ctxs) {
         for (i = 0; i < svc->ncontexts; i++) {
             ducknng_rep_ctx_teardown(&svc->ctxs[i]);
@@ -413,21 +428,20 @@ int ducknng_service_stop(ducknng_service *svc, char **errmsg) {
         duckdb_free(svc->ctxs);
         svc->ctxs = NULL;
     }
+    if (svc->http_state) {
+        ducknng_http_server_stop(svc->http_state);
+        svc->http_state = NULL;
+    }
+    sessions = ducknng_service_detach_all_sessions(svc, &session_count);
     if (svc->resolved_listen_url) {
         duckdb_free(svc->resolved_listen_url);
         svc->resolved_listen_url = NULL;
     }
     svc->running = 0;
-    if (svc->sessions) {
-        size_t i;
-        for (i = 0; i < svc->session_count; i++) {
-            if (svc->sessions[i]) ducknng_session_destroy(svc->sessions[i]);
-        }
-        duckdb_free(svc->sessions);
-        svc->sessions = NULL;
-        svc->session_count = 0;
-        svc->session_cap = 0;
+    for (j = 0; j < session_count; j++) {
+        if (sessions && sessions[j]) ducknng_session_destroy(sessions[j]);
     }
+    if (sessions) duckdb_free(sessions);
     return 0;
 }
 

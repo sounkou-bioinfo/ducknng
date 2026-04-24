@@ -18,6 +18,7 @@ DUCKDB_EXTENSION_EXTERN
 
 typedef struct {
     ducknng_runtime *rt;
+    int is_init_connection;
 } ducknng_sql_context;
 
 static int ducknng_lookup_tls_config_copy(ducknng_sql_context *ctx, uint64_t tls_config_id,
@@ -717,6 +718,17 @@ static void ducknng_server_stop_scalar(duckdb_function_info info, duckdb_data_ch
         if (!ctx || !ctx->rt || !name) {
             if (name) duckdb_free(name);
             duckdb_scalar_function_set_error(info, "ducknng: invalid stop arguments");
+            return;
+        }
+        svc = ducknng_runtime_find_service(ctx->rt, name);
+        if (!svc) {
+            duckdb_free(name);
+            duckdb_scalar_function_set_error(info, "ducknng: service not found");
+            return;
+        }
+        if (ctx->is_init_connection && ducknng_runtime_current_request_service_get(ctx->rt) == svc) {
+            duckdb_free(name);
+            duckdb_scalar_function_set_error(info, "ducknng: cannot stop a service from its own request handler");
             return;
         }
         svc = ducknng_runtime_remove_service(ctx->rt, name);
@@ -4440,7 +4452,7 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
             bind->rows[i].listen = svc && ducknng_service_resolved_listen(svc) ? ducknng_strdup(ducknng_service_resolved_listen(svc)) : NULL;
             bind->rows[i].contexts = svc ? svc->ncontexts : 0;
             bind->rows[i].running = svc ? (bool)svc->running : false;
-            bind->rows[i].sessions = svc ? (uint64_t)svc->session_count : 0;
+            bind->rows[i].sessions = svc ? (uint64_t)atomic_load_explicit(&svc->session_count_visible, memory_order_acquire) : 0;
         }
     }
     ducknng_mutex_unlock(&ctx->rt->mu);
@@ -5309,6 +5321,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type method_name_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type method_family_types[1] = {DUCKDB_TYPE_VARCHAR};
     ctx.rt = rt;
+    ctx.is_init_connection = connection == rt->init_con;
     if (!register_scalar(connection, "ducknng_start_server", 6, ducknng_server_start_tls_config_scalar, &ctx, start_tls_config_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_start_http_server", 5, ducknng_http_server_start_scalar, &ctx, start_http_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_stop_server", 1, ducknng_server_stop_scalar, &ctx, stop_types, DUCKDB_TYPE_BOOLEAN)) return 0;

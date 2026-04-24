@@ -5,6 +5,7 @@
 #include "ducknng_registry.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 typedef struct ducknng_client_socket {
     uint64_t socket_id;
@@ -86,8 +87,10 @@ typedef struct ducknng_runtime {
     duckdb_database *db;
     duckdb_connection init_con;
     ducknng_mutex mu;
+    ducknng_mutex init_con_mu;
     ducknng_cond aio_cv;
     int aio_cv_initialized;
+    int init_con_mu_initialized;
     ducknng_service **services;
     size_t service_count;
     size_t service_cap;
@@ -105,6 +108,7 @@ typedef struct ducknng_runtime {
     uint64_t next_client_aio_id;
     uint64_t next_tls_config_id;
     int shutting_down;
+    atomic_uintptr_t current_request_service_ptr;
     ducknng_method_registry registry;
 } ducknng_runtime;
 
@@ -126,3 +130,7 @@ void ducknng_client_aio_destroy(ducknng_client_aio *aio);
 ducknng_tls_config *ducknng_runtime_find_tls_config(ducknng_runtime *rt, uint64_t tls_config_id);
 int ducknng_runtime_add_tls_config(ducknng_runtime *rt, ducknng_tls_config *cfg, char **errmsg);
 ducknng_tls_config *ducknng_runtime_remove_tls_config(ducknng_runtime *rt, uint64_t tls_config_id);
+void ducknng_runtime_init_con_lock(ducknng_runtime *rt);
+void ducknng_runtime_init_con_unlock(ducknng_runtime *rt);
+void ducknng_runtime_current_request_service_set(ducknng_runtime *rt, ducknng_service *svc);
+ducknng_service *ducknng_runtime_current_request_service_get(ducknng_runtime *rt);
