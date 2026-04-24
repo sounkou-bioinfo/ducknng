@@ -38,7 +38,7 @@
 - Implemented `ducknng_ncurl(...)` as the first low-level HTTP/HTTPS client slice, returning in-band `ok`, `status`, `error`, `headers_json`, `body`, and `body_text` columns.
 - Added `make http_smoke` and a local Python-stdlib smoke harness to validate real HTTP GET and POST roundtrips without depending on the public internet.
 - Added `docs/http.md` to pin the first HTTP transport contract: planned SQL signatures for `ducknng_start_http_server(...)` and `ducknng_ncurl(...)`, frame-over-HTTP carriage, and the invariant that session methods and Arrow record batches keep the same protocol semantics under HTTP.
-- Added a transport-family URL parser above the NNG shim so current NNG paths fail fast on `http://` and `https://` as reserved future transport adapters instead of treating them as malformed NNG endpoints.
+- Added a transport-family URL parser above the NNG shim so `http://` and `https://` route through the HTTP carrier adapter for synchronous helpers, while generic NNG socket/listener paths reject those schemes instead of treating them as malformed NNG endpoints.
 - Added a runtime-owned aio registry and SQL-visible raw aio helpers for both request/reply and generic socket operations: `ducknng_request_raw_aio()`, `ducknng_request_socket_raw_aio()`, `ducknng_send_socket_raw_aio()`, `ducknng_recv_socket_raw_aio()`, `ducknng_aio_ready()`, `ducknng_aio_status()`, `ducknng_aio_collect()`, `ducknng_aio_cancel()`, and `ducknng_aio_drop()`.
 - `ducknng_aio_collect()` and `ducknng_aio_status()` are now exposed as SQL macros over internal scalar helpers so dynamic arguments can work without relying on lateral-capable stable-C-API table-function parameters.
 - Expanded the generic socket surface to the broader nanonext-style NNG protocol family: `bus`, `pair`, `poly`, `push`, `pull`, `pub`, `sub`, `req`, `rep`, `surveyor`, and `respondent`.
@@ -48,11 +48,10 @@
 
 ### Earlier 0.1.0 groundwork
 
-- Added client-side SQL helpers `ducknng_remote_manifest(url)` and `ducknng_remote_exec(url, sql)` so DuckDB can request manifest and metadata-only exec operations from another ducknng-compatible service.
-- Added non-throwing result-table companions `ducknng_remote_manifest_result(url)` and `ducknng_remote_exec_result(url, sql)` so client-side transport and protocol failures can be handled in-band as rows.
-- Added SQL-native req-style client handle helpers `ducknng_socket(protocol)`, `ducknng_dial(socket_id, url, timeout_ms)`, `ducknng_request_socket(socket_id, payload, timeout_ms)`, `ducknng_request(url, payload, timeout_ms)`, `ducknng_close(socket_id)`, and `ducknng_sockets()`.
-- Added non-throwing raw request companions `ducknng_request_result(url, payload, timeout_ms)` and `ducknng_request_socket_result(socket_id, payload, timeout_ms)`.
-- Added `ducknng_remote(url, sql)` as the current unary row-reply client table function, exposing Arrow IPC row replies as DuckDB tables for the currently supported unary row subset.
+- Added the client-side SQL helper family now exposed as `ducknng_get_rpc_manifest(...)`, `ducknng_run_rpc(...)`, `ducknng_query_rpc(...)`, plus raw-frame variants for callers that need explicit frame handling.
+- Added in-band result-table request helpers `ducknng_request(...)` and `ducknng_request_socket(...)` so client-side transport and protocol failures can be handled as rows, alongside raw scalar variants when a bare reply frame is specifically needed.
+- Added SQL-native req-style client socket helpers now exposed as `ducknng_open_socket(protocol)`, `ducknng_dial_socket(socket_id, url, timeout_ms, tls_config_id)`, `ducknng_request_socket(...)`, `ducknng_close_socket(socket_id)`, and `ducknng_list_sockets()`.
+- Added `ducknng_query_rpc(url, sql, tls_config_id)` as the unary row-reply client table function, exposing Arrow IPC row replies as DuckDB tables for the supported unary row subset.
 - `exec` request payloads are now Arrow IPC tables containing `sql` and `want_result` fields.
 - `manifest` replies are now JSON exported from the runtime method registry.
 - `exec` metadata replies are now Arrow IPC generated with vendored nanoarrow C.
@@ -72,11 +71,11 @@
 - Added excluded platform metadata for wasm and Windows targets while native Linux development is underway.
 - Added `README.Rmd` and `make rdm` for generated documentation.
 - Vendored `nng` and `nanoarrow` as third-party dependencies.
-- Added `ducknng_servers()` table-function introspection over the per-database runtime service registry.
-- `ducknng_server_start(...)` now creates the requested number of REP contexts on one REP socket instead of hard-coding a single worker.
-- Added phase-1 SQL control functions:
-  - `ducknng_server_start(...)`
-  - `ducknng_server_stop(name)`
+- Added `ducknng_list_servers()` table-function introspection over the per-database runtime service registry.
+- `ducknng_start_server(...)` now creates the requested number of REP contexts on one REP socket instead of hard-coding a single worker.
+- Added phase-1 SQL control functions that evolved into the current names:
+  - `ducknng_start_server(...)`
+  - `ducknng_stop_server(name)`
 - Added a real NNG REP listener lifecycle with one context, one AIO, and one worker thread.
 - Added a phase-1 pure C runtime keyed by DuckDB database handle.
 - Renamed the template extension to `ducknng`.

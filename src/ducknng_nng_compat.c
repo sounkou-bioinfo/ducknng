@@ -203,7 +203,7 @@ int ducknng_validate_nng_url(const char *url, char **errmsg) {
         return -1;
     }
     if (!ducknng_transport_url_is_nng(&parsed)) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: http:// and https:// URLs are reserved for future HTTP transport adapters");
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: http:// and https:// are supported by the HTTP carrier, not the NNG socket/service layer");
         return -1;
     }
     return 0;

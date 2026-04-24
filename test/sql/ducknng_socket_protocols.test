@@ -325,7 +325,7 @@ SELECT ducknng_open_socket('req')
 statement error
 SELECT ducknng_dial_socket(15, 'https://127.0.0.1:45447', 1000, 0::UBIGINT)
 ----
-ducknng: http:// and https:// URLs are reserved for future HTTP transport adapters
+ducknng: http:// and https:// are supported by the HTTP carrier, not the NNG socket/service layer
 
 query I
 SELECT ducknng_open_socket('rep')

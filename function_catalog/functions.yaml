@@ -411,7 +411,7 @@
       "implemented": true,
       "description": "Perform one HTTP or HTTPS request and return an in-band result row.",
       "notes": [
-        "This is the low-level HTTP/HTTPS client primitive for future ducknng transport-adapter work.",
+        "This is the low-level HTTP/HTTPS client primitive; the synchronous request/RPC/session helpers also route over http:// and https:// through the HTTP carrier adapter.",
         "ok means the HTTP transport operation completed and a response was received; status carries the HTTP status code and may still be 4xx or 5xx.",
         "headers_json uses the canonical array-of-objects form such as [{\"name\":\"Content-Type\",\"value\":\"application/json\"}].",
         "body contains the raw response body bytes and body_text is a best-effort text decoding when the payload looks textual."

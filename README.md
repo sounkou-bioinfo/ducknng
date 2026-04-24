@@ -25,7 +25,9 @@ The current implementation is easiest to understand as three layers.
     one pending NNG operation as a future-like SQL handle. This family
     uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`,
     `ws://`, and `wss://`. `tls+tcp://` is NNG’s TLS-over-TCP transport;
-    `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes.
+    `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes;
+    `http://` and `https://` are supported by the HTTP/HTTPS carrier
+    layer below.
 
 2.  **HTTP/HTTPS as a framed RPC carrier.**
     `ducknng_start_http_server(...)` mounts the same framed RPC protocol
@@ -34,9 +36,12 @@ The current implementation is easiest to understand as three layers.
     one complete `ducknng` frame. The synchronous request/RPC/session
     helpers route over `http://` and `https://` by URL scheme, so there
     are no duplicate method names such as `http_exec` or `http_fetch`.
-    `https://` means HTTP over TLS; it is separate from NNG `tls+tcp://`
-    because HTTP has methods, headers, status codes, and paths, while
-    NNG exposes socket patterns directly.
+    This mirrors the split in NNG/nanonext: HTTP tools live beside the
+    socket transports, but `http://` is not an NNG protocol-socket
+    transport in the same sense as `tcp://`. `https://` means HTTP over
+    TLS; it is wire-incompatible with NNG `tls+tcp://` because HTTP has
+    methods, headers, status codes, and paths, while NNG `tls+tcp://`
+    carries NNG socket-protocol frames directly.
 
 3.  **Payload and body codecs.** RPC row payloads use Arrow IPC. RPC
     control metadata and the manifest are JSON text inside framed
@@ -1349,7 +1354,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | ae030ac12a387964b51a955c28f80e98 | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | 230ea6cbac1debb90f07480fb2d553d3 | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1777,7 +1782,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_33e7d81760a6f4.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_3447aa40fa464d.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

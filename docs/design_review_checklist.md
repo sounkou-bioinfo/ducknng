@@ -69,10 +69,11 @@ This checklist tracks the implementation status of the main architecture, transp
 - [x] Keep the current implementation off unstable and deprecated DuckDB Arrow entrypoints.
   - Unstable and deprecated DuckDB Arrow entrypoints were removed from implementation code.
   - The row-bearing RPC export path remains on explicit nanoarrow schema and batch mapping.
-- [x] Add a transport-family boundary for future HTTP / `ncurl` work.
+- [x] Add a transport-family boundary for HTTP / `ncurl` adapter work.
   - URL-family parsing now lives in `src/ducknng_transport.c`.
   - NNG-specific socket/listener/TLS behavior remains isolated in `src/ducknng_nng_compat.c`.
-  - `http://` and `https://` now fail fast as reserved future transport-adapter schemes instead of leaking into NNG operations.
+  - HTTP-specific client/server behavior remains isolated in `src/ducknng_http_compat.c`.
+  - `http://` and `https://` route through the HTTP adapter for synchronous request/RPC/session helpers, while generic NNG socket/listener paths reject those schemes instead of treating them as malformed NNG endpoints.
 
 ## Partial / clarified but not fully solved
 
