@@ -31,8 +31,8 @@ knitr::knit_engines$set(sql = function(options) {
 
 The current implementation is easiest to understand as three layers.
 
-1. **NNG transports and socket patterns.**
-   `ducknng_start_server(...)` starts the framed RPC service on NNG `REP`, and the generic socket API (`ducknng_open_socket(...)`, `ducknng_dial_socket(...)`, `ducknng_listen_socket(...)`, raw send/recv, and socket AIO helpers) exposes NNG socket patterns such as `req`, `rep`, `pair`, `push`, `pull`, `pub`, `sub`, `bus`, `surveyor`, and `respondent`. This family uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`. `tls+tcp://` is NNG's TLS-over-TCP transport; `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes.
+1. **NNG transports, socket patterns, and AIO.**
+   `ducknng_start_server(...)` starts the framed RPC service on NNG `REP`, and the generic socket API (`ducknng_open_socket(...)`, `ducknng_dial_socket(...)`, `ducknng_listen_socket(...)`, raw send/recv, and socket AIO helpers) exposes NNG socket patterns such as `req`, `rep`, `pair`, `push`, `pull`, `pub`, `sub`, `bus`, `surveyor`, and `respondent`. AIO is a first-class part of this layer: helpers such as `ducknng_send_socket_raw_aio(...)`, `ducknng_recv_socket_raw_aio(...)`, `ducknng_request_raw_aio(...)`, `ducknng_aio_status(...)`, and `ducknng_aio_collect(...)` represent one pending NNG operation as a future-like SQL handle. This family uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`. `tls+tcp://` is NNG's TLS-over-TCP transport; `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes.
 
 2. **HTTP/HTTPS as a framed RPC carrier.**
    `ducknng_start_http_server(...)` mounts the same framed RPC protocol at an `http://` or `https://` URL path. The endpoint accepts `POST` with `Content-Type: application/vnd.ducknng.frame`, and the body is one complete `ducknng` frame. The synchronous request/RPC/session helpers route over `http://` and `https://` by URL scheme, so there are no duplicate method names such as `http_exec` or `http_fetch`. `https://` means HTTP over TLS; it is separate from NNG `tls+tcp://` because HTTP has methods, headers, status codes, and paths, while NNG exposes socket patterns directly.
@@ -44,7 +44,7 @@ Implemented now:
 
 - service lifecycle: `ducknng_start_server()`, `ducknng_start_http_server()`, `ducknng_stop_server()`, `ducknng_list_servers()`
 - generic NNG sockets and raw send/recv across the NNG transport schemes above
-- raw AIO handles for NNG socket send/recv, req-style request/reply futures, and the first raw unary RPC futures
+- first-class raw AIO handles for one pending NNG operation: socket send/recv, req-style request/reply futures, and the first raw unary RPC futures
 - manifest-driven RPC helpers, opt-in `exec`, and query sessions (`query_open`, `fetch`, `close`, `cancel`)
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on URL scheme
 - TLS config handles for `tls+tcp://`, `wss://`, and `https://`; `auth_mode = 2` enables required peer verification/mTLS

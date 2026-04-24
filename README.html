@@ -611,7 +611,7 @@ whose thin versioned envelope carries Arrow IPC or JSON payloads.</p>
 <p>The current implementation is easiest to understand as three
 layers.</p>
 <ol style="list-style-type: decimal">
-<li><p><strong>NNG transports and socket patterns.</strong>
+<li><p><strong>NNG transports, socket patterns, and AIO.</strong>
 <code>ducknng_start_server(...)</code> starts the framed RPC service on
 NNG <code>REP</code>, and the generic socket API
 (<code>ducknng_open_socket(...)</code>,
@@ -620,12 +620,19 @@ NNG <code>REP</code>, and the generic socket API
 helpers) exposes NNG socket patterns such as <code>req</code>,
 <code>rep</code>, <code>pair</code>, <code>push</code>,
 <code>pull</code>, <code>pub</code>, <code>sub</code>, <code>bus</code>,
-<code>surveyor</code>, and <code>respondent</code>. This family uses NNG
-URL schemes: <code>inproc://</code>, <code>ipc://</code>,
-<code>tcp://</code>, <code>tls+tcp://</code>, <code>ws://</code>, and
-<code>wss://</code>. <code>tls+tcp://</code> is NNG’s TLS-over-TCP
-transport; <code>wss://</code> is NNG WebSocket-over-TLS. They are not
-HTTP routes.</p></li>
+<code>surveyor</code>, and <code>respondent</code>. AIO is a first-class
+part of this layer: helpers such as
+<code>ducknng_send_socket_raw_aio(...)</code>,
+<code>ducknng_recv_socket_raw_aio(...)</code>,
+<code>ducknng_request_raw_aio(...)</code>,
+<code>ducknng_aio_status(...)</code>, and
+<code>ducknng_aio_collect(...)</code> represent one pending NNG
+operation as a future-like SQL handle. This family uses NNG URL schemes:
+<code>inproc://</code>, <code>ipc://</code>, <code>tcp://</code>,
+<code>tls+tcp://</code>, <code>ws://</code>, and <code>wss://</code>.
+<code>tls+tcp://</code> is NNG’s TLS-over-TCP transport;
+<code>wss://</code> is NNG WebSocket-over-TLS. They are not HTTP
+routes.</p></li>
 <li><p><strong>HTTP/HTTPS as a framed RPC carrier.</strong>
 <code>ducknng_start_http_server(...)</code> mounts the same framed RPC
 protocol at an <code>http://</code> or <code>https://</code> URL path.
@@ -663,8 +670,9 @@ path lands.</p></li>
 <code>ducknng_list_servers()</code></li>
 <li>generic NNG sockets and raw send/recv across the NNG transport
 schemes above</li>
-<li>raw AIO handles for NNG socket send/recv, req-style request/reply
-futures, and the first raw unary RPC futures</li>
+<li>first-class raw AIO handles for one pending NNG operation: socket
+send/recv, req-style request/reply futures, and the first raw unary RPC
+futures</li>
 <li>manifest-driven RPC helpers, opt-in <code>exec</code>, and query
 sessions (<code>query_open</code>, <code>fetch</code>,
 <code>close</code>, <code>cancel</code>)</li>
@@ -2321,7 +2329,7 @@ and close a query session explicitly</h3>
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-| true | NULL  | 1          | 1832db16cbd25092e92338f67e2eaffe | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
+| true | NULL  | 1          | ae030ac12a387964b51a955c28f80e98 | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 +-----------------------------------------+
 | ducknng_stop_server(&#39;sql_session_demo&#39;) |
@@ -2728,7 +2736,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_33d1ca3dda272b.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_33e7d81760a6f4.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>

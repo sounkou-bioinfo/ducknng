@@ -12,16 +12,20 @@ versioned envelope carries Arrow IPC or JSON payloads.
 
 The current implementation is easiest to understand as three layers.
 
-1.  **NNG transports and socket patterns.** `ducknng_start_server(...)`
-    starts the framed RPC service on NNG `REP`, and the generic socket
-    API (`ducknng_open_socket(...)`, `ducknng_dial_socket(...)`,
-    `ducknng_listen_socket(...)`, raw send/recv, and socket AIO helpers)
-    exposes NNG socket patterns such as `req`, `rep`, `pair`, `push`,
-    `pull`, `pub`, `sub`, `bus`, `surveyor`, and `respondent`. This
-    family uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`,
-    `tls+tcp://`, `ws://`, and `wss://`. `tls+tcp://` is NNG’s
-    TLS-over-TCP transport; `wss://` is NNG WebSocket-over-TLS. They are
-    not HTTP routes.
+1.  **NNG transports, socket patterns, and AIO.**
+    `ducknng_start_server(...)` starts the framed RPC service on NNG
+    `REP`, and the generic socket API (`ducknng_open_socket(...)`,
+    `ducknng_dial_socket(...)`, `ducknng_listen_socket(...)`, raw
+    send/recv, and socket AIO helpers) exposes NNG socket patterns such
+    as `req`, `rep`, `pair`, `push`, `pull`, `pub`, `sub`, `bus`,
+    `surveyor`, and `respondent`. AIO is a first-class part of this
+    layer: helpers such as `ducknng_send_socket_raw_aio(...)`,
+    `ducknng_recv_socket_raw_aio(...)`, `ducknng_request_raw_aio(...)`,
+    `ducknng_aio_status(...)`, and `ducknng_aio_collect(...)` represent
+    one pending NNG operation as a future-like SQL handle. This family
+    uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`,
+    `ws://`, and `wss://`. `tls+tcp://` is NNG’s TLS-over-TCP transport;
+    `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes.
 
 2.  **HTTP/HTTPS as a framed RPC carrier.**
     `ducknng_start_http_server(...)` mounts the same framed RPC protocol
@@ -54,8 +58,9 @@ Implemented now:
   `ducknng_list_servers()`
 - generic NNG sockets and raw send/recv across the NNG transport schemes
   above
-- raw AIO handles for NNG socket send/recv, req-style request/reply
-  futures, and the first raw unary RPC futures
+- first-class raw AIO handles for one pending NNG operation: socket
+  send/recv, req-style request/reply futures, and the first raw unary
+  RPC futures
 - manifest-driven RPC helpers, opt-in `exec`, and query sessions
   (`query_open`, `fetch`, `close`, `cancel`)
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on
@@ -1344,7 +1349,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | 1832db16cbd25092e92338f67e2eaffe | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | ae030ac12a387964b51a955c28f80e98 | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1772,7 +1777,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_33d1ca3dda272b.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_33e7d81760a6f4.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
