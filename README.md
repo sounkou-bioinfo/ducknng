@@ -27,6 +27,8 @@ Today the extension already includes:
   and the first raw unary RPC futures
 - a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS routing
   for the synchronous request/RPC/session helper family
+- built-in content-type driven body codec helpers for
+  raw/text/JSON/CSV/TSV/Parquet/Arrow IPC/frame payloads
 - explicit query-session helpers and TLS config handles
 
 `ducknng` is also intentionally low-level. Long-lived runtime handles
@@ -56,6 +58,19 @@ the session family is implemented and usable but should still be treated
 as experimental until session ownership is bound to a concrete
 multi-client identity model. WebSocket here means NNG’s `ws://` and
 `wss://` transports, not a second HTTP-specific RPC surface.
+
+`ducknng_ncurl(...)` intentionally stays raw: it returns status,
+headers, `body BLOB`, and best-effort UTF-8 `body_text`. When you want
+nanonext-style serialization/deserialization providers, use the opt-in
+body codec layer instead: `ducknng_list_codecs()` shows the built-ins,
+`ducknng_parse_body(body, content_type)` parses an existing BLOB, and
+`ducknng_ncurl_table(...)` fetches a 2xx HTTP/HTTPS response and parses
+it into a table according to the response `Content-Type`. These helpers
+use DuckDB readers for JSON, CSV, TSV, and Parquet, nanoarrow for Arrow
+IPC stream bytes, and the existing frame decoder for
+`application/vnd.ducknng.frame`. Reader-backed codecs currently run as
+local helpers and fail fast inside service-owned SQL until the broader
+per-session connection model lands.
 
 ## Getting started
 
@@ -134,10 +149,10 @@ protocol/reference material and project design notes. If you want the
 more detailed lifetime write-up, see `docs/lifetime.md`. For protocol
 and transport reference details, see `docs/protocol.md`,
 `docs/manifest.md`, `docs/security.md`, `docs/registry.md`,
-`docs/transports.md`, `docs/http.md`, and `docs/types.md`. `NEWS.md`
-summarizes notable landed changes. TLS already supports both file-backed
-and in-memory PEM material through helpers such as
-`ducknng_tls_config_from_files(...)`,
+`docs/transports.md`, `docs/http.md`, `docs/codecs.md`, and
+`docs/types.md`. `NEWS.md` summarizes notable landed changes. TLS
+already supports both file-backed and in-memory PEM material through
+helpers such as `ducknng_tls_config_from_files(...)`,
 `ducknng_tls_config_from_pem(...)`, and
 `ducknng_self_signed_tls_config(...)`.
 
@@ -206,9 +221,17 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## HTTP Transport
 
-| name            | kind  | arguments                                                    | returns                                                                                                | description                                                         |
-|-----------------|-------|--------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `ducknng_ncurl` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Perform one HTTP or HTTPS request and return an in-band result row. |
+| name                  | kind  | arguments                                                    | returns                                                                                                | description                                                                                                                         |
+|-----------------------|-------|--------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| `ducknng_ncurl`       | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Perform one HTTP or HTTPS request and return an in-band result row.                                                                 |
+| `ducknng_ncurl_table` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(dynamic by response Content-Type)`                                                              | Perform one HTTP or HTTPS request and parse a successful response body into a DuckDB table using the built-in body codec providers. |
+
+## Body Codecs
+
+| name                  | kind  | arguments            | returns                                                                       | description                                                         |
+|-----------------------|-------|----------------------|-------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `ducknng_list_codecs` | table |                      | `TABLE(provider VARCHAR, media_types VARCHAR, output VARCHAR, notes VARCHAR)` | List the built-in body serialization/deserialization providers.     |
+| `ducknng_parse_body`  | table | `body, content_type` | `TABLE(dynamic by provider)`                                                  | Parse one response/request body BLOB according to its content type. |
 
 ## Async I/O
 
@@ -377,6 +400,18 @@ FROM ducknng_query_rpc(
   0::UBIGINT                                        -- tls_config_id
 );
 
+-- Body codec helpers parse content-type-tagged BLOBs into SQL tables.
+SELECT provider, output
+FROM ducknng_list_codecs()
+ORDER BY provider;
+
+SELECT a, b
+FROM ducknng_parse_body(
+  '[{"a":1,"b":"x"},{"a":2,"b":"y"}]'::BLOB,
+  'application/json; charset=utf-8'
+)
+ORDER BY a;
+
 -- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.
 SELECT ducknng_open_socket('req');
 SELECT ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000, 0::UBIGINT);
@@ -502,6 +537,26 @@ SELECT ducknng_stop_server('sql_client_demo');
     ├─────────┼─────────┼────────────┼─────────┼───────────┤
     │ true    │ true    │ true       │ true    │ true      │
     └─────────┴─────────┴────────────┴─────────┴───────────┘
+    ┌───────────────┬───────────────────────┐
+    │   provider    │        output         │
+    │    varchar    │        varchar        │
+    ├───────────────┼───────────────────────┤
+    │ arrow_ipc     │ dynamic table         │
+    │ csv           │ dynamic table         │
+    │ ducknng_frame │ decoded frame columns │
+    │ json          │ dynamic table         │
+    │ parquet       │ dynamic table         │
+    │ raw           │ body BLOB             │
+    │ text          │ body_text VARCHAR     │
+    │ tsv           │ dynamic table         │
+    └───────────────┴───────────────────────┘
+    ┌───────┬─────────┐
+    │   a   │    b    │
+    │ int64 │ varchar │
+    ├───────┼─────────┤
+    │     1 │ x       │
+    │     2 │ y       │
+    └───────┴─────────┘
     ┌────────────────────────────┐
     │ ducknng_open_socket('req') │
     │           uint64           │
@@ -1863,7 +1918,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_25db1067be89ac.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_2ad9e474fb12be.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

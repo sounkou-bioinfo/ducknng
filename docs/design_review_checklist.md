@@ -98,11 +98,15 @@ This checklist tracks the implementation status of the main architecture, transp
     - bind session ownership to a real client identity model
     - add a SQL-side Arrow batch decoder or higher-level row-decoding helper for session fetch payloads
     - decide whether `ducknng_query_rpc()` should later be rebuilt as a convenience wrapper over the session family
-- [ ] Add the codec framework for user-defined Arrow extension serde.
-  - `ducknng_register_codec`
-  - `ducknng_unregister_codec`
-  - `ducknng_list_codecs`
-  - Blocker: codec hooks should land on top of the future DuckDB-native Arrow path, not the current hand-rolled encoder/decoder.
+- [~] Add the codec framework for body and Arrow extension serde.
+  - Current state:
+    - `ducknng_list_codecs()` lists the built-in content-type driven providers
+    - `ducknng_parse_body(body, content_type)` parses raw bodies through built-in providers
+    - `ducknng_ncurl_table(...)` performs HTTP/HTTPS and parses successful response bodies by `Content-Type`
+    - JSON, CSV, TSV, and Parquet use DuckDB readers through temporary files; Arrow IPC still uses nanoarrow plus the stable manual mapping layer
+  - Remaining work:
+    - decide whether user-defined hooks such as `ducknng_register_codec` and `ducknng_unregister_codec` belong in the sealed API
+    - keep user-defined Arrow extension serde blocked until ownership, security, and the future DuckDB Arrow seam are clear enough not to freeze an unsafe callback ABI
 - [ ] Surface pipe events / readiness notifications.
   - Blocker: depends on the async/aio/runtime event model and broader session cleanup strategy.
 - [ ] Split `src/ducknng_sql_api.c` into smaller modules.

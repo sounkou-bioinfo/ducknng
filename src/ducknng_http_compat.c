@@ -589,13 +589,23 @@ done:
     return resolved;
 }
 
+static int ducknng_http_ascii_tolower_int(int c) {
+    return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
 static int ducknng_http_content_type_is_frame(const char *content_type) {
     size_t want_len = strlen(DUCKNNG_HTTP_FRAME_MEDIA_TYPE);
+    size_t i;
     if (!content_type) return 0;
-    while (*content_type == ' ' || *content_type == '\t') content_type++;
-    if (strncmp(content_type, DUCKNNG_HTTP_FRAME_MEDIA_TYPE, want_len) != 0) return 0;
+    while (*content_type == ' ' || *content_type == '\t' || *content_type == '\r' || *content_type == '\n') content_type++;
+    for (i = 0; i < want_len; i++) {
+        if (!content_type[i] ||
+            ducknng_http_ascii_tolower_int((unsigned char)content_type[i]) !=
+                ducknng_http_ascii_tolower_int((unsigned char)DUCKNNG_HTTP_FRAME_MEDIA_TYPE[i])) return 0;
+    }
     content_type += want_len;
-    return *content_type == '\0' || *content_type == ';' || *content_type == ' ' || *content_type == '\t';
+    while (*content_type == ' ' || *content_type == '\t') content_type++;
+    return *content_type == '\0' || *content_type == ';';
 }
 
 static int ducknng_http_alloc_text_response(nng_http_res **out, uint16_t status, const char *body_text) {

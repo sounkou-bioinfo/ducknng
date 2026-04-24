@@ -37,6 +37,20 @@ TABLE(
 
 The request-side `headers_json` argument uses the same canonical JSON shape for symmetry. The preferred contract is an array of objects such as `[{"name":"Content-Type","value":"application/json"}]` rather than a plain JSON object, because HTTP header names may repeat and order sometimes matters operationally.
 
+The raw helper deliberately does not parse response bodies by default. Provider-driven parsing is opt-in through two table helpers:
+
+```sql
+ducknng_list_codecs()
+ducknng_parse_body(body, content_type)
+ducknng_ncurl_table(url, method, headers_json, body, timeout_ms, tls_config_id)
+```
+
+`ducknng_list_codecs()` lists the built-in body serialization/deserialization providers. `ducknng_parse_body(...)` takes an existing `BLOB` plus a `Content-Type` string and returns provider-specific table output. `ducknng_ncurl_table(...)` performs one HTTP/HTTPS request, requires a 2xx status, reads the response `Content-Type`, and returns the parsed body as a DuckDB table. Missing or unknown content types fall back to a raw `body BLOB` column.
+
+The initial built-in providers are content-type driven: raw bytes, UTF-8 text, JSON, CSV, TSV, Parquet, Arrow IPC stream, and `application/vnd.ducknng.frame`. JSON, CSV, TSV, and Parquet delegate to DuckDB's own readers through temporary files and then reuse the same Arrow IPC row mapping that powers `ducknng_query_rpc(...)`. Those reader-backed codecs run through the runtime init-connection execution gate and currently fail fast if called from service-owned SQL that already holds that gate on the current request thread. Arrow IPC stream bytes are decoded with nanoarrow and mapped into DuckDB vectors through the stable manual mapping layer. `application/vnd.ducknng.frame` returns the same envelope columns as `ducknng_decode_frame(...)`.
+
+These parsed helpers are intentionally transport-local conveniences. They do not change the framed RPC method surface and they do not make the HTTP server accept arbitrary JSON, CSV, Parquet, or Arrow bodies at the RPC endpoint.
+
 The shipped server entry point is:
 
 ```sql

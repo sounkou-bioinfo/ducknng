@@ -154,6 +154,73 @@ typedef struct {
 } ducknng_http_result_bind_data;
 
 typedef struct {
+    bool ok;
+    char *error;
+    uint8_t version;
+    uint8_t type;
+    uint32_t flags;
+    char *type_name;
+    char *name;
+    char *payload_text;
+    uint8_t *payload;
+    idx_t payload_len;
+} ducknng_frame_decode_bind_data;
+
+typedef enum ducknng_body_codec_kind {
+    DUCKNNG_BODY_CODEC_RAW = 0,
+    DUCKNNG_BODY_CODEC_TEXT = 1,
+    DUCKNNG_BODY_CODEC_JSON = 2,
+    DUCKNNG_BODY_CODEC_CSV = 3,
+    DUCKNNG_BODY_CODEC_TSV = 4,
+    DUCKNNG_BODY_CODEC_PARQUET = 5,
+    DUCKNNG_BODY_CODEC_ARROW_IPC = 6,
+    DUCKNNG_BODY_CODEC_DUCKNNG_FRAME = 7
+} ducknng_body_codec_kind;
+
+typedef enum ducknng_body_result_kind {
+    DUCKNNG_BODY_RESULT_SINGLE = 1,
+    DUCKNNG_BODY_RESULT_ARROW = 2,
+    DUCKNNG_BODY_RESULT_FRAME = 3
+} ducknng_body_result_kind;
+
+typedef struct {
+    int result_kind;
+    int codec_kind;
+    char *provider;
+    char *media_type;
+    uint8_t *raw;
+    idx_t raw_len;
+    char *text;
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    idx_t row_count;
+    ducknng_frame_decode_bind_data frame;
+} ducknng_body_parse_bind_data;
+
+typedef struct {
+    ducknng_body_parse_bind_data *bind;
+    idx_t offset;
+    int emitted;
+} ducknng_body_parse_init_data;
+
+typedef struct {
+    const char *provider;
+    const char *media_types;
+    const char *output;
+    const char *notes;
+} ducknng_codec_static_row;
+
+typedef struct {
+    const ducknng_codec_static_row *rows;
+    idx_t row_count;
+} ducknng_codecs_bind_data;
+
+typedef struct {
+    ducknng_codecs_bind_data *bind;
+    idx_t offset;
+} ducknng_codecs_init_data;
+
+typedef struct {
     ducknng_sql_context *ctx;
     char *url;
     char *sql;
@@ -173,19 +240,6 @@ typedef struct {
     idx_t payload_len;
     bool end_of_stream;
 } ducknng_session_result_bind_data;
-
-typedef struct {
-    bool ok;
-    char *error;
-    uint8_t version;
-    uint8_t type;
-    uint32_t flags;
-    char *type_name;
-    char *name;
-    char *payload_text;
-    uint8_t *payload;
-    idx_t payload_len;
-} ducknng_frame_decode_bind_data;
 
 typedef struct {
     uint64_t aio_id;
@@ -274,12 +328,38 @@ static char *ducknng_dup_bytes(const uint8_t *data, size_t len) {
     return out;
 }
 static int ducknng_bytes_look_text(const uint8_t *data, size_t len) {
-    size_t i;
+    size_t i = 0;
+    if (len == 0) return 1;
     if (!data) return 0;
-    for (i = 0; i < len; i++) {
+    while (i < len) {
         uint8_t b = data[i];
         if (b == 0) return 0;
-        if (b < 0x20 && b != '\n' && b != '\r' && b != '\t') return 0;
+        if (b < 0x20) {
+            if (b != '\n' && b != '\r' && b != '\t') return 0;
+            i++;
+        } else if (b < 0x80) {
+            i++;
+        } else if ((b & 0xe0) == 0xc0) {
+            if (i + 1 >= len || (data[i + 1] & 0xc0) != 0x80 || b < 0xc2) return 0;
+            i += 2;
+        } else if ((b & 0xf0) == 0xe0) {
+            uint8_t b1;
+            if (i + 2 >= len || (data[i + 1] & 0xc0) != 0x80 || (data[i + 2] & 0xc0) != 0x80) return 0;
+            b1 = data[i + 1];
+            if (b == 0xe0 && b1 < 0xa0) return 0;
+            if (b == 0xed && b1 >= 0xa0) return 0;
+            i += 3;
+        } else if ((b & 0xf8) == 0xf0) {
+            uint8_t b1;
+            if (i + 3 >= len || (data[i + 1] & 0xc0) != 0x80 ||
+                (data[i + 2] & 0xc0) != 0x80 || (data[i + 3] & 0xc0) != 0x80) return 0;
+            b1 = data[i + 1];
+            if (b == 0xf0 && b1 < 0x90) return 0;
+            if (b > 0xf4 || (b == 0xf4 && b1 >= 0x90)) return 0;
+            i += 4;
+        } else {
+            return 0;
+        }
     }
     return 1;
 }
@@ -293,6 +373,196 @@ static const char *ducknng_rpc_type_name(uint8_t type) {
     default: return "unknown";
     }
 }
+static int ducknng_ascii_tolower_int(int c) {
+    return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
+static int ducknng_ascii_ieq(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        if (ducknng_ascii_tolower_int((unsigned char)*a) != ducknng_ascii_tolower_int((unsigned char)*b)) return 0;
+        a++;
+        b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static int ducknng_ascii_istarts_with(const char *s, const char *prefix) {
+    if (!s || !prefix) return 0;
+    while (*prefix) {
+        if (!*s || ducknng_ascii_tolower_int((unsigned char)*s) != ducknng_ascii_tolower_int((unsigned char)*prefix)) return 0;
+        s++;
+        prefix++;
+    }
+    return 1;
+}
+
+static int ducknng_ascii_iends_with(const char *s, const char *suffix) {
+    size_t slen;
+    size_t suffix_len;
+    if (!s || !suffix) return 0;
+    slen = strlen(s);
+    suffix_len = strlen(suffix);
+    if (suffix_len > slen) return 0;
+    return ducknng_ascii_ieq(s + slen - suffix_len, suffix);
+}
+
+static char *ducknng_normalize_media_type(const char *content_type) {
+    const char *start;
+    const char *end;
+    char *out;
+    size_t len;
+    size_t i;
+    if (!content_type) return ducknng_strdup("");
+    start = content_type;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') start++;
+    end = start;
+    while (*end && *end != ';' && *end != ' ' && *end != '\t' && *end != '\r' && *end != '\n') end++;
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t')) end--;
+    len = (size_t)(end - start);
+    out = (char *)duckdb_malloc(len + 1);
+    if (!out) return NULL;
+    for (i = 0; i < len; i++) out[i] = (char)ducknng_ascii_tolower_int((unsigned char)start[i]);
+    out[len] = '\0';
+    return out;
+}
+
+static const char *ducknng_body_codec_provider_name(int codec_kind) {
+    switch (codec_kind) {
+        case DUCKNNG_BODY_CODEC_TEXT: return "text";
+        case DUCKNNG_BODY_CODEC_JSON: return "json";
+        case DUCKNNG_BODY_CODEC_CSV: return "csv";
+        case DUCKNNG_BODY_CODEC_TSV: return "tsv";
+        case DUCKNNG_BODY_CODEC_PARQUET: return "parquet";
+        case DUCKNNG_BODY_CODEC_ARROW_IPC: return "arrow_ipc";
+        case DUCKNNG_BODY_CODEC_DUCKNNG_FRAME: return "ducknng_frame";
+        case DUCKNNG_BODY_CODEC_RAW:
+        default: return "raw";
+    }
+}
+
+static int ducknng_body_codec_for_media_type(const char *media_type) {
+    if (!media_type || !media_type[0]) return DUCKNNG_BODY_CODEC_RAW;
+    if (ducknng_ascii_ieq(media_type, "application/vnd.ducknng.frame")) return DUCKNNG_BODY_CODEC_DUCKNNG_FRAME;
+    if (ducknng_ascii_ieq(media_type, "application/vnd.apache.arrow.stream") ||
+        ducknng_ascii_ieq(media_type, "application/vnd.apache.arrow.ipc") ||
+        ducknng_ascii_ieq(media_type, "application/arrow")) return DUCKNNG_BODY_CODEC_ARROW_IPC;
+    if (ducknng_ascii_ieq(media_type, "application/vnd.apache.parquet") ||
+        ducknng_ascii_ieq(media_type, "application/parquet")) return DUCKNNG_BODY_CODEC_PARQUET;
+    if (ducknng_ascii_ieq(media_type, "text/csv") || ducknng_ascii_ieq(media_type, "application/csv")) return DUCKNNG_BODY_CODEC_CSV;
+    if (ducknng_ascii_ieq(media_type, "text/tab-separated-values")) return DUCKNNG_BODY_CODEC_TSV;
+    if (ducknng_ascii_ieq(media_type, "application/json") ||
+        ducknng_ascii_ieq(media_type, "application/x-ndjson") ||
+        ducknng_ascii_iends_with(media_type, "+json")) return DUCKNNG_BODY_CODEC_JSON;
+    if (ducknng_ascii_istarts_with(media_type, "text/")) return DUCKNNG_BODY_CODEC_TEXT;
+    return DUCKNNG_BODY_CODEC_RAW;
+}
+
+static char *ducknng_sql_quote_literal(const char *s) {
+    size_t need = 3;
+    size_t i;
+    char *out;
+    char *p;
+    if (!s) return ducknng_strdup("NULL");
+    for (i = 0; s[i]; i++) need += s[i] == '\'' ? 2 : 1;
+    out = (char *)duckdb_malloc(need);
+    if (!out) return NULL;
+    p = out;
+    *p++ = '\'';
+    for (i = 0; s[i]; i++) {
+        if (s[i] == '\'') *p++ = '\'';
+        *p++ = s[i];
+    }
+    *p++ = '\'';
+    *p = '\0';
+    return out;
+}
+
+static char *ducknng_join_temp_file_path(const char *dir, const char *filename) {
+    size_t len;
+    char *out;
+    char sep = '/';
+#ifdef _WIN32
+    sep = '\\';
+#endif
+    if (!dir || !filename) return NULL;
+    len = strlen(dir) + 1 + strlen(filename) + 1;
+    out = (char *)duckdb_malloc(len);
+    if (!out) return NULL;
+    snprintf(out, len, "%s%c%s", dir, sep, filename);
+    return out;
+}
+
+static int ducknng_write_file_bytes(const char *path, const uint8_t *data, size_t len, char **errmsg) {
+    FILE *fp;
+    if (errmsg) *errmsg = NULL;
+    if (!path) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing temporary body path");
+        return -1;
+    }
+    fp = fopen(path, "wb");
+    if (!fp) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to open temporary body file");
+        return -1;
+    }
+    if (len > 0 && fwrite(data, 1, len, fp) != len) {
+        fclose(fp);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to write temporary body file");
+        return -1;
+    }
+    if (fclose(fp) != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to close temporary body file");
+        return -1;
+    }
+    return 0;
+}
+
+static char *ducknng_headers_json_get_header(const char *headers_json, const char *wanted_name) {
+    const char *p = headers_json;
+    char *last_value = NULL;
+    if (!headers_json || !wanted_name) return NULL;
+    while ((p = strstr(p, "{\"name\":")) != NULL) {
+        const char *name_start;
+        const char *name_end;
+        const char *value_key;
+        const char *value_start;
+        const char *value_end;
+        char *name;
+        char *value;
+        p += strlen("{\"name\":");
+        if (*p != '\"') continue;
+        name_start = ++p;
+        name_end = strchr(name_start, '\"');
+        if (!name_end) break;
+        value_key = strstr(name_end, "\"value\":");
+        if (!value_key) break;
+        value_start = value_key + strlen("\"value\":");
+        if (*value_start != '\"') {
+            p = name_end + 1;
+            continue;
+        }
+        value_start++;
+        value_end = strchr(value_start, '\"');
+        if (!value_end) break;
+        name = ducknng_dup_bytes((const uint8_t *)name_start, (size_t)(name_end - name_start));
+        value = ducknng_dup_bytes((const uint8_t *)value_start, (size_t)(value_end - value_start));
+        if (!name || !value) {
+            if (name) duckdb_free(name);
+            if (value) duckdb_free(value);
+            break;
+        }
+        if (ducknng_ascii_ieq(name, wanted_name)) {
+            if (last_value) duckdb_free(last_value);
+            last_value = value;
+            value = NULL;
+        }
+        duckdb_free(name);
+        if (value) duckdb_free(value);
+        p = value_end + 1;
+    }
+    return last_value;
+}
+
 static int ducknng_cn_is_safe(const char *cn) {
     size_t i;
     if (!cn || !cn[0]) return 0;
@@ -528,15 +798,50 @@ static void destroy_session_result_bind_data(void *ptr) {
     duckdb_free(data);
 }
 
-static void destroy_frame_decode_bind_data(void *ptr) {
-    ducknng_frame_decode_bind_data *data = (ducknng_frame_decode_bind_data *)ptr;
+static void ducknng_frame_decode_bind_data_reset(ducknng_frame_decode_bind_data *data) {
     if (!data) return;
     if (data->error) duckdb_free(data->error);
     if (data->type_name) duckdb_free(data->type_name);
     if (data->name) duckdb_free(data->name);
     if (data->payload_text) duckdb_free(data->payload_text);
     if (data->payload) duckdb_free(data->payload);
+    memset(data, 0, sizeof(*data));
+}
+
+static void destroy_frame_decode_bind_data(void *ptr) {
+    ducknng_frame_decode_bind_data *data = (ducknng_frame_decode_bind_data *)ptr;
+    if (!data) return;
+    ducknng_frame_decode_bind_data_reset(data);
     duckdb_free(data);
+}
+
+static void destroy_body_parse_bind_data(void *ptr) {
+    ducknng_body_parse_bind_data *data = (ducknng_body_parse_bind_data *)ptr;
+    if (!data) return;
+    if (data->provider) duckdb_free(data->provider);
+    if (data->media_type) duckdb_free(data->media_type);
+    if (data->raw) duckdb_free(data->raw);
+    if (data->text) duckdb_free(data->text);
+    if (data->array.release) ArrowArrayRelease(&data->array);
+    if (data->schema.release) ArrowSchemaRelease(&data->schema);
+    ducknng_frame_decode_bind_data_reset(&data->frame);
+    duckdb_free(data);
+}
+
+static void destroy_body_parse_init_data(void *ptr) {
+    ducknng_body_parse_init_data *data = (ducknng_body_parse_init_data *)ptr;
+    if (!data) return;
+    duckdb_free(data);
+}
+
+static void destroy_codecs_bind_data(void *ptr) {
+    ducknng_codecs_bind_data *data = (ducknng_codecs_bind_data *)ptr;
+    if (data) duckdb_free(data);
+}
+
+static void destroy_codecs_init_data(void *ptr) {
+    ducknng_codecs_init_data *data = (ducknng_codecs_init_data *)ptr;
+    if (data) duckdb_free(data);
 }
 
 static void destroy_aio_collect_bind_data(void *ptr) {
@@ -4240,6 +4545,560 @@ static void ducknng_decode_frame_scan(duckdb_function_info info, duckdb_data_chu
     init->emitted = 1;
 }
 
+static int ducknng_body_parse_frame_copy(const uint8_t *data, size_t len,
+    ducknng_frame_decode_bind_data *out) {
+    ducknng_frame frame;
+    if (!out) return -1;
+    memset(out, 0, sizeof(*out));
+    if (!data || len == 0) {
+        out->ok = false;
+        out->error = ducknng_strdup("ducknng: frame blob must not be NULL or empty");
+        return 0;
+    }
+    if (ducknng_decode_frame_bytes(data, len, &frame) != 0) {
+        out->ok = false;
+        out->error = ducknng_strdup("ducknng: invalid frame envelope");
+        return 0;
+    }
+    out->ok = true;
+    out->version = frame.version;
+    out->type = frame.type;
+    out->flags = frame.flags;
+    out->type_name = ducknng_strdup(ducknng_rpc_type_name(frame.type));
+    if (!out->type_name) {
+        out->ok = false;
+        out->error = ducknng_strdup("ducknng: out of memory copying frame type name");
+        return -1;
+    }
+    if (frame.name_len > 0) out->name = ducknng_dup_bytes(frame.name, (size_t)frame.name_len);
+    out->payload_len = (idx_t)frame.payload_len;
+    if (frame.payload_len > 0) {
+        out->payload = (uint8_t *)duckdb_malloc((size_t)frame.payload_len);
+        if (!out->payload) {
+            out->ok = false;
+            out->error = ducknng_strdup("ducknng: out of memory copying frame payload");
+            return -1;
+        }
+        memcpy(out->payload, frame.payload, (size_t)frame.payload_len);
+        if (ducknng_bytes_look_text(frame.payload, (size_t)frame.payload_len)) {
+            out->payload_text = ducknng_dup_bytes(frame.payload, (size_t)frame.payload_len);
+        }
+    }
+    return 0;
+}
+
+static void ducknng_body_parse_add_frame_columns(duckdb_bind_info info) {
+    duckdb_logical_type type;
+    type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    duckdb_bind_add_result_column(info, "ok", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "error", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_UTINYINT);
+    duckdb_bind_add_result_column(info, "version", type);
+    duckdb_bind_add_result_column(info, "type", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_UINTEGER);
+    duckdb_bind_add_result_column(info, "flags", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "type_name", type);
+    duckdb_bind_add_result_column(info, "name", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+    duckdb_bind_add_result_column(info, "payload", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "payload_text", type);
+    duckdb_destroy_logical_type(&type);
+}
+
+static void ducknng_body_parse_emit_frame_row(duckdb_data_chunk output, const ducknng_frame_decode_bind_data *frame) {
+    bool *ok_data = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 0));
+    uint8_t *version_data = (uint8_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 2));
+    uint8_t *type_data = (uint8_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 3));
+    uint32_t *flags_data = (uint32_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 4));
+    ok_data[0] = frame ? frame->ok : false;
+    if (frame && frame->error) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), 0, frame->error);
+    else set_null(duckdb_data_chunk_get_vector(output, 1), 0);
+    version_data[0] = frame ? frame->version : 0;
+    type_data[0] = frame ? frame->type : 0;
+    flags_data[0] = frame ? frame->flags : 0;
+    if (frame && frame->type_name) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 5), 0, frame->type_name);
+    else set_null(duckdb_data_chunk_get_vector(output, 5), 0);
+    if (frame && frame->name) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 6), 0, frame->name);
+    else set_null(duckdb_data_chunk_get_vector(output, 6), 0);
+    if (frame && frame->payload) assign_blob(duckdb_data_chunk_get_vector(output, 7), 0, frame->payload, frame->payload_len);
+    else set_null(duckdb_data_chunk_get_vector(output, 7), 0);
+    if (frame && frame->payload_text) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 8), 0, frame->payload_text);
+    else set_null(duckdb_data_chunk_get_vector(output, 8), 0);
+}
+
+static int ducknng_body_parse_run_duckdb_reader(ducknng_sql_context *ctx,
+    ducknng_body_parse_bind_data *bind, const uint8_t *body, size_t body_len,
+    int codec_kind, char **errmsg) {
+    const char *filename = "body.bin";
+    const char *query_prefix = NULL;
+    const char *query_suffix = ")";
+    char *temp_dir = NULL;
+    char *path = NULL;
+    char *quoted = NULL;
+    char *sql = NULL;
+    uint8_t *payload = NULL;
+    size_t payload_len = 0;
+    size_t sql_len;
+    int rc = -1;
+    if (errmsg) *errmsg = NULL;
+    if (!ctx || !ctx->rt || !ctx->rt->init_con || !bind) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing runtime for body parser");
+        return -1;
+    }
+    switch (codec_kind) {
+        case DUCKNNG_BODY_CODEC_JSON:
+            filename = "body.json";
+            query_prefix = "SELECT * FROM read_json_auto(";
+            break;
+        case DUCKNNG_BODY_CODEC_CSV:
+            filename = "body.csv";
+            query_prefix = "SELECT * FROM read_csv_auto(";
+            break;
+        case DUCKNNG_BODY_CODEC_TSV:
+            filename = "body.tsv";
+            query_prefix = "SELECT * FROM read_csv_auto(";
+            query_suffix = ", delim='\\t')";
+            break;
+        case DUCKNNG_BODY_CODEC_PARQUET:
+            filename = "body.parquet";
+            query_prefix = "SELECT * FROM read_parquet(";
+            break;
+        default:
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: body codec does not use a DuckDB reader");
+            return -1;
+    }
+    temp_dir = ducknng_make_temp_dir("ducknng-body-");
+    path = ducknng_join_temp_file_path(temp_dir, filename);
+    if (!temp_dir || !path) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to allocate temporary body path");
+        goto cleanup;
+    }
+    if (ducknng_write_file_bytes(path, body, body_len, errmsg) != 0) goto cleanup;
+    quoted = ducknng_sql_quote_literal(path);
+    if (!quoted) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory quoting body path");
+        goto cleanup;
+    }
+    sql_len = strlen(query_prefix) + strlen(quoted) + strlen(query_suffix) + 1;
+    sql = (char *)duckdb_malloc(sql_len);
+    if (!sql) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory building body parser query");
+        goto cleanup;
+    }
+    snprintf(sql, sql_len, "%s%s%s", query_prefix, quoted, query_suffix);
+    if (ducknng_runtime_current_thread_request_service_get(ctx->rt)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: DuckDB-reader body codecs cannot run inside service-owned SQL yet");
+        goto cleanup;
+    }
+    ducknng_runtime_init_con_lock(ctx->rt);
+    if (ducknng_query_to_ipc_stream(ctx->rt->init_con, sql, &payload, &payload_len, errmsg) != 0) {
+        ducknng_runtime_init_con_unlock(ctx->rt);
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: body parser query failed");
+        goto cleanup;
+    }
+    ducknng_runtime_init_con_unlock(ctx->rt);
+    if (ducknng_decode_ipc_table_payload(payload, payload_len, &bind->schema, &bind->array, errmsg) != 0) goto cleanup;
+    bind->result_kind = DUCKNNG_BODY_RESULT_ARROW;
+    bind->row_count = (idx_t)bind->array.length;
+    rc = 0;
+cleanup:
+    if (payload) duckdb_free(payload);
+    if (sql) duckdb_free(sql);
+    if (quoted) duckdb_free(quoted);
+    if (path) {
+        (void)ducknng_remove_file(path);
+        duckdb_free(path);
+    }
+    if (temp_dir) {
+        (void)ducknng_remove_dir(temp_dir);
+        duckdb_free(temp_dir);
+    }
+    return rc;
+}
+
+static int ducknng_body_parse_prepare(duckdb_bind_info info, ducknng_sql_context *ctx,
+    const uint8_t *body, size_t body_len, const char *content_type) {
+    ducknng_body_parse_bind_data *bind;
+    duckdb_logical_type type;
+    char *errmsg = NULL;
+    idx_t col;
+    bind = (ducknng_body_parse_bind_data *)duckdb_malloc(sizeof(*bind));
+    if (!bind) {
+        duckdb_bind_set_error(info, "ducknng: out of memory");
+        return -1;
+    }
+    memset(bind, 0, sizeof(*bind));
+    bind->media_type = ducknng_normalize_media_type(content_type);
+    if (!bind->media_type) {
+        destroy_body_parse_bind_data(bind);
+        duckdb_bind_set_error(info, "ducknng: out of memory normalizing content type");
+        return -1;
+    }
+    bind->codec_kind = ducknng_body_codec_for_media_type(bind->media_type);
+    bind->provider = ducknng_strdup(ducknng_body_codec_provider_name(bind->codec_kind));
+    if (!bind->provider) {
+        destroy_body_parse_bind_data(bind);
+        duckdb_bind_set_error(info, "ducknng: out of memory copying body codec name");
+        return -1;
+    }
+    switch (bind->codec_kind) {
+        case DUCKNNG_BODY_CODEC_TEXT:
+            if (!ducknng_bytes_look_text(body, body_len)) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, "ducknng: text body is not valid UTF-8 text");
+                return -1;
+            }
+            bind->text = ducknng_dup_bytes(body, body_len);
+            if (!bind->text) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, "ducknng: out of memory copying text body");
+                return -1;
+            }
+            bind->result_kind = DUCKNNG_BODY_RESULT_SINGLE;
+            type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+            duckdb_bind_add_result_column(info, "body_text", type);
+            duckdb_destroy_logical_type(&type);
+            duckdb_bind_set_cardinality(info, 1, true);
+            break;
+        case DUCKNNG_BODY_CODEC_DUCKNNG_FRAME:
+            if (ducknng_body_parse_frame_copy(body, body_len, &bind->frame) != 0) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, "ducknng: failed to decode frame body");
+                return -1;
+            }
+            bind->result_kind = DUCKNNG_BODY_RESULT_FRAME;
+            ducknng_body_parse_add_frame_columns(info);
+            duckdb_bind_set_cardinality(info, 1, true);
+            break;
+        case DUCKNNG_BODY_CODEC_ARROW_IPC:
+            if (ducknng_decode_ipc_table_payload(body, body_len, &bind->schema, &bind->array, &errmsg) != 0) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: failed to decode Arrow IPC body");
+                if (errmsg) duckdb_free(errmsg);
+                return -1;
+            }
+            bind->result_kind = DUCKNNG_BODY_RESULT_ARROW;
+            bind->row_count = (idx_t)bind->array.length;
+            if (bind->schema.n_children < 0 || bind->schema.n_children != bind->array.n_children) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, "ducknng: invalid Arrow IPC body schema");
+                return -1;
+            }
+            for (col = 0; col < (idx_t)bind->schema.n_children; col++) {
+                duckdb_logical_type col_type;
+                const char *name = bind->schema.children[col] && bind->schema.children[col]->name ? bind->schema.children[col]->name : "";
+                if (ducknng_arrow_schema_to_logical_type(bind->schema.children[col], &col_type, &errmsg) != 0) {
+                    destroy_body_parse_bind_data(bind);
+                    duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: unsupported Arrow IPC body type");
+                    if (errmsg) duckdb_free(errmsg);
+                    return -1;
+                }
+                duckdb_bind_add_result_column(info, name, col_type);
+                duckdb_destroy_logical_type(&col_type);
+            }
+            duckdb_bind_set_cardinality(info, bind->row_count, true);
+            break;
+        case DUCKNNG_BODY_CODEC_JSON:
+        case DUCKNNG_BODY_CODEC_CSV:
+        case DUCKNNG_BODY_CODEC_TSV:
+        case DUCKNNG_BODY_CODEC_PARQUET:
+            if (ducknng_body_parse_run_duckdb_reader(ctx, bind, body, body_len, bind->codec_kind, &errmsg) != 0) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: failed to parse body with DuckDB reader");
+                if (errmsg) duckdb_free(errmsg);
+                return -1;
+            }
+            if (bind->schema.n_children < 0 || bind->schema.n_children != bind->array.n_children) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, "ducknng: invalid parsed body schema");
+                return -1;
+            }
+            for (col = 0; col < (idx_t)bind->schema.n_children; col++) {
+                duckdb_logical_type col_type;
+                const char *name = bind->schema.children[col] && bind->schema.children[col]->name ? bind->schema.children[col]->name : "";
+                if (ducknng_arrow_schema_to_logical_type(bind->schema.children[col], &col_type, &errmsg) != 0) {
+                    destroy_body_parse_bind_data(bind);
+                    duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: unsupported parsed body type");
+                    if (errmsg) duckdb_free(errmsg);
+                    return -1;
+                }
+                duckdb_bind_add_result_column(info, name, col_type);
+                duckdb_destroy_logical_type(&col_type);
+            }
+            duckdb_bind_set_cardinality(info, bind->row_count, true);
+            break;
+        case DUCKNNG_BODY_CODEC_RAW:
+        default:
+            bind->raw_len = (idx_t)body_len;
+            if (body_len > 0) {
+                bind->raw = (uint8_t *)duckdb_malloc(body_len);
+                if (!bind->raw) {
+                    destroy_body_parse_bind_data(bind);
+                    duckdb_bind_set_error(info, "ducknng: out of memory copying raw body");
+                    return -1;
+                }
+                memcpy(bind->raw, body, body_len);
+            }
+            bind->result_kind = DUCKNNG_BODY_RESULT_SINGLE;
+            type = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+            duckdb_bind_add_result_column(info, "body", type);
+            duckdb_destroy_logical_type(&type);
+            duckdb_bind_set_cardinality(info, 1, true);
+            break;
+    }
+    duckdb_bind_set_bind_data(info, bind, destroy_body_parse_bind_data);
+    return 0;
+}
+
+static void ducknng_body_parse_bind(duckdb_bind_info info) {
+    duckdb_value body_val;
+    duckdb_value content_type_val;
+    duckdb_blob body_blob;
+    char *content_type;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    body_val = duckdb_bind_get_parameter(info, 0);
+    content_type_val = duckdb_bind_get_parameter(info, 1);
+    if (duckdb_is_null_value(body_val)) memset(&body_blob, 0, sizeof(body_blob));
+    else body_blob = duckdb_get_blob(body_val);
+    content_type = duckdb_is_null_value(content_type_val) ? NULL : duckdb_get_varchar(content_type_val);
+    duckdb_destroy_value(&body_val);
+    duckdb_destroy_value(&content_type_val);
+    (void)ducknng_body_parse_prepare(info, ctx, (const uint8_t *)body_blob.data, (size_t)body_blob.size, content_type);
+    if (content_type) duckdb_free(content_type);
+    if (body_blob.data) duckdb_free(body_blob.data);
+}
+
+static void ducknng_ncurl_table_bind(duckdb_bind_info info) {
+    duckdb_value url_val;
+    duckdb_value method_val;
+    duckdb_value headers_val;
+    duckdb_value body_val;
+    duckdb_value timeout_val;
+    duckdb_value tls_val;
+    duckdb_blob body_blob;
+    char *url;
+    char *method;
+    char *headers_json;
+    char *content_type = NULL;
+    int32_t timeout_ms;
+    uint64_t tls_config_id;
+    const ducknng_tls_opts *tls_opts = NULL;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    char *errmsg = NULL;
+    uint16_t status = 0;
+    char *resp_headers_json = NULL;
+    uint8_t *resp_body = NULL;
+    size_t resp_body_len = 0;
+    memset(&body_blob, 0, sizeof(body_blob));
+    url_val = duckdb_bind_get_parameter(info, 0);
+    method_val = duckdb_bind_get_parameter(info, 1);
+    headers_val = duckdb_bind_get_parameter(info, 2);
+    body_val = duckdb_bind_get_parameter(info, 3);
+    timeout_val = duckdb_bind_get_parameter(info, 4);
+    tls_val = duckdb_bind_get_parameter(info, 5);
+    url = duckdb_is_null_value(url_val) ? NULL : duckdb_get_varchar(url_val);
+    method = duckdb_is_null_value(method_val) ? NULL : duckdb_get_varchar(method_val);
+    headers_json = duckdb_is_null_value(headers_val) ? NULL : duckdb_get_varchar(headers_val);
+    if (!duckdb_is_null_value(body_val)) body_blob = duckdb_get_blob(body_val);
+    timeout_ms = duckdb_get_int32(timeout_val);
+    tls_config_id = (uint64_t)duckdb_get_uint64(tls_val);
+    duckdb_destroy_value(&url_val);
+    duckdb_destroy_value(&method_val);
+    duckdb_destroy_value(&headers_val);
+    duckdb_destroy_value(&body_val);
+    duckdb_destroy_value(&timeout_val);
+    duckdb_destroy_value(&tls_val);
+    if (!url || !url[0]) {
+        duckdb_bind_set_error(info, "ducknng: ducknng_ncurl_table URL must not be NULL or empty");
+        goto cleanup;
+    }
+    if (ducknng_lookup_tls_opts(ctx, tls_config_id, &tls_opts, &errmsg) != 0) {
+        duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: tls config not found");
+        goto cleanup;
+    }
+    if (ducknng_http_transact(url, method, headers_json,
+            (const uint8_t *)body_blob.data, (size_t)body_blob.size, timeout_ms, tls_opts,
+            &status, &resp_headers_json, &resp_body, &resp_body_len, &errmsg) != 0) {
+        duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: HTTP request failed");
+        goto cleanup;
+    }
+    if (status < 200 || status >= 300) {
+        char status_msg[128];
+        snprintf(status_msg, sizeof(status_msg), "ducknng: HTTP status %u cannot be parsed as a table", (unsigned)status);
+        duckdb_bind_set_error(info, status_msg);
+        goto cleanup;
+    }
+    content_type = ducknng_headers_json_get_header(resp_headers_json, "Content-Type");
+    (void)ducknng_body_parse_prepare(info, ctx, resp_body, resp_body_len, content_type);
+cleanup:
+    if (url) duckdb_free(url);
+    if (method) duckdb_free(method);
+    if (headers_json) duckdb_free(headers_json);
+    if (body_blob.data) duckdb_free(body_blob.data);
+    if (resp_headers_json) duckdb_free(resp_headers_json);
+    if (resp_body) duckdb_free(resp_body);
+    if (content_type) duckdb_free(content_type);
+    if (errmsg) duckdb_free(errmsg);
+}
+
+static void ducknng_body_parse_init(duckdb_init_info info) {
+    ducknng_body_parse_bind_data *bind = (ducknng_body_parse_bind_data *)duckdb_init_get_bind_data(info);
+    ducknng_body_parse_init_data *init = (ducknng_body_parse_init_data *)duckdb_malloc(sizeof(*init));
+    if (!init) {
+        duckdb_init_set_error(info, "ducknng: out of memory");
+        return;
+    }
+    memset(init, 0, sizeof(*init));
+    init->bind = bind;
+    duckdb_init_set_max_threads(info, 1);
+    duckdb_init_set_init_data(info, init, destroy_body_parse_init_data);
+}
+
+static void ducknng_body_parse_scan(duckdb_function_info info, duckdb_data_chunk output) {
+    ducknng_body_parse_init_data *init = (ducknng_body_parse_init_data *)duckdb_function_get_init_data(info);
+    ducknng_body_parse_bind_data *bind = init ? init->bind : NULL;
+    if (!init || !bind) {
+        duckdb_data_chunk_set_size(output, 0);
+        return;
+    }
+    if (bind->result_kind == DUCKNNG_BODY_RESULT_SINGLE) {
+        if (init->emitted) {
+            duckdb_data_chunk_set_size(output, 0);
+            return;
+        }
+        if (bind->codec_kind == DUCKNNG_BODY_CODEC_TEXT) {
+            if (bind->text) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 0), 0, bind->text);
+            else set_null(duckdb_data_chunk_get_vector(output, 0), 0);
+        } else {
+            if (bind->raw) assign_blob(duckdb_data_chunk_get_vector(output, 0), 0, bind->raw, bind->raw_len);
+            else assign_blob(duckdb_data_chunk_get_vector(output, 0), 0, (const uint8_t *)"", 0);
+        }
+        duckdb_data_chunk_set_size(output, 1);
+        init->emitted = 1;
+        return;
+    }
+    if (bind->result_kind == DUCKNNG_BODY_RESULT_FRAME) {
+        if (init->emitted) {
+            duckdb_data_chunk_set_size(output, 0);
+            return;
+        }
+        ducknng_body_parse_emit_frame_row(output, &bind->frame);
+        duckdb_data_chunk_set_size(output, 1);
+        init->emitted = 1;
+        return;
+    }
+    if (bind->result_kind == DUCKNNG_BODY_RESULT_ARROW) {
+        struct ArrowArrayView view;
+        struct ArrowError error;
+        idx_t remaining;
+        idx_t chunk_size;
+        idx_t col;
+        if (init->offset >= bind->row_count) {
+            duckdb_data_chunk_set_size(output, 0);
+            return;
+        }
+        memset(&view, 0, sizeof(view));
+        memset(&error, 0, sizeof(error));
+        if (ArrowArrayViewInitFromSchema(&view, &bind->schema, &error) != NANOARROW_OK ||
+            ArrowArrayViewSetArray(&view, &bind->array, &error) != NANOARROW_OK) {
+            duckdb_function_set_error(info, error.message[0] ? error.message : "ducknng: failed to view Arrow IPC body");
+            ArrowArrayViewReset(&view);
+            return;
+        }
+        remaining = bind->row_count - init->offset;
+        chunk_size = remaining > duckdb_vector_size() ? duckdb_vector_size() : remaining;
+        for (col = 0; col < (idx_t)bind->schema.n_children; col++) {
+            duckdb_vector vec = duckdb_data_chunk_get_vector(output, col);
+            if (ducknng_query_rpc_assign_column(vec, view.children[col], bind->schema.children[col], init->offset, chunk_size, NULL) != 0) {
+                duckdb_function_set_error(info, "ducknng: failed to decode Arrow IPC body");
+                ArrowArrayViewReset(&view);
+                return;
+            }
+        }
+        init->offset += chunk_size;
+        duckdb_data_chunk_set_size(output, chunk_size);
+        ArrowArrayViewReset(&view);
+        return;
+    }
+    duckdb_data_chunk_set_size(output, 0);
+}
+
+static const ducknng_codec_static_row DUCKNNG_BUILTIN_CODECS[] = {
+    {"raw", "application/octet-stream, */* fallback", "body BLOB", "No decoding; bytes are returned unchanged."},
+    {"text", "text/*", "body_text VARCHAR", "Valid UTF-8 text bodies are exposed as VARCHAR."},
+    {"json", "application/json, application/*+json, application/x-ndjson", "dynamic table", "Parsed through DuckDB read_json_auto() from a temporary file."},
+    {"csv", "text/csv, application/csv", "dynamic table", "Parsed through DuckDB read_csv_auto() from a temporary file."},
+    {"tsv", "text/tab-separated-values", "dynamic table", "Parsed through DuckDB read_csv_auto(..., delim='\\t') from a temporary file."},
+    {"parquet", "application/vnd.apache.parquet, application/parquet", "dynamic table", "Parsed through DuckDB read_parquet() from a temporary file."},
+    {"arrow_ipc", "application/vnd.apache.arrow.stream, application/vnd.apache.arrow.ipc, application/arrow", "dynamic table", "Decoded as Arrow IPC stream bytes with nanoarrow and mapped to DuckDB vectors."},
+    {"ducknng_frame", "application/vnd.ducknng.frame", "decoded frame columns", "Decoded as one ducknng protocol frame, matching ducknng_decode_frame()."}
+};
+
+static void ducknng_codecs_bind(duckdb_bind_info info) {
+    ducknng_codecs_bind_data *bind;
+    duckdb_logical_type type;
+    bind = (ducknng_codecs_bind_data *)duckdb_malloc(sizeof(*bind));
+    if (!bind) {
+        duckdb_bind_set_error(info, "ducknng: out of memory");
+        return;
+    }
+    bind->rows = DUCKNNG_BUILTIN_CODECS;
+    bind->row_count = (idx_t)(sizeof(DUCKNNG_BUILTIN_CODECS) / sizeof(DUCKNNG_BUILTIN_CODECS[0]));
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "provider", type);
+    duckdb_bind_add_result_column(info, "media_types", type);
+    duckdb_bind_add_result_column(info, "output", type);
+    duckdb_bind_add_result_column(info, "notes", type);
+    duckdb_destroy_logical_type(&type);
+    duckdb_bind_set_bind_data(info, bind, destroy_codecs_bind_data);
+    duckdb_bind_set_cardinality(info, bind->row_count, true);
+}
+
+static void ducknng_codecs_init(duckdb_init_info info) {
+    ducknng_codecs_bind_data *bind = (ducknng_codecs_bind_data *)duckdb_init_get_bind_data(info);
+    ducknng_codecs_init_data *init = (ducknng_codecs_init_data *)duckdb_malloc(sizeof(*init));
+    if (!init) {
+        duckdb_init_set_error(info, "ducknng: out of memory");
+        return;
+    }
+    init->bind = bind;
+    init->offset = 0;
+    duckdb_init_set_max_threads(info, 1);
+    duckdb_init_set_init_data(info, init, destroy_codecs_init_data);
+}
+
+static void ducknng_codecs_scan(duckdb_function_info info, duckdb_data_chunk output) {
+    ducknng_codecs_init_data *init = (ducknng_codecs_init_data *)duckdb_function_get_init_data(info);
+    idx_t remaining;
+    idx_t chunk_size;
+    idx_t i;
+    (void)info;
+    if (!init || !init->bind || init->offset >= init->bind->row_count) {
+        duckdb_data_chunk_set_size(output, 0);
+        return;
+    }
+    remaining = init->bind->row_count - init->offset;
+    chunk_size = remaining > duckdb_vector_size() ? duckdb_vector_size() : remaining;
+    for (i = 0; i < chunk_size; i++) {
+        const ducknng_codec_static_row *row = &init->bind->rows[init->offset + i];
+        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 0), i, row->provider);
+        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), i, row->media_types);
+        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 2), i, row->output);
+        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 3), i, row->notes);
+    }
+    init->offset += chunk_size;
+    duckdb_data_chunk_set_size(output, chunk_size);
+}
+
 static idx_t ducknng_count_collectable_aios_locked(ducknng_runtime *rt, const uint64_t *aio_ids, idx_t aio_id_count) {
     idx_t i;
     idx_t count = 0;
@@ -5432,6 +6291,84 @@ static int register_http_result_table_named(duckdb_connection con, ducknng_sql_c
     return 1;
 }
 
+static int register_body_parse_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
+    duckdb_table_function tf;
+    duckdb_logical_type type_blob;
+    duckdb_logical_type type_varchar;
+    if (!ctx || !ctx->rt) return 0;
+    tf = duckdb_create_table_function();
+    if (!tf) return 0;
+    duckdb_table_function_set_name(tf, name);
+    type_blob = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+    type_varchar = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_table_function_add_parameter(tf, type_blob);
+    duckdb_table_function_add_parameter(tf, type_varchar);
+    duckdb_destroy_logical_type(&type_blob);
+    duckdb_destroy_logical_type(&type_varchar);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
+    duckdb_table_function_set_bind(tf, ducknng_body_parse_bind);
+    duckdb_table_function_set_init(tf, ducknng_body_parse_init);
+    duckdb_table_function_set_function(tf, ducknng_body_parse_scan);
+    if (duckdb_register_table_function(con, tf) == DuckDBError) {
+        duckdb_destroy_table_function(&tf);
+        return 0;
+    }
+    duckdb_destroy_table_function(&tf);
+    return 1;
+}
+
+static int register_ncurl_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
+    duckdb_table_function tf;
+    duckdb_logical_type type_varchar;
+    duckdb_logical_type type_blob;
+    duckdb_logical_type type_int;
+    duckdb_logical_type type_tls;
+    if (!ctx || !ctx->rt) return 0;
+    tf = duckdb_create_table_function();
+    if (!tf) return 0;
+    duckdb_table_function_set_name(tf, name);
+    type_varchar = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    type_blob = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+    type_int = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
+    type_tls = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
+    duckdb_table_function_add_parameter(tf, type_varchar);
+    duckdb_table_function_add_parameter(tf, type_varchar);
+    duckdb_table_function_add_parameter(tf, type_varchar);
+    duckdb_table_function_add_parameter(tf, type_blob);
+    duckdb_table_function_add_parameter(tf, type_int);
+    duckdb_table_function_add_parameter(tf, type_tls);
+    duckdb_destroy_logical_type(&type_varchar);
+    duckdb_destroy_logical_type(&type_blob);
+    duckdb_destroy_logical_type(&type_int);
+    duckdb_destroy_logical_type(&type_tls);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
+    duckdb_table_function_set_bind(tf, ducknng_ncurl_table_bind);
+    duckdb_table_function_set_init(tf, ducknng_body_parse_init);
+    duckdb_table_function_set_function(tf, ducknng_body_parse_scan);
+    if (duckdb_register_table_function(con, tf) == DuckDBError) {
+        duckdb_destroy_table_function(&tf);
+        return 0;
+    }
+    duckdb_destroy_table_function(&tf);
+    return 1;
+}
+
+static int register_codecs_table_named(duckdb_connection con, const char *name) {
+    duckdb_table_function tf;
+    tf = duckdb_create_table_function();
+    if (!tf) return 0;
+    duckdb_table_function_set_name(tf, name);
+    duckdb_table_function_set_bind(tf, ducknng_codecs_bind);
+    duckdb_table_function_set_init(tf, ducknng_codecs_init);
+    duckdb_table_function_set_function(tf, ducknng_codecs_scan);
+    if (duckdb_register_table_function(con, tf) == DuckDBError) {
+        duckdb_destroy_table_function(&tf);
+        return 0;
+    }
+    duckdb_destroy_table_function(&tf);
+    return 1;
+}
+
 static int register_open_query_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     duckdb_logical_type type_varchar;
@@ -5641,6 +6578,9 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_request_result_table_named(connection, &ctx, "ducknng_request")) return 0;
     if (!register_request_socket_result_table_named(connection, &ctx, "ducknng_request_socket")) return 0;
     if (!register_http_result_table_named(connection, &ctx, "ducknng_ncurl")) return 0;
+    if (!register_body_parse_table_named(connection, &ctx, "ducknng_parse_body")) return 0;
+    if (!register_ncurl_table_named(connection, &ctx, "ducknng_ncurl_table")) return 0;
+    if (!register_codecs_table_named(connection, "ducknng_list_codecs")) return 0;
     if (!register_open_query_table_named(connection, &ctx, "ducknng_open_query")) return 0;
     if (!register_fetch_query_table_named(connection, &ctx, "ducknng_fetch_query")) return 0;
     if (!register_session_control_table_named(connection, &ctx, "ducknng_close_query", ducknng_close_query_bind)) return 0;

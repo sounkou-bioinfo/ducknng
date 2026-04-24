@@ -16,6 +16,8 @@ static ducknng_registry_entry *g_entries = NULL;
 static size_t g_entry_count = 0;
 static size_t g_entry_cap = 0;
 static atomic_flag g_registry_lock = ATOMIC_FLAG_INIT;
+static _Thread_local ducknng_runtime *g_thread_request_runtime = NULL;
+static _Thread_local ducknng_service *g_thread_request_service = NULL;
 
 static void reg_lock(void) { while (atomic_flag_test_and_set_explicit(&g_registry_lock, memory_order_acquire)) {} }
 static void reg_unlock(void) { atomic_flag_clear_explicit(&g_registry_lock, memory_order_release); }
@@ -256,11 +258,23 @@ void ducknng_runtime_init_con_unlock(ducknng_runtime *rt) {
 void ducknng_runtime_current_request_service_set(ducknng_runtime *rt, ducknng_service *svc) {
     if (!rt) return;
     atomic_store_explicit(&rt->current_request_service_ptr, (uintptr_t)svc, memory_order_release);
+    if (svc) {
+        g_thread_request_runtime = rt;
+        g_thread_request_service = svc;
+    } else if (g_thread_request_runtime == rt) {
+        g_thread_request_runtime = NULL;
+        g_thread_request_service = NULL;
+    }
 }
 
 ducknng_service *ducknng_runtime_current_request_service_get(ducknng_runtime *rt) {
     if (!rt) return NULL;
     return (ducknng_service *)atomic_load_explicit(&rt->current_request_service_ptr, memory_order_acquire);
+}
+
+ducknng_service *ducknng_runtime_current_thread_request_service_get(ducknng_runtime *rt) {
+    if (!rt || g_thread_request_runtime != rt) return NULL;
+    return g_thread_request_service;
 }
 
 ducknng_service *ducknng_runtime_find_service(ducknng_runtime *rt, const char *name) {

@@ -134,3 +134,4 @@ void ducknng_runtime_init_con_lock(ducknng_runtime *rt);
 void ducknng_runtime_init_con_unlock(ducknng_runtime *rt);
 void ducknng_runtime_current_request_service_set(ducknng_runtime *rt, ducknng_service *svc);
 ducknng_service *ducknng_runtime_current_request_service_get(ducknng_runtime *rt);
+ducknng_service *ducknng_runtime_current_thread_request_service_get(ducknng_runtime *rt);

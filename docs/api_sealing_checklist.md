@@ -17,6 +17,7 @@ This checklist is narrower than `docs/design_review_checklist.md`. It tracks wha
 - an HTTP/HTTPS server helper plus URL-routed synchronous request/RPC/session helpers
 - NNG WebSocket transport schemes through `ws://` and `wss://`
 - a low-level HTTP/HTTPS client helper
+- built-in content-type driven body codec helpers for raw/text/JSON/CSV/TSV/Parquet/Arrow IPC/frame bodies
 
 That is enough for serious use and interop work, but it is not yet enough to call the full API sealed.
 
@@ -96,6 +97,6 @@ These items were worth resolving before the API hardens further and should stay 
 These are still important, but they do not need to be finished before the API can be considered sealed if the above items are settled:
 
 - splitting `src/ducknng_sql_api.c`
-- a future codec framework
+- user-defined codec registration hooks beyond the current built-in body codec providers
 - pipe event notification work
 - a future DuckDB-native Arrow re-plumb, if one ever becomes viable without unstable or deprecated APIs

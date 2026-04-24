@@ -415,6 +415,61 @@
       ]
     },
     {
+      "name": "ducknng_list_codecs",
+      "kind": "table",
+      "category": "Body Codecs",
+      "signature": "ducknng_list_codecs()",
+      "returns": "TABLE(provider VARCHAR, media_types VARCHAR, output VARCHAR, notes VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "List the built-in body serialization/deserialization providers.",
+      "notes": [
+        "The initial provider layer is content-type driven and built in; user-defined codec hooks are deferred until the API is sealed more tightly.",
+        "ducknng_ncurl() remains raw, while ducknng_parse_body() and ducknng_ncurl_table() opt in to provider-driven table parsing."
+      ],
+      "examples": [
+        "SELECT provider, media_types FROM ducknng_list_codecs();"
+      ]
+    },
+    {
+      "name": "ducknng_parse_body",
+      "kind": "table",
+      "category": "Body Codecs",
+      "signature": "ducknng_parse_body(body, content_type)",
+      "returns": "TABLE(dynamic by provider)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Parse one response/request body BLOB according to its content type.",
+      "notes": [
+        "Supported built-ins include raw, UTF-8 text, JSON, CSV, TSV, Parquet, Arrow IPC stream, and ducknng frame bodies.",
+        "JSON, CSV, TSV, and Parquet delegate to DuckDB readers through a temporary file and then reuse ducknng's Arrow IPC row mapping for the returned table.",
+        "Reader-backed codecs currently fail fast inside service-owned SQL that already holds the runtime init-connection execution gate.",
+        "application/vnd.ducknng.frame returns the same decoded envelope columns as ducknng_decode_frame()."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_parse_body('[{\"a\":1}]'::BLOB, 'application/json');"
+      ]
+    },
+    {
+      "name": "ducknng_ncurl_table",
+      "kind": "table",
+      "category": "HTTP Transport",
+      "signature": "ducknng_ncurl_table(url, method, headers_json, body, timeout_ms, tls_config_id)",
+      "returns": "TABLE(dynamic by response Content-Type)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Perform one HTTP or HTTPS request and parse a successful response body into a DuckDB table using the built-in body codec providers.",
+      "notes": [
+        "HTTP status must be 2xx; use ducknng_ncurl() when you need in-band status, headers, or raw error bodies.",
+        "The response Content-Type selects the provider. Missing or unknown content types fall back to raw BLOB output.",
+        "Reader-backed codecs currently fail fast inside service-owned SQL that already holds the runtime init-connection execution gate.",
+        "This helper is transport-local and does not change the framed RPC method surface."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_ncurl_table('http://127.0.0.1:8080/data.json', 'GET', NULL, NULL, 2000, 0::UBIGINT);"
+      ]
+    },
+    {
       "name": "ducknng_request_raw_aio",
       "kind": "scalar",
       "category": "Async I/O",

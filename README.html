@@ -633,6 +633,8 @@ helpers</li>
 futures, and the first raw unary RPC futures</li>
 <li>a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS
 routing for the synchronous request/RPC/session helper family</li>
+<li>built-in content-type driven body codec helpers for
+raw/text/JSON/CSV/TSV/Parquet/Arrow IPC/frame payloads</li>
 <li>explicit query-session helpers and TLS config handles</li>
 </ul>
 <p><code>ducknng</code> is also intentionally low-level. Long-lived
@@ -664,6 +666,20 @@ but should still be treated as experimental until session ownership is
 bound to a concrete multi-client identity model. WebSocket here means
 NNG’s <code>ws://</code> and <code>wss://</code> transports, not a
 second HTTP-specific RPC surface.</p>
+<p><code>ducknng_ncurl(...)</code> intentionally stays raw: it returns
+status, headers, <code>body BLOB</code>, and best-effort UTF-8
+<code>body_text</code>. When you want nanonext-style
+serialization/deserialization providers, use the opt-in body codec layer
+instead: <code>ducknng_list_codecs()</code> shows the built-ins,
+<code>ducknng_parse_body(body, content_type)</code> parses an existing
+BLOB, and <code>ducknng_ncurl_table(...)</code> fetches a 2xx HTTP/HTTPS
+response and parses it into a table according to the response
+<code>Content-Type</code>. These helpers use DuckDB readers for JSON,
+CSV, TSV, and Parquet, nanoarrow for Arrow IPC stream bytes, and the
+existing frame decoder for <code>application/vnd.ducknng.frame</code>.
+Reader-backed codecs currently run as local helpers and fail fast inside
+service-owned SQL until the broader per-session connection model
+lands.</p>
 <h2 id="getting-started">Getting started</h2>
 <p>Build the extension locally:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">make</span> configure</span>
@@ -733,11 +749,11 @@ more detailed lifetime write-up, see <code>docs/lifetime.md</code>. For
 protocol and transport reference details, see
 <code>docs/protocol.md</code>, <code>docs/manifest.md</code>,
 <code>docs/security.md</code>, <code>docs/registry.md</code>,
-<code>docs/transports.md</code>, <code>docs/http.md</code>, and
-<code>docs/types.md</code>. <code>NEWS.md</code> summarizes notable
-landed changes. TLS already supports both file-backed and in-memory PEM
-material through helpers such as
-<code>ducknng_tls_config_from_files(...)</code>,
+<code>docs/transports.md</code>, <code>docs/http.md</code>,
+<code>docs/codecs.md</code>, and <code>docs/types.md</code>.
+<code>NEWS.md</code> summarizes notable landed changes. TLS already
+supports both file-backed and in-memory PEM material through helpers
+such as <code>ducknng_tls_config_from_files(...)</code>,
 <code>ducknng_tls_config_from_pem(...)</code>, and
 <code>ducknng_self_signed_tls_config(...)</code>.</p>
 <h2 id="function-catalog">Function catalog</h2>
@@ -1038,6 +1054,43 @@ material.</td>
 <td><code>TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)</code></td>
 <td>Perform one HTTP or HTTPS request and return an in-band result
 row.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_ncurl_table</code></td>
+<td>table</td>
+<td><code>url, method, headers_json, body, timeout_ms, tls_config_id</code></td>
+<td><code>TABLE(dynamic by response Content-Type)</code></td>
+<td>Perform one HTTP or HTTPS request and parse a successful response
+body into a DuckDB table using the built-in body codec providers.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="body-codecs">Body Codecs</h2>
+<table>
+<thead>
+<tr class="header">
+<th>name</th>
+<th>kind</th>
+<th>arguments</th>
+<th>returns</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>ducknng_list_codecs</code></td>
+<td>table</td>
+<td></td>
+<td><code>TABLE(provider VARCHAR, media_types VARCHAR, output VARCHAR, notes VARCHAR)</code></td>
+<td>List the built-in body serialization/deserialization providers.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_parse_body</code></td>
+<td>table</td>
+<td><code>body, content_type</code></td>
+<td><code>TABLE(dynamic by provider)</code></td>
+<td>Parse one response/request body BLOB according to its content
+type.</td>
 </tr>
 </tbody>
 </table>
@@ -1360,59 +1413,71 @@ client</h3>
 <span id="cb8-46"><a href="#cb8-46" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                        <span class="co">-- tls_config_id</span></span>
 <span id="cb8-47"><a href="#cb8-47" tabindex="-1"></a>);</span>
 <span id="cb8-48"><a href="#cb8-48" tabindex="-1"></a></span>
-<span id="cb8-49"><a href="#cb8-49" tabindex="-1"></a><span class="co">-- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.</span></span>
-<span id="cb8-50"><a href="#cb8-50" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_open_socket(<span class="st">&#39;req&#39;</span>);</span>
-<span id="cb8-51"><a href="#cb8-51" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_dial_socket(<span class="dv">1</span>, <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
-<span id="cb8-52"><a href="#cb8-52" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_list_sockets();</span>
+<span id="cb8-49"><a href="#cb8-49" tabindex="-1"></a><span class="co">-- Body codec helpers parse content-type-tagged BLOBs into SQL tables.</span></span>
+<span id="cb8-50"><a href="#cb8-50" tabindex="-1"></a><span class="kw">SELECT</span> provider, output</span>
+<span id="cb8-51"><a href="#cb8-51" tabindex="-1"></a><span class="kw">FROM</span> ducknng_list_codecs()</span>
+<span id="cb8-52"><a href="#cb8-52" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> provider;</span>
 <span id="cb8-53"><a href="#cb8-53" tabindex="-1"></a></span>
-<span id="cb8-54"><a href="#cb8-54" tabindex="-1"></a><span class="co">-- Primitive transport layer: send the built-in manifest request frame.</span></span>
-<span id="cb8-55"><a href="#cb8-55" tabindex="-1"></a><span class="co">-- The hex literal here is the current wire-format request for the always-on manifest method.</span></span>
-<span id="cb8-56"><a href="#cb8-56" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
-<span id="cb8-57"><a href="#cb8-57" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request_socket(</span>
-<span id="cb8-58"><a href="#cb8-58" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>,                                        <span class="co">-- socket_id</span></span>
-<span id="cb8-59"><a href="#cb8-59" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
-<span id="cb8-60"><a href="#cb8-60" tabindex="-1"></a>  <span class="dv">1000</span>                                               <span class="co">-- timeout_ms</span></span>
-<span id="cb8-61"><a href="#cb8-61" tabindex="-1"></a>);</span>
-<span id="cb8-62"><a href="#cb8-62" tabindex="-1"></a></span>
-<span id="cb8-63"><a href="#cb8-63" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
-<span id="cb8-64"><a href="#cb8-64" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request(</span>
-<span id="cb8-65"><a href="#cb8-65" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
-<span id="cb8-66"><a href="#cb8-66" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
-<span id="cb8-67"><a href="#cb8-67" tabindex="-1"></a>  <span class="dv">1000</span>,                                              <span class="co">-- timeout_ms</span></span>
-<span id="cb8-68"><a href="#cb8-68" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                         <span class="co">-- tls_config_id</span></span>
-<span id="cb8-69"><a href="#cb8-69" tabindex="-1"></a>);</span>
-<span id="cb8-70"><a href="#cb8-70" tabindex="-1"></a></span>
-<span id="cb8-71"><a href="#cb8-71" tabindex="-1"></a><span class="co">-- Raw scalar forms now mean raw reply frames as BLOBs.</span></span>
-<span id="cb8-72"><a href="#cb8-72" tabindex="-1"></a><span class="kw">SELECT</span> <span class="fu">substr</span>(</span>
-<span id="cb8-73"><a href="#cb8-73" tabindex="-1"></a>  hex(</span>
-<span id="cb8-74"><a href="#cb8-74" tabindex="-1"></a>    ducknng_request_socket_raw(</span>
-<span id="cb8-75"><a href="#cb8-75" tabindex="-1"></a>      <span class="dv">1</span>,                                             <span class="co">-- socket_id</span></span>
-<span id="cb8-76"><a href="#cb8-76" tabindex="-1"></a>      from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
-<span id="cb8-77"><a href="#cb8-77" tabindex="-1"></a>      <span class="dv">1000</span>                                           <span class="co">-- timeout_ms</span></span>
-<span id="cb8-78"><a href="#cb8-78" tabindex="-1"></a>    )</span>
-<span id="cb8-79"><a href="#cb8-79" tabindex="-1"></a>  ),</span>
-<span id="cb8-80"><a href="#cb8-80" tabindex="-1"></a>  <span class="dv">1</span>,</span>
-<span id="cb8-81"><a href="#cb8-81" tabindex="-1"></a>  <span class="dv">28</span></span>
-<span id="cb8-82"><a href="#cb8-82" tabindex="-1"></a>);</span>
-<span id="cb8-83"><a href="#cb8-83" tabindex="-1"></a></span>
-<span id="cb8-84"><a href="#cb8-84" tabindex="-1"></a><span class="co">-- Decode raw manifest and exec replies into envelope fields plus extracted text payload.</span></span>
-<span id="cb8-85"><a href="#cb8-85" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span></span>
-<span id="cb8-86"><a href="#cb8-86" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(ducknng_get_rpc_manifest_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>));</span>
-<span id="cb8-87"><a href="#cb8-87" tabindex="-1"></a></span>
-<span id="cb8-88"><a href="#cb8-88" tabindex="-1"></a><span class="kw">SELECT</span> ok, type_name, name</span>
-<span id="cb8-89"><a href="#cb8-89" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
-<span id="cb8-90"><a href="#cb8-90" tabindex="-1"></a>  ducknng_run_rpc_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
-<span id="cb8-91"><a href="#cb8-91" tabindex="-1"></a>);</span>
-<span id="cb8-92"><a href="#cb8-92" tabindex="-1"></a></span>
-<span id="cb8-93"><a href="#cb8-93" tabindex="-1"></a><span class="co">-- The generic raw request helper can be decoded the same way.</span></span>
-<span id="cb8-94"><a href="#cb8-94" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, payload_text</span>
-<span id="cb8-95"><a href="#cb8-95" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
-<span id="cb8-96"><a href="#cb8-96" tabindex="-1"></a>  ducknng_request_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
-<span id="cb8-97"><a href="#cb8-97" tabindex="-1"></a>);</span>
-<span id="cb8-98"><a href="#cb8-98" tabindex="-1"></a></span>
-<span id="cb8-99"><a href="#cb8-99" tabindex="-1"></a><span class="co">-- Close the client socket handle and stop the demo server.</span></span>
-<span id="cb8-100"><a href="#cb8-100" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_close_socket(<span class="dv">1</span>);</span>
-<span id="cb8-101"><a href="#cb8-101" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
+<span id="cb8-54"><a href="#cb8-54" tabindex="-1"></a><span class="kw">SELECT</span> a, b</span>
+<span id="cb8-55"><a href="#cb8-55" tabindex="-1"></a><span class="kw">FROM</span> ducknng_parse_body(</span>
+<span id="cb8-56"><a href="#cb8-56" tabindex="-1"></a>  <span class="st">&#39;[{&quot;a&quot;:1,&quot;b&quot;:&quot;x&quot;},{&quot;a&quot;:2,&quot;b&quot;:&quot;y&quot;}]&#39;</span>:<span class="ch">:BLOB</span>,</span>
+<span id="cb8-57"><a href="#cb8-57" tabindex="-1"></a>  <span class="st">&#39;application/json; charset=utf-8&#39;</span></span>
+<span id="cb8-58"><a href="#cb8-58" tabindex="-1"></a>)</span>
+<span id="cb8-59"><a href="#cb8-59" tabindex="-1"></a><span class="kw">ORDER</span> <span class="kw">BY</span> a;</span>
+<span id="cb8-60"><a href="#cb8-60" tabindex="-1"></a></span>
+<span id="cb8-61"><a href="#cb8-61" tabindex="-1"></a><span class="co">-- Primitive transport layer: open a req socket handle, dial it, and inspect the registry.</span></span>
+<span id="cb8-62"><a href="#cb8-62" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_open_socket(<span class="st">&#39;req&#39;</span>);</span>
+<span id="cb8-63"><a href="#cb8-63" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_dial_socket(<span class="dv">1</span>, <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>);</span>
+<span id="cb8-64"><a href="#cb8-64" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> ducknng_list_sockets();</span>
+<span id="cb8-65"><a href="#cb8-65" tabindex="-1"></a></span>
+<span id="cb8-66"><a href="#cb8-66" tabindex="-1"></a><span class="co">-- Primitive transport layer: send the built-in manifest request frame.</span></span>
+<span id="cb8-67"><a href="#cb8-67" tabindex="-1"></a><span class="co">-- The hex literal here is the current wire-format request for the always-on manifest method.</span></span>
+<span id="cb8-68"><a href="#cb8-68" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
+<span id="cb8-69"><a href="#cb8-69" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request_socket(</span>
+<span id="cb8-70"><a href="#cb8-70" tabindex="-1"></a>  <span class="dv">1</span>:<span class="ch">:UBIGINT</span>,                                        <span class="co">-- socket_id</span></span>
+<span id="cb8-71"><a href="#cb8-71" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
+<span id="cb8-72"><a href="#cb8-72" tabindex="-1"></a>  <span class="dv">1000</span>                                               <span class="co">-- timeout_ms</span></span>
+<span id="cb8-73"><a href="#cb8-73" tabindex="-1"></a>);</span>
+<span id="cb8-74"><a href="#cb8-74" tabindex="-1"></a></span>
+<span id="cb8-75"><a href="#cb8-75" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
+<span id="cb8-76"><a href="#cb8-76" tabindex="-1"></a><span class="kw">FROM</span> ducknng_request(</span>
+<span id="cb8-77"><a href="#cb8-77" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>,          <span class="co">-- url</span></span>
+<span id="cb8-78"><a href="#cb8-78" tabindex="-1"></a>  from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
+<span id="cb8-79"><a href="#cb8-79" tabindex="-1"></a>  <span class="dv">1000</span>,                                              <span class="co">-- timeout_ms</span></span>
+<span id="cb8-80"><a href="#cb8-80" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                         <span class="co">-- tls_config_id</span></span>
+<span id="cb8-81"><a href="#cb8-81" tabindex="-1"></a>);</span>
+<span id="cb8-82"><a href="#cb8-82" tabindex="-1"></a></span>
+<span id="cb8-83"><a href="#cb8-83" tabindex="-1"></a><span class="co">-- Raw scalar forms now mean raw reply frames as BLOBs.</span></span>
+<span id="cb8-84"><a href="#cb8-84" tabindex="-1"></a><span class="kw">SELECT</span> <span class="fu">substr</span>(</span>
+<span id="cb8-85"><a href="#cb8-85" tabindex="-1"></a>  hex(</span>
+<span id="cb8-86"><a href="#cb8-86" tabindex="-1"></a>    ducknng_request_socket_raw(</span>
+<span id="cb8-87"><a href="#cb8-87" tabindex="-1"></a>      <span class="dv">1</span>,                                             <span class="co">-- socket_id</span></span>
+<span id="cb8-88"><a href="#cb8-88" tabindex="-1"></a>      from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="co">-- manifest request frame</span></span>
+<span id="cb8-89"><a href="#cb8-89" tabindex="-1"></a>      <span class="dv">1000</span>                                           <span class="co">-- timeout_ms</span></span>
+<span id="cb8-90"><a href="#cb8-90" tabindex="-1"></a>    )</span>
+<span id="cb8-91"><a href="#cb8-91" tabindex="-1"></a>  ),</span>
+<span id="cb8-92"><a href="#cb8-92" tabindex="-1"></a>  <span class="dv">1</span>,</span>
+<span id="cb8-93"><a href="#cb8-93" tabindex="-1"></a>  <span class="dv">28</span></span>
+<span id="cb8-94"><a href="#cb8-94" tabindex="-1"></a>);</span>
+<span id="cb8-95"><a href="#cb8-95" tabindex="-1"></a></span>
+<span id="cb8-96"><a href="#cb8-96" tabindex="-1"></a><span class="co">-- Decode raw manifest and exec replies into envelope fields plus extracted text payload.</span></span>
+<span id="cb8-97"><a href="#cb8-97" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, position(<span class="st">&#39;&quot;name&quot;:&quot;exec&quot;&#39;</span> <span class="kw">IN</span> payload_text) <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb8-98"><a href="#cb8-98" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(ducknng_get_rpc_manifest_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>));</span>
+<span id="cb8-99"><a href="#cb8-99" tabindex="-1"></a></span>
+<span id="cb8-100"><a href="#cb8-100" tabindex="-1"></a><span class="kw">SELECT</span> ok, type_name, name</span>
+<span id="cb8-101"><a href="#cb8-101" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
+<span id="cb8-102"><a href="#cb8-102" tabindex="-1"></a>  ducknng_run_rpc_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, <span class="st">&#39;CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)&#39;</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
+<span id="cb8-103"><a href="#cb8-103" tabindex="-1"></a>);</span>
+<span id="cb8-104"><a href="#cb8-104" tabindex="-1"></a></span>
+<span id="cb8-105"><a href="#cb8-105" tabindex="-1"></a><span class="co">-- The generic raw request helper can be decoded the same way.</span></span>
+<span id="cb8-106"><a href="#cb8-106" tabindex="-1"></a><span class="kw">SELECT</span> ok, version, type_name, name, payload_text</span>
+<span id="cb8-107"><a href="#cb8-107" tabindex="-1"></a><span class="kw">FROM</span> ducknng_decode_frame(</span>
+<span id="cb8-108"><a href="#cb8-108" tabindex="-1"></a>  ducknng_request_raw(<span class="st">&#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;</span>, from_hex(<span class="st">&#39;01000000000000000000000000000000000000000000&#39;</span>), <span class="dv">1000</span>, <span class="dv">0</span>:<span class="ch">:UBIGINT</span>)</span>
+<span id="cb8-109"><a href="#cb8-109" tabindex="-1"></a>);</span>
+<span id="cb8-110"><a href="#cb8-110" tabindex="-1"></a></span>
+<span id="cb8-111"><a href="#cb8-111" tabindex="-1"></a><span class="co">-- Close the client socket handle and stop the demo server.</span></span>
+<span id="cb8-112"><a href="#cb8-112" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_close_socket(<span class="dv">1</span>);</span>
+<span id="cb8-113"><a href="#cb8-113" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_client_demo&#39;</span>);</span></code></pre></div>
 <pre><code>┌────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ ducknng_start_server(&#39;sql_client_demo&#39;, &#39;ipc:///tmp/ducknng_sql_client_demo.ipc&#39;, 1, 134217728, 300000, 0) │
 │                                                  boolean                                                   │
@@ -1483,6 +1548,26 @@ client</h3>
 ├─────────┼─────────┼────────────┼─────────┼───────────┤
 │ true    │ true    │ true       │ true    │ true      │
 └─────────┴─────────┴────────────┴─────────┴───────────┘
+┌───────────────┬───────────────────────┐
+│   provider    │        output         │
+│    varchar    │        varchar        │
+├───────────────┼───────────────────────┤
+│ arrow_ipc     │ dynamic table         │
+│ csv           │ dynamic table         │
+│ ducknng_frame │ decoded frame columns │
+│ json          │ dynamic table         │
+│ parquet       │ dynamic table         │
+│ raw           │ body BLOB             │
+│ text          │ body_text VARCHAR     │
+│ tsv           │ dynamic table         │
+└───────────────┴───────────────────────┘
+┌───────┬─────────┐
+│   a   │    b    │
+│ int64 │ varchar │
+├───────┼─────────┤
+│     1 │ x       │
+│     2 │ y       │
+└───────┴─────────┘
 ┌────────────────────────────┐
 │ ducknng_open_socket(&#39;req&#39;) │
 │           uint64           │
@@ -2784,7 +2869,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_25db1067be89ac.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_2ad9e474fb12be.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>

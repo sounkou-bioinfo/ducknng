@@ -59,6 +59,14 @@ This file is generated from `function_catalog/functions.yaml`.
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
 | `ducknng_ncurl` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Perform one HTTP or HTTPS request and return an in-band result row. |
+| `ducknng_ncurl_table` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(dynamic by response Content-Type)` | Perform one HTTP or HTTPS request and parse a successful response body into a DuckDB table using the built-in body codec providers. |
+
+## Body Codecs
+
+| name | kind | arguments | returns | description |
+|---|---|---|---|---|
+| `ducknng_list_codecs` | table |  | `TABLE(provider VARCHAR, media_types VARCHAR, output VARCHAR, notes VARCHAR)` | List the built-in body serialization/deserialization providers. |
+| `ducknng_parse_body` | table | `body, content_type` | `TABLE(dynamic by provider)` | Parse one response/request body BLOB according to its content type. |
 
 ## Async I/O
 
