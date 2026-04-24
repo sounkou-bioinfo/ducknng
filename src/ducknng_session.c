@@ -62,9 +62,17 @@ static int ducknng_session_token_equal(const char *a, const char *b) {
     return diff == 0;
 }
 
-static int ducknng_session_owner_matches(const ducknng_session *session, const char *owner_token) {
-    return session && session->owner_token && owner_token && owner_token[0] &&
-        ducknng_session_token_equal(session->owner_token, owner_token);
+static int ducknng_session_owner_auth(const ducknng_session *session, const char *owner_token,
+    const char *caller_identity) {
+    if (!session || !session->owner_token || !owner_token || !owner_token[0] ||
+        !ducknng_session_token_equal(session->owner_token, owner_token)) {
+        return DUCKNNG_SESSION_AUTH_TOKEN_MISMATCH;
+    }
+    if (session->owner_identity && session->owner_identity[0] &&
+        (!caller_identity || strcmp(session->owner_identity, caller_identity) != 0)) {
+        return DUCKNNG_SESSION_AUTH_IDENTITY_MISMATCH;
+    }
+    return DUCKNNG_SESSION_AUTH_OK;
 }
 
 static ducknng_session *ducknng_service_detach_session_locked(ducknng_service *svc, size_t idx) {
@@ -81,7 +89,7 @@ static ducknng_session *ducknng_service_detach_session_locked(ducknng_service *s
 }
 
 ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_id,
-    const char *owner_token, char **errmsg) {
+    const char *owner_token, const char *owner_identity, char **errmsg) {
     ducknng_session *session = (ducknng_session *)duckdb_malloc(sizeof(*session));
     if (!session) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory allocating session");
@@ -103,6 +111,16 @@ ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_
         duckdb_free(session);
         return NULL;
     }
+    if (owner_identity && owner_identity[0]) {
+        session->owner_identity = ducknng_strdup(owner_identity);
+        if (!session->owner_identity) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying session owner identity");
+            if (result) duckdb_destroy_result(result);
+            if (session->owner_token) duckdb_free(session->owner_token);
+            duckdb_free(session);
+            return NULL;
+        }
+    }
     if (result) {
         session->result = *result;
         memset(result, 0, sizeof(*result));
@@ -113,6 +131,7 @@ ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_
         if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize session mutex");
         if (session->result_open) duckdb_destroy_result(&session->result);
         if (session->owner_token) duckdb_free(session->owner_token);
+        if (session->owner_identity) duckdb_free(session->owner_identity);
         duckdb_free(session);
         return NULL;
     }
@@ -121,6 +140,7 @@ ducknng_session *ducknng_session_create(duckdb_result *result, uint64_t session_
         if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize session condition variable");
         if (session->result_open) duckdb_destroy_result(&session->result);
         if (session->owner_token) duckdb_free(session->owner_token);
+        if (session->owner_identity) duckdb_free(session->owner_identity);
         ducknng_mutex_destroy(&session->mu);
         duckdb_free(session);
         return NULL;
@@ -147,6 +167,10 @@ void ducknng_session_destroy(ducknng_session *session) {
         duckdb_free(session->owner_token);
         session->owner_token = NULL;
     }
+    if (session->owner_identity) {
+        duckdb_free(session->owner_identity);
+        session->owner_identity = NULL;
+    }
     if (session->cv_initialized) {
         ducknng_cond_destroy(&session->cv);
         session->cv_initialized = 0;
@@ -169,7 +193,7 @@ void ducknng_session_release(ducknng_session *session) {
 }
 
 int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result,
-    uint64_t *out_session_id, char **out_owner_token, char **errmsg) {
+    const char *owner_identity, uint64_t *out_session_id, char **out_owner_token, char **errmsg) {
     ducknng_session **new_sessions;
     size_t new_cap;
     ducknng_session *session;
@@ -209,7 +233,7 @@ int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result,
     }
     session_id = svc->next_session_id;
     ducknng_session_generate_owner_token(owner_token);
-    session = ducknng_session_create(result, session_id, owner_token, errmsg);
+    session = ducknng_session_create(result, session_id, owner_token, owner_identity, errmsg);
     if (!session) {
         ducknng_mutex_unlock(&svc->mu);
         return -1;
@@ -233,16 +257,17 @@ int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result,
 }
 
 ducknng_session *ducknng_service_acquire_session(ducknng_service *svc, uint64_t session_id,
-    const char *owner_token, int *out_unauthorized) {
+    const char *owner_token, const char *caller_identity, int *out_unauthorized) {
     size_t i;
     ducknng_session *session = NULL;
-    if (out_unauthorized) *out_unauthorized = 0;
+    if (out_unauthorized) *out_unauthorized = DUCKNNG_SESSION_AUTH_OK;
     if (!svc || session_id == 0) return NULL;
     ducknng_mutex_lock(&svc->mu);
     for (i = 0; i < svc->session_count; i++) {
         if (svc->sessions[i] && svc->sessions[i]->session_id == session_id) {
-            if (!ducknng_session_owner_matches(svc->sessions[i], owner_token)) {
-                if (out_unauthorized) *out_unauthorized = 1;
+            int auth = ducknng_session_owner_auth(svc->sessions[i], owner_token, caller_identity);
+            if (auth != DUCKNNG_SESSION_AUTH_OK) {
+                if (out_unauthorized) *out_unauthorized = auth;
             } else if (ducknng_session_try_acquire(svc->sessions[i])) {
                 session = svc->sessions[i];
             }
@@ -254,16 +279,17 @@ ducknng_session *ducknng_service_acquire_session(ducknng_service *svc, uint64_t 
 }
 
 ducknng_session *ducknng_service_remove_session(ducknng_service *svc, uint64_t session_id,
-    const char *owner_token, int *out_unauthorized) {
+    const char *owner_token, const char *caller_identity, int *out_unauthorized) {
     size_t i;
     ducknng_session *session = NULL;
-    if (out_unauthorized) *out_unauthorized = 0;
+    if (out_unauthorized) *out_unauthorized = DUCKNNG_SESSION_AUTH_OK;
     if (!svc || session_id == 0) return NULL;
     ducknng_mutex_lock(&svc->mu);
     for (i = 0; i < svc->session_count; i++) {
         if (svc->sessions[i] && svc->sessions[i]->session_id == session_id) {
-            if (!ducknng_session_owner_matches(svc->sessions[i], owner_token)) {
-                if (out_unauthorized) *out_unauthorized = 1;
+            int auth = ducknng_session_owner_auth(svc->sessions[i], owner_token, caller_identity);
+            if (auth != DUCKNNG_SESSION_AUTH_OK) {
+                if (out_unauthorized) *out_unauthorized = auth;
             } else {
                 session = ducknng_service_detach_session_locked(svc, i);
             }

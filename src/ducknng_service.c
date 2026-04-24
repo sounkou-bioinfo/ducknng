@@ -8,7 +8,8 @@
 
 DUCKDB_EXTENSION_EXTERN
 
-static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_frame *frame) {
+static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_frame *frame,
+    const char *caller_identity) {
     const ducknng_method_descriptor *method = NULL;
     ducknng_request_context req_ctx;
     ducknng_method_reply reply;
@@ -20,6 +21,10 @@ static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_fra
     if (!svc || !svc->rt || !frame) {
         return ducknng_error_msg(NULL, DUCKNNG_STATUS_INTERNAL,
             "ducknng: missing dispatcher state");
+    }
+    if (ducknng_service_requires_peer_identity(svc) && (!caller_identity || !caller_identity[0])) {
+        return ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
+            "ducknng: mTLS peer identity is required");
     }
     ducknng_service_prune_idle_sessions(svc, ducknng_now_ms());
     if (frame->type == DUCKNNG_RPC_MANIFEST) {
@@ -47,12 +52,13 @@ static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_fra
         return ducknng_error_msg(method->name, DUCKNNG_STATUS_INVALID,
             "ducknng: request payload exceeds method limit");
     }
-    if (method->requires_auth) {
+    if (method->requires_auth && (!caller_identity || !caller_identity[0])) {
         return ducknng_error_msg(method->name, DUCKNNG_STATUS_UNAUTHORIZED,
-            "ducknng: authenticated methods are not implemented yet");
+            "ducknng: method requires verified peer identity");
     }
 
     req_ctx.frame = frame;
+    req_ctx.caller_identity = caller_identity;
     if (method->handler(svc, method, &req_ctx, &reply) != 0 && reply.type != DUCKNNG_RPC_ERROR) {
         ducknng_method_reply_reset(&reply);
         return ducknng_error_msg(method->name, DUCKNNG_STATUS_INTERNAL,
@@ -154,12 +160,20 @@ static void ducknng_rep_ctx_teardown(ducknng_rep_ctx *rc) {
     }
 }
 
-nng_msg *ducknng_handle_request(ducknng_service *svc, nng_msg *req) {
+nng_msg *ducknng_handle_request_with_identity(ducknng_service *svc, nng_msg *req,
+    const char *caller_identity) {
     ducknng_frame frame;
     if (ducknng_decode_request(req, &frame) != 0) {
         return ducknng_error_msg(NULL, DUCKNNG_STATUS_INVALID, "invalid RPC envelope");
     }
-    return ducknng_dispatch_request(svc, &frame);
+    return ducknng_dispatch_request(svc, &frame, caller_identity);
+}
+
+nng_msg *ducknng_handle_request(ducknng_service *svc, nng_msg *req) {
+    char *caller_identity = ducknng_msg_verified_peer_identity(req);
+    nng_msg *reply = ducknng_handle_request_with_identity(svc, req, caller_identity);
+    if (caller_identity) duckdb_free(caller_identity);
+    return reply;
 }
 
 static void *ducknng_rep_worker_main(void *arg) {
@@ -397,6 +411,10 @@ fail:
     }
     if (errmsg && !*errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));
     return -1;
+}
+
+int ducknng_service_requires_peer_identity(const ducknng_service *svc) {
+    return svc && svc->tls_enabled && svc->tls_opts.auth_mode == 2;
 }
 
 int ducknng_service_stop(ducknng_service *svc, char **errmsg) {

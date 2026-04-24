@@ -105,6 +105,8 @@ keep both the returned `session_id` and `session_token`, then close it explicitl
 
 - `ducknng_close_query(...)`
 
+If the session was opened over verified mTLS, the server also records the transport-derived peer identity and requires later `fetch`, `close`, and `cancel` calls to arrive with the same verified identity.
+
 If you need to stop work early, use:
 
 - `ducknng_cancel_query(...)`
@@ -137,7 +139,7 @@ The recent lifetime pass improved internal destruction and ownership correctness
 
 The main remaining lifetime-adjacent sealing blockers are still:
 
-- final decision on whether the current `session_token` bearer capability is the sealed ownership model or whether broader transport/RPC authentication must land first
+- final decision on whether the current `session_token` plus optional mTLS owner-identity model is the sealed ownership model or whether envelope-level RPC authentication must land later
 - any remaining borrowed-pointer or concurrent-handle edge cases that should be eliminated before calling the API sealed
 - clear documentation of which resources are user-managed and which are statement-local/internal
 

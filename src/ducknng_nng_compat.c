@@ -83,6 +83,72 @@ static int ducknng_tls_auth_mode_map(int auth_mode, nng_tls_auth_mode *out) {
     }
 }
 
+static char *ducknng_tls_identity_from_value(const char *kind, const char *value) {
+    static const char prefix[] = "tls:";
+    size_t kind_len;
+    size_t value_len;
+    size_t need;
+    char *out;
+    if (!kind || !kind[0] || !value || !value[0]) return NULL;
+    kind_len = strlen(kind);
+    value_len = strlen(value);
+    need = sizeof(prefix) - 1 + kind_len + 1 + value_len + 1;
+    out = (char *)duckdb_malloc(need);
+    if (!out) return NULL;
+    memcpy(out, prefix, sizeof(prefix) - 1);
+    memcpy(out + sizeof(prefix) - 1, kind, kind_len);
+    out[sizeof(prefix) - 1 + kind_len] = ':';
+    memcpy(out + sizeof(prefix) + kind_len, value, value_len + 1);
+    return out;
+}
+
+static char *ducknng_tls_identity_from_alt_names(char **alt_names) {
+    size_t i;
+    if (!alt_names) return NULL;
+    for (i = 0; alt_names[i]; i++) {
+        if (alt_names[i][0]) return ducknng_tls_identity_from_value("san", alt_names[i]);
+    }
+    return NULL;
+}
+
+static void ducknng_tls_alt_names_free(char **alt_names) {
+    size_t i;
+    if (!alt_names) return;
+    for (i = 0; alt_names[i]; i++) nng_strfree(alt_names[i]);
+    free(alt_names);
+}
+
+static int ducknng_pipe_tls_verified(nng_pipe pipe, bool *out_verified) {
+    bool verified = false;
+    int rv;
+    if (out_verified) *out_verified = false;
+    if (pipe.id <= 0) return NNG_EINVAL;
+    rv = nng_pipe_get_bool(pipe, NNG_OPT_TLS_VERIFIED, &verified);
+    if (rv != 0) return rv;
+    if (out_verified) *out_verified = verified;
+    return 0;
+}
+
+char *ducknng_msg_verified_peer_identity(nng_msg *msg) {
+    nng_pipe pipe;
+    bool verified = false;
+    char **alt_names = NULL;
+    char *cn = NULL;
+    char *identity = NULL;
+    if (!msg) return NULL;
+    pipe = nng_msg_get_pipe(msg);
+    if (ducknng_pipe_tls_verified(pipe, &verified) != 0 || !verified) return NULL;
+    if (nng_pipe_get_ptr(pipe, NNG_OPT_TLS_PEER_ALT_NAMES, (void **)&alt_names) == 0 && alt_names) {
+        identity = ducknng_tls_identity_from_alt_names(alt_names);
+    }
+    ducknng_tls_alt_names_free(alt_names);
+    if (!identity && nng_pipe_get_string(pipe, NNG_OPT_TLS_PEER_CN, &cn) == 0 && cn && cn[0]) {
+        identity = ducknng_tls_identity_from_value("cn", cn);
+    }
+    if (cn) nng_strfree(cn);
+    return identity;
+}
+
 static int ducknng_tls_config_build(nng_tls_config **out, nng_tls_mode mode, const char *url,
     const ducknng_tls_opts *opts) {
     nng_tls_config *cfg = NULL;

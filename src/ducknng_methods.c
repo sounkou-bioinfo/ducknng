@@ -30,8 +30,17 @@ static int ducknng_method_manifest_handler(ducknng_service *svc,
             "ducknng: manifest request does not accept a payload");
         return -1;
     }
-    json = ducknng_method_registry_manifest_json(&svc->rt->registry, "ducknng", "0.1.0",
-        DUCKNNG_WIRE_VERSION, &errmsg);
+    {
+        ducknng_manifest_security security;
+        memset(&security, 0, sizeof(security));
+        security.tls_enabled = svc->tls_enabled;
+        security.tls_auth_mode = svc->tls_opts.auth_mode;
+        security.peer_identity_required = ducknng_service_requires_peer_identity(svc);
+        security.sessions_bind_peer_identity_when_present = 1;
+        security.peer_identity_format = "tls:san:<value>|tls:cn:<common-name>";
+        json = ducknng_method_registry_manifest_json(&svc->rt->registry, "ducknng", "0.1.0",
+            DUCKNNG_WIRE_VERSION, &security, &errmsg);
+    }
     if (!json) {
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INTERNAL,
             errmsg ? errmsg : "ducknng: failed to generate manifest json");
@@ -118,6 +127,12 @@ static int ducknng_json_reply(ducknng_method_reply *reply, const char *method_na
         flags | DUCKNNG_RPC_FLAG_PAYLOAD_JSON, payload, payload_len) ? 0 : -1;
 }
 
+static const char *ducknng_session_auth_error_message(int auth) {
+    return auth == DUCKNNG_SESSION_AUTH_IDENTITY_MISMATCH ?
+        "ducknng: session owner identity mismatch" :
+        "ducknng: session owner token mismatch";
+}
+
 static int ducknng_method_query_open_handler(ducknng_service *svc,
     const ducknng_method_descriptor *method,
     const ducknng_request_context *req,
@@ -164,7 +179,8 @@ static int ducknng_method_query_open_handler(ducknng_service *svc,
     }
     ducknng_mutex_unlock(&svc->mu);
     {
-        int add_session_rc = ducknng_service_add_session(svc, &result, &session_id, &owner_token, &errmsg);
+        int add_session_rc = ducknng_service_add_session(svc, &result, req->caller_identity,
+            &session_id, &owner_token, &errmsg);
         if (add_session_rc != 0) {
             ducknng_query_open_request_destroy(&open_req);
             ducknng_method_reply_set_error(reply,
@@ -178,7 +194,8 @@ static int ducknng_method_query_open_handler(ducknng_service *svc,
     snprintf(json, sizeof(json), "{\"session_id\":%llu,\"session_token\":\"%s\",\"state\":\"open\",\"next_method\":\"fetch\"}",
         (unsigned long long)session_id, owner_token ? owner_token : "");
     if (ducknng_json_reply(reply, "query_open", DUCKNNG_RPC_FLAG_SESSION_OPEN, json) != 0) {
-        ducknng_session *session = ducknng_service_remove_session(svc, session_id, owner_token, NULL);
+        ducknng_session *session = ducknng_service_remove_session(svc, session_id, owner_token,
+            req->caller_identity, NULL);
         if (session) ducknng_session_destroy(session);
         if (owner_token) duckdb_free(owner_token);
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INTERNAL, "ducknng: failed to build query_open reply");
@@ -220,11 +237,12 @@ static int ducknng_method_fetch_handler(ducknng_service *svc,
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INVALID, "ducknng: fetch requires JSON payload with session_id and session_token");
         return -1;
     }
-    session = ducknng_service_acquire_session(svc, session_id, owner_token, &unauthorized);
+    session = ducknng_service_acquire_session(svc, session_id, owner_token,
+        req->caller_identity, &unauthorized);
     duckdb_free(owner_token);
     if (!session) {
         ducknng_method_reply_set_error(reply, unauthorized ? DUCKNNG_STATUS_UNAUTHORIZED : DUCKNNG_STATUS_NOT_FOUND,
-            unauthorized ? "ducknng: session owner token mismatch" : "ducknng: session not found");
+            unauthorized ? ducknng_session_auth_error_message(unauthorized) : "ducknng: session not found");
         return -1;
     }
     ducknng_mutex_lock(&session->mu);
@@ -281,11 +299,12 @@ static int ducknng_method_close_handler(ducknng_service *svc,
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INVALID, "ducknng: close requires JSON payload with session_id and session_token");
         return -1;
     }
-    session = ducknng_service_remove_session(svc, session_id, owner_token, &unauthorized);
+    session = ducknng_service_remove_session(svc, session_id, owner_token,
+        req->caller_identity, &unauthorized);
     duckdb_free(owner_token);
     if (!session) {
         ducknng_method_reply_set_error(reply, unauthorized ? DUCKNNG_STATUS_UNAUTHORIZED : DUCKNNG_STATUS_NOT_FOUND,
-            unauthorized ? "ducknng: session owner token mismatch" : "ducknng: session not found");
+            unauthorized ? ducknng_session_auth_error_message(unauthorized) : "ducknng: session not found");
         return -1;
     }
     ducknng_session_destroy(session);
@@ -316,11 +335,12 @@ static int ducknng_method_cancel_handler(ducknng_service *svc,
         ducknng_method_reply_set_error(reply, DUCKNNG_STATUS_INVALID, "ducknng: cancel requires JSON payload with session_id and session_token");
         return -1;
     }
-    session = ducknng_service_remove_session(svc, session_id, owner_token, &unauthorized);
+    session = ducknng_service_remove_session(svc, session_id, owner_token,
+        req->caller_identity, &unauthorized);
     duckdb_free(owner_token);
     if (!session) {
         ducknng_method_reply_set_error(reply, unauthorized ? DUCKNNG_STATUS_UNAUTHORIZED : DUCKNNG_STATUS_NOT_FOUND,
-            unauthorized ? "ducknng: session owner token mismatch" : "ducknng: session not found");
+            unauthorized ? ducknng_session_auth_error_message(unauthorized) : "ducknng: session not found");
         return -1;
     }
     if (session->mu_initialized) {

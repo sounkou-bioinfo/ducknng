@@ -3,6 +3,12 @@
 
 require ducknng
 
+query IT
+SELECT ok, error
+FROM ducknng_decode_frame(NULL::BLOB)
+----
+0	ducknng: frame blob must not be NULL or empty
+
 statement error
 SELECT ducknng_start_server('bad_contexts', 'ipc:///tmp/ducknng_bad_contexts.ipc', 0, 134217728, 300000, 0)
 ----
@@ -75,6 +81,13 @@ SELECT name, listen, contexts, running, sessions
 FROM ducknng_list_servers()
 ----
 sql0	ipc:///tmp/ducknng_phase1_sql0.ipc	1	true	0
+
+query III
+SELECT tls_enabled, tls_auth_mode, peer_identity_required
+FROM ducknng_list_servers()
+WHERE name = 'sql0'
+----
+false	0	false
 
 query TI
 SELECT name, requires_auth

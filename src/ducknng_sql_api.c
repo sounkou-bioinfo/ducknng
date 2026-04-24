@@ -31,6 +31,9 @@ typedef struct {
     int32_t contexts;
     bool running;
     uint64_t sessions;
+    bool tls_enabled;
+    int32_t tls_auth_mode;
+    bool peer_identity_required;
 } ducknng_server_row;
 
 typedef struct {
@@ -848,8 +851,8 @@ static int ducknng_start_service_with_tls_opts(ducknng_sql_context *ctx, const c
         if (errmsg) *errmsg = ducknng_strdup("ducknng: recv_max_bytes and session_idle_ms must be > 0");
         return -1;
     }
-    if (tls_opts && tls_opts->auth_mode < 0) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: tls_auth_mode must be >= 0");
+    if (tls_opts && (tls_opts->auth_mode < 0 || tls_opts->auth_mode > 2)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: tls_auth_mode must be 0, 1, or 2");
         return -1;
     }
     svc = ducknng_service_create(ctx->rt, name, listen, contexts, (size_t)recv_max, idle_ms,
@@ -1023,7 +1026,7 @@ static void ducknng_tls_config_from_files_scalar(duckdb_function_info info, duck
         char *password = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 2), row);
         int auth_mode = arg_int32(duckdb_data_chunk_get_vector(input, 3), row, 0);
         char *errmsg = NULL;
-        if (!ctx || !ctx->rt || auth_mode < 0 || ((!cert_key_file || !cert_key_file[0]) && (!ca_file || !ca_file[0]) && auth_mode == 0)) {
+        if (!ctx || !ctx->rt || auth_mode < 0 || auth_mode > 2 || ((!cert_key_file || !cert_key_file[0]) && (!ca_file || !ca_file[0]) && auth_mode == 0)) {
             if (cert_key_file) duckdb_free(cert_key_file);
             if (ca_file) duckdb_free(ca_file);
             if (password) duckdb_free(password);
@@ -1071,7 +1074,7 @@ static void ducknng_tls_config_from_pem_scalar(duckdb_function_info info, duckdb
         char *password = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 3), row);
         int auth_mode = arg_int32(duckdb_data_chunk_get_vector(input, 4), row, 0);
         char *errmsg = NULL;
-        if (!ctx || !ctx->rt || auth_mode < 0 || ((!cert_pem || !cert_pem[0]) && (!key_pem || !key_pem[0]) && (!ca_pem || !ca_pem[0]) && auth_mode == 0)) {
+        if (!ctx || !ctx->rt || auth_mode < 0 || auth_mode > 2 || ((!cert_pem || !cert_pem[0]) && (!key_pem || !key_pem[0]) && (!ca_pem || !ca_pem[0]) && auth_mode == 0)) {
             if (cert_pem) duckdb_free(cert_pem);
             if (key_pem) duckdb_free(key_pem);
             if (ca_pem) duckdb_free(ca_pem);
@@ -1120,7 +1123,7 @@ static void ducknng_self_signed_tls_config_scalar(duckdb_function_info info, duc
         int32_t valid_days = arg_int32(duckdb_data_chunk_get_vector(input, 1), row, 365);
         int auth_mode = arg_int32(duckdb_data_chunk_get_vector(input, 2), row, 0);
         char *cert_pem = NULL, *key_pem = NULL, *ca_pem = NULL, *errmsg = NULL;
-        if (!ctx || !ctx->rt || !cn || auth_mode < 0) {
+        if (!ctx || !ctx->rt || !cn || auth_mode < 0 || auth_mode > 2) {
             if (cn) duckdb_free(cn);
             duckdb_scalar_function_set_error(info, "ducknng: invalid self-signed tls config arguments");
             return;
@@ -4438,7 +4441,11 @@ static void ducknng_decode_frame_bind(duckdb_bind_info info) {
     }
     memset(bind, 0, sizeof(*bind));
     frame_val = duckdb_bind_get_parameter(info, 0);
-    blob = duckdb_get_blob(frame_val);
+    if (duckdb_is_null_value(frame_val)) {
+        memset(&blob, 0, sizeof(blob));
+    } else {
+        blob = duckdb_get_blob(frame_val);
+    }
     duckdb_destroy_value(&frame_val);
     if (!blob.data || blob.size == 0) {
         bind->ok = false;
@@ -5581,6 +5588,9 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
             bind->rows[i].contexts = svc ? svc->ncontexts : 0;
             bind->rows[i].running = svc ? (bool)svc->running : false;
             bind->rows[i].sessions = svc ? (uint64_t)atomic_load_explicit(&svc->session_count_visible, memory_order_acquire) : 0;
+            bind->rows[i].tls_enabled = svc ? (bool)svc->tls_enabled : false;
+            bind->rows[i].tls_auth_mode = svc ? svc->tls_opts.auth_mode : 0;
+            bind->rows[i].peer_identity_required = svc ? (bool)ducknng_service_requires_peer_identity(svc) : false;
         }
     }
     ducknng_mutex_unlock(&ctx->rt->mu);
@@ -5600,6 +5610,15 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
     duckdb_destroy_logical_type(&type);
     type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
     duckdb_bind_add_result_column(info, "sessions", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    duckdb_bind_add_result_column(info, "tls_enabled", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
+    duckdb_bind_add_result_column(info, "tls_auth_mode", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    duckdb_bind_add_result_column(info, "peer_identity_required", type);
     duckdb_destroy_logical_type(&type);
 
     duckdb_bind_set_bind_data(info, bind, destroy_servers_bind_data);
@@ -5631,10 +5650,16 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     duckdb_vector vec_contexts;
     duckdb_vector vec_running;
     duckdb_vector vec_sessions;
+    duckdb_vector vec_tls_enabled;
+    duckdb_vector vec_tls_auth_mode;
+    duckdb_vector vec_peer_identity_required;
     uint64_t *service_ids;
     int32_t *contexts;
     bool *running;
     uint64_t *sessions;
+    bool *tls_enabled;
+    int32_t *tls_auth_mode;
+    bool *peer_identity_required;
     if (!init || !init->bind || init->offset >= init->bind->row_count) {
         duckdb_data_chunk_set_size(output, 0);
         return;
@@ -5649,11 +5674,17 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     vec_contexts = duckdb_data_chunk_get_vector(output, 3);
     vec_running = duckdb_data_chunk_get_vector(output, 4);
     vec_sessions = duckdb_data_chunk_get_vector(output, 5);
+    vec_tls_enabled = duckdb_data_chunk_get_vector(output, 6);
+    vec_tls_auth_mode = duckdb_data_chunk_get_vector(output, 7);
+    vec_peer_identity_required = duckdb_data_chunk_get_vector(output, 8);
 
     service_ids = (uint64_t *)duckdb_vector_get_data(vec_service_id);
     contexts = (int32_t *)duckdb_vector_get_data(vec_contexts);
     running = (bool *)duckdb_vector_get_data(vec_running);
     sessions = (uint64_t *)duckdb_vector_get_data(vec_sessions);
+    tls_enabled = (bool *)duckdb_vector_get_data(vec_tls_enabled);
+    tls_auth_mode = (int32_t *)duckdb_vector_get_data(vec_tls_auth_mode);
+    peer_identity_required = (bool *)duckdb_vector_get_data(vec_peer_identity_required);
 
     for (i = 0; i < chunk_size; i++) {
         ducknng_server_row *row = &bind->rows[init->offset + i];
@@ -5661,6 +5692,9 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
         contexts[i] = row->contexts;
         running[i] = row->running;
         sessions[i] = row->sessions;
+        tls_enabled[i] = row->tls_enabled;
+        tls_auth_mode[i] = row->tls_auth_mode;
+        peer_identity_required[i] = row->peer_identity_required;
         if (row->name) duckdb_vector_assign_string_element(vec_name, i, row->name);
         else set_null(vec_name, i);
         if (row->listen) duckdb_vector_assign_string_element(vec_listen, i, row->listen);

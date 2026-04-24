@@ -59,7 +59,7 @@ ducknng_start_http_server(name, listen, recv_max_bytes, session_idle_ms, tls_con
 
 The arguments intentionally stay close to `ducknng_start_server(...)`.
 
-`name` is the runtime service name. `listen` is a full HTTP or HTTPS endpoint URL such as `http://127.0.0.1:8080/_ducknng` or `https://127.0.0.1:8443/_ducknng`. For the HTTP adapter, the path component is semantically meaningful: it is the RPC mount path. `recv_max_bytes`, `session_idle_ms`, and `tls_config_id` retain their current meanings. `tls_config_id = 0::UBIGINT` means plaintext for `http://`. HTTPS listeners require an explicit TLS handle because the server needs certificate material to terminate TLS correctly.
+`name` is the runtime service name. `listen` is a full HTTP or HTTPS endpoint URL such as `http://127.0.0.1:8080/_ducknng` or `https://127.0.0.1:8443/_ducknng`. For the HTTP adapter, the path component is semantically meaningful: it is the RPC mount path. `recv_max_bytes`, `session_idle_ms`, and `tls_config_id` retain their current meanings. `tls_config_id = 0::UBIGINT` means plaintext for `http://`. HTTPS listeners require an explicit TLS handle because the server needs certificate material to terminate TLS correctly. If that TLS handle uses authentication mode `2`, the HTTPS server requires a verified client certificate and passes the derived `tls:san:<value>` or `tls:cn:<common-name>` caller identity into the same dispatcher path used by NNG TLS transports.
 
 The matching stop and introspection path remains generic rather than adding HTTP-specific variants. `ducknng_stop_server(name)` stops a named service regardless of transport family, and `ducknng_list_servers()` reports the currently registered services without minting transport-specific lifecycle names. That keeps the public surface compact.
 
@@ -124,7 +124,7 @@ This means Arrow record batches remain Arrow record batches. They do not become 
 
 The HTTP adapter inherits the same trust model and ownership rules described in `docs/security.md`. It does not introduce a second authentication model. HTTPS uses the same TLS handle model already established for the NNG transport direction, and session ownership remains a protocol-level concern rather than a carrier-local shortcut.
 
-A successful HTTPS deployment therefore still needs deliberate TLS configuration. Session ownership is proven with the same `session_token` bearer capability used over NNG, and HTTPS protects that token from network observers; it does not turn the HTTP adapter into a separate authentication system.
+A successful HTTPS deployment therefore still needs deliberate TLS configuration. Session ownership is proven with the same `session_token` bearer capability used over NNG, and HTTPS protects that token from network observers. When HTTPS mTLS is enabled with authentication mode `2`, the adapter also requires a verified peer certificate, derives the caller identity from the first available SAN or, if no SAN is available, the certificate common name, and binds query sessions opened by that caller to the same identity in addition to the bearer token. This keeps HTTPS as a carrier for the frame protocol while still allowing transport-level authorization.
 
 ## Deferred items
 

@@ -277,7 +277,8 @@ static int append_json_string(char **buf, size_t *len, size_t *cap, const char *
 }
 
 char *ducknng_method_registry_manifest_json(const ducknng_method_registry *registry,
-    const char *server_name, const char *server_version, int protocol_version, char **errmsg) {
+    const char *server_name, const char *server_version, int protocol_version,
+    const ducknng_manifest_security *security, char **errmsg) {
     char *buf = NULL;
     size_t len = 0;
     size_t cap = 0;
@@ -294,6 +295,21 @@ char *ducknng_method_registry_manifest_json(const ducknng_method_registry *regis
     if (!append_text(&buf, &len, &cap, ",\"protocol_version\":")) goto oom;
     snprintf(numbuf, sizeof(numbuf), "%d", protocol_version);
     if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
+    if (security) {
+        if (!append_text(&buf, &len, &cap, ",\"security\":{\"tls_enabled\":")) goto oom;
+        if (!append_text(&buf, &len, &cap, security->tls_enabled ? "true" : "false")) goto oom;
+        snprintf(numbuf, sizeof(numbuf), ",\"tls_auth_mode\":%d", security->tls_auth_mode);
+        if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
+        if (!append_text(&buf, &len, &cap, ",\"peer_identity_required\":")) goto oom;
+        if (!append_text(&buf, &len, &cap, security->peer_identity_required ? "true" : "false")) goto oom;
+        if (!append_text(&buf, &len, &cap, ",\"peer_identity_format\":")) goto oom;
+        if (!append_json_string(&buf, &len, &cap,
+                security->peer_identity_format ? security->peer_identity_format : "tls:san:<value>|tls:cn:<common-name>")) goto oom;
+        if (!append_text(&buf, &len, &cap, ",\"sessions_bind_peer_identity_when_present\":")) goto oom;
+        if (!append_text(&buf, &len, &cap,
+                security->sessions_bind_peer_identity_when_present ? "true" : "false")) goto oom;
+        if (!append_text(&buf, &len, &cap, "}")) goto oom;
+    }
     if (!append_text(&buf, &len, &cap, "},\"methods\":[")) goto oom;
     for (i = 0; i < registry->method_count; i++) {
         const ducknng_method_descriptor *m = registry->methods[i];

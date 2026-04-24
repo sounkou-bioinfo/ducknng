@@ -25,7 +25,7 @@ That is enough for serious use and interop work, but it is not yet enough to cal
 
 ### 1. Session execution isolation and ownership policy review
 
-The previous bare-`session_id` ownership blocker is addressed by the current query-family bearer token model: `query_open` returns `session_token`, and `fetch`, `close`, and `cancel` must present it with the session id. Before sealing, the remaining session question is whether that bearer-token model is the stable public owner contract or whether a broader transport-derived or RPC-authenticated identity layer must land first.
+The previous bare-`session_id` ownership blocker is addressed by the current query-family bearer token model: `query_open` returns `session_token`, and `fetch`, `close`, and `cancel` must present it with the session id. Transport-derived mTLS identity has also landed for TLS-authenticated services, and sessions opened with a verified peer identity are bound to that identity in addition to the token. Before sealing, the remaining session question is whether this bearer-token plus optional mTLS owner-identity model is the stable public owner contract or whether an envelope-level RPC authentication layer is still required.
 
 The deeper remaining session blocker is execution isolation. Service-owned SQL is still serialized through the runtime init connection. That avoids concurrent connection misuse, but it does not yet provide isolated per-session DuckDB state. Before declaring multi-client session semantics sealed, decide whether per-session or per-request DuckDB connections with locked-down configuration are required for the stable surface.
 
@@ -84,6 +84,7 @@ These items were worth resolving before the API hardens further and should stay 
 - the README and `docs/lifetime.md` now make the low-level manual-lifecycle contract explicit instead of implying a nanonext-style GC/finalizer model that DuckDB SQL does not actually provide for user-visible handles
 - the unary Arrow row path now includes `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `LIST`, and `STRUCT` coverage with SQL-visible regression tests
 - query sessions now bind ownership to an explicit `session_token` bearer capability instead of treating `session_id` as a capability
+- TLS-authenticated services now attach verified mTLS peer identity to requests and bind sessions to that identity when present
 
 ## Not sealing blockers by themselves
 

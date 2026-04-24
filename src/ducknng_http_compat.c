@@ -4,6 +4,7 @@
 #include "ducknng_util.h"
 #include <ctype.h>
 #include <nng/supplemental/http/http.h>
+#include "../third_party/nng/src/core/defs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@ DUCKDB_EXTENSION_EXTERN
 
 /* Vendored NNG internal helpers kept isolated in the HTTP compat layer. */
 extern char *nni_http_res_headers(nng_http_res *res);
+extern int nni_http_conn_getopt(nng_http_conn *conn, const char *name, void *buf, size_t *szp, nni_type type);
 extern void nni_strfree(char *s);
 
 static int ducknng_http_tls_requested(const ducknng_tls_opts *opts) {
@@ -33,6 +35,64 @@ static int ducknng_http_tls_auth_mode_map(int auth_mode, nng_tls_auth_mode *out)
     case 2: *out = NNG_TLS_AUTH_MODE_REQUIRED; return 0;
     default: return NNG_EINVAL;
     }
+}
+
+static char *ducknng_http_tls_identity_from_value(const char *kind, const char *value) {
+    static const char prefix[] = "tls:";
+    size_t kind_len;
+    size_t value_len;
+    size_t need;
+    char *out;
+    if (!kind || !kind[0] || !value || !value[0]) return NULL;
+    kind_len = strlen(kind);
+    value_len = strlen(value);
+    need = sizeof(prefix) - 1 + kind_len + 1 + value_len + 1;
+    out = (char *)duckdb_malloc(need);
+    if (!out) return NULL;
+    memcpy(out, prefix, sizeof(prefix) - 1);
+    memcpy(out + sizeof(prefix) - 1, kind, kind_len);
+    out[sizeof(prefix) - 1 + kind_len] = ':';
+    memcpy(out + sizeof(prefix) + kind_len, value, value_len + 1);
+    return out;
+}
+
+static char *ducknng_http_tls_identity_from_alt_names(char **alt_names) {
+    size_t i;
+    if (!alt_names) return NULL;
+    for (i = 0; alt_names[i]; i++) {
+        if (alt_names[i][0]) return ducknng_http_tls_identity_from_value("san", alt_names[i]);
+    }
+    return NULL;
+}
+
+static void ducknng_http_tls_alt_names_free(char **alt_names) {
+    size_t i;
+    if (!alt_names) return;
+    for (i = 0; alt_names[i]; i++) nng_strfree(alt_names[i]);
+    free(alt_names);
+}
+
+static char *ducknng_http_conn_verified_peer_identity(nng_http_conn *conn) {
+    bool verified = false;
+    char **alt_names = NULL;
+    char *cn = NULL;
+    char *identity = NULL;
+    if (!conn) return NULL;
+    if (nni_http_conn_getopt(conn, NNG_OPT_TLS_VERIFIED, &verified, NULL,
+            NNI_TYPE_BOOL) != 0 || !verified) {
+        return NULL;
+    }
+    if (nni_http_conn_getopt(conn, NNG_OPT_TLS_PEER_ALT_NAMES, &alt_names, NULL,
+            NNI_TYPE_POINTER) == 0 && alt_names) {
+        identity = ducknng_http_tls_identity_from_alt_names(alt_names);
+    }
+    ducknng_http_tls_alt_names_free(alt_names);
+    if (!identity && nni_http_conn_getopt(conn, NNG_OPT_TLS_PEER_CN, &cn, NULL,
+            NNI_TYPE_STRING) == 0 && cn && cn[0]) {
+        identity = ducknng_http_tls_identity_from_value("cn", cn);
+    }
+    if (cn) nng_strfree(cn);
+    return identity;
 }
 
 static int ducknng_http_tls_config_build(nng_tls_config **out, nng_tls_mode mode,
@@ -667,6 +727,7 @@ static void ducknng_http_finish_response(nng_aio *aio, nng_http_res *res, int rv
 static void ducknng_http_rpc_handler(nng_aio *aio) {
     nng_http_req *req;
     nng_http_handler *handler;
+    nng_http_conn *conn;
     ducknng_http_server_state *state;
     const char *content_type;
     void *body = NULL;
@@ -674,6 +735,7 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
     nng_msg *req_msg = NULL;
     nng_msg *reply_msg = NULL;
     nng_http_res *res = NULL;
+    char *caller_identity = NULL;
     ducknng_frame frame;
     int rv = 0;
     int stopping = 0;
@@ -681,6 +743,7 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
     if (!aio) return;
     req = (nng_http_req *)nng_aio_get_input(aio, 0);
     handler = (nng_http_handler *)nng_aio_get_input(aio, 1);
+    conn = (nng_http_conn *)nng_aio_get_input(aio, 2);
     state = handler ? (ducknng_http_server_state *)nng_http_handler_get_data(handler) : NULL;
     if (!req || !state || !state->svc) {
         rv = ducknng_http_alloc_text_response(&res, 500, "ducknng: missing HTTP server state");
@@ -723,7 +786,9 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
         return;
     }
     if (body_len) memcpy(nng_msg_body(req_msg), body, body_len);
-    reply_msg = ducknng_handle_request(state->svc, req_msg);
+    caller_identity = ducknng_http_conn_verified_peer_identity(conn);
+    reply_msg = ducknng_handle_request_with_identity(state->svc, req_msg, caller_identity);
+    if (caller_identity) duckdb_free(caller_identity);
     nng_msg_free(req_msg);
     req_msg = NULL;
     if (!reply_msg) {

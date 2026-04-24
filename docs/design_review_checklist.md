@@ -95,8 +95,9 @@ This checklist tracks the implementation status of the main architecture, transp
     - server-side `query_open` / `fetch` / `close` / `cancel` methods are registered
     - SQL-visible wrappers now exist as `ducknng_open_query()`, `ducknng_fetch_query()`, `ducknng_close_query()`, and `ducknng_cancel_query()`
     - query sessions now carry a generated `session_token` bearer capability; `fetch`, `close`, and `cancel` reject token mismatches instead of accepting bare `session_id`
+    - mTLS-authenticated transports now attach verified peer identity to requests and bind sessions to that identity when present
   - Remaining work:
-    - decide whether the bearer-token model is the sealed identity contract or whether transport/RPC-level authentication must land first
+    - decide whether the bearer-token plus optional mTLS identity model is the sealed identity contract or whether envelope-level RPC authentication must land later
     - replace shared init-connection session execution with isolated per-session or per-request DuckDB execution resources if multi-client state isolation is part of the sealed contract
     - add a SQL-side Arrow batch decoder or higher-level row-decoding helper for session fetch payloads
     - decide whether `ducknng_query_rpc()` should later be rebuilt as a convenience wrapper over the session family
@@ -125,7 +126,7 @@ This checklist tracks the implementation status of the main architecture, transp
 ## Current blockers to report upstream
 
 1. **Current DuckDB-facing Arrow work stays on manual nanoarrow mappings.** The implementation no longer compiles unstable or deprecated DuckDB Arrow entrypoints, so any future Arrow re-plumb must wait for a non-deprecated seam or be abandoned in favor of maintaining the explicit mappings.
-2. **Session-family work is only partially complete.** Query sessions now have an explicit `session_token` bearer capability, so the bare-`session_id` ownership hole is closed. Remaining work is deciding whether that bearer-token model is the sealed identity contract, isolating DuckDB execution state per session/request if required, and adding better SQL-side decoding for fetched Arrow payloads.
+2. **Session-family work is only partially complete.** Query sessions now have an explicit `session_token` bearer capability and optional mTLS owner-identity binding, so the bare-`session_id` ownership hole is closed. Remaining work is deciding whether that model is the sealed identity contract, isolating DuckDB execution state per session/request if required, and adding better SQL-side decoding for fetched Arrow payloads.
 3. **HTTP / HTTPS transport adapters are landed synchronously but the async scope is still open.** The transport-family boundary is explicit in docs and code, `ducknng_start_http_server(...)` is implemented, and the synchronous request/RPC/session helpers route over HTTP and HTTPS, but any HTTP aio helpers still need an explicit scope decision.
 4. **Codec work should not be built on undocumented mapping behavior.** If the project continues using the current manual nanoarrow route, codec decisions should sit on top of explicit tested mappings rather than implicit assumptions about a future Arrow helper path.
 5. **Generic client socket TLS dialing is implemented, but the supported transport matrix still needs durable documentation.** Listener-side TLS, one-shot req/rep TLS, and socket-handle dialing now share the same TLS-config handle model, including `wss://`, but the final sealed examples/docs set should stay explicit about what is supported where.

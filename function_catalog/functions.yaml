@@ -53,11 +53,14 @@
       "kind": "table",
       "category": "Introspection",
       "signature": "ducknng_list_servers()",
-      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)",
+      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List registered ducknng services.",
-      "notes": [],
+      "notes": [
+        "tls_auth_mode follows the TLS config handle: 0 = no peer authentication, 1 = optional peer verification, 2 = required peer verification/mTLS.",
+        "peer_identity_required is true when the service requires a verified transport-derived peer identity before dispatch."
+      ],
       "examples": [
         "SELECT * FROM ducknng_list_servers();"
       ]
@@ -320,7 +323,8 @@
       "description": "Generate a self-signed development certificate and register it as a TLS config handle.",
       "notes": [
         "Intended for development and local testing utilities rather than production PKI.",
-        "Uses the openssl command-line tool available in the runtime environment."
+        "Uses the openssl command-line tool available in the runtime environment.",
+        "auth_mode 2 enables required peer verification/mTLS when the handle is used by a listener."
       ],
       "examples": [
         "SELECT ducknng_self_signed_tls_config('127.0.0.1', 365, 1);"
@@ -337,7 +341,8 @@
       "description": "Register a TLS config handle from in-memory PEM material.",
       "notes": [
         "Stores PEM material in the runtime and returns a reusable config id.",
-        "Can be used with tls+tcp listeners and the one-shot raw request path."
+        "Can be used with tls+tcp, wss, and https listeners and the one-shot raw request/RPC/session paths.",
+        "auth_mode 2 enables required peer verification/mTLS when the handle is used by a listener."
       ],
       "examples": [
         "SELECT ducknng_tls_config_from_pem('-----BEGIN CERTIFICATE-----\n...','-----BEGIN PRIVATE KEY-----\n...', '-----BEGIN CERTIFICATE-----\n...', NULL, 1);"
@@ -354,7 +359,8 @@
       "description": "Register a TLS config handle from file-backed certificate material.",
       "notes": [
         "Stores TLS material references in the runtime and returns a reusable config id.",
-        "Can be used with tls+tcp listeners and the one-shot raw request path."
+        "Can be used with tls+tcp, wss, and https listeners and the one-shot raw request/RPC/session paths.",
+        "auth_mode 2 enables required peer verification/mTLS when the handle is used by a listener."
       ],
       "examples": [
         "SELECT ducknng_tls_config_from_files('/tmp/server.pem', '/tmp/ca.pem', NULL, 1);"
@@ -765,7 +771,8 @@
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "batch_rows and batch_bytes are optional fetch-hint fields carried in the query_open payload.",
-        "The returned session_token is a bearer capability; pass it unchanged to fetch, close, and cancel helpers."
+        "The returned session_token is a bearer capability; pass it unchanged to fetch, close, and cancel helpers.",
+        "If the session is opened over verified mTLS, the server also binds it to that transport-derived peer identity."
       ],
       "examples": [
         "SELECT * FROM ducknng_open_query('ipc:///tmp/ducknng_sql0.ipc', 'SELECT 42 AS answer', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT);"
@@ -783,6 +790,7 @@
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "session_token must match the bearer capability returned by ducknng_open_query().",
+        "If the session was opened over verified mTLS, this request must arrive with the same transport-derived peer identity.",
         "When a row batch is returned, payload contains one Arrow IPC batch and control_json is NULL.",
         "When the session is exhausted, payload is NULL, state is usually exhausted, and end_of_stream is TRUE."
       ],
@@ -802,6 +810,7 @@
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "session_token must match the bearer capability returned by ducknng_open_query().",
+        "If the session was opened over verified mTLS, this request must arrive with the same transport-derived peer identity.",
         "This is the normal explicit cleanup path after fetch reaches end-of-stream."
       ],
       "examples": [
@@ -820,6 +829,7 @@
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
         "session_token must match the bearer capability returned by ducknng_open_query().",
+        "If the session was opened over verified mTLS, this request must arrive with the same transport-derived peer identity.",
         "This is best-effort cancellation and does not replace the normal explicit close path unless the server reports that the session is already closed."
       ],
       "examples": [

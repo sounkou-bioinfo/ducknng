@@ -87,6 +87,14 @@ typedef struct ducknng_method_registry {
     size_t method_cap;
 } ducknng_method_registry;
 
+typedef struct ducknng_manifest_security {
+    int tls_enabled;
+    int tls_auth_mode;
+    int peer_identity_required;
+    int sessions_bind_peer_identity_when_present;
+    const char *peer_identity_format;
+} ducknng_manifest_security;
+
 int ducknng_method_registry_init(ducknng_method_registry *registry);
 void ducknng_method_registry_destroy(ducknng_method_registry *registry);
 int ducknng_method_registry_register(ducknng_method_registry *registry,
@@ -98,7 +106,8 @@ size_t ducknng_method_registry_unregister_family(ducknng_method_registry *regist
 const ducknng_method_descriptor *ducknng_method_registry_find(
     const ducknng_method_registry *registry, const uint8_t *name, uint32_t name_len);
 char *ducknng_method_registry_manifest_json(const ducknng_method_registry *registry,
-    const char *server_name, const char *server_version, int protocol_version, char **errmsg);
+    const char *server_name, const char *server_version, int protocol_version,
+    const ducknng_manifest_security *security, char **errmsg);
 void ducknng_method_reply_init(ducknng_method_reply *reply);
 void ducknng_method_reply_reset(ducknng_method_reply *reply);
 int ducknng_method_reply_set_payload(ducknng_method_reply *reply, uint8_t type, uint32_t flags,

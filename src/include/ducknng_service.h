@@ -76,4 +76,7 @@ void ducknng_service_destroy(ducknng_service *svc);
 int ducknng_service_start(ducknng_service *svc, char **errmsg);
 int ducknng_service_stop(ducknng_service *svc, char **errmsg);
 nng_msg *ducknng_handle_request(ducknng_service *svc, nng_msg *req);
+nng_msg *ducknng_handle_request_with_identity(ducknng_service *svc, nng_msg *req,
+    const char *caller_identity);
+int ducknng_service_requires_peer_identity(const ducknng_service *svc);
 const char *ducknng_service_resolved_listen(const ducknng_service *svc);

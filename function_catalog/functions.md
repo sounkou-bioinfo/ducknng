@@ -14,7 +14,7 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_list_servers` | table |  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT)` | List registered ducknng services. |
+| `ducknng_list_servers` | table |  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN)` | List registered ducknng services. |
 
 ## Method Registry
 
