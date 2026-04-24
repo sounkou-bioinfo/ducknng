@@ -89,7 +89,8 @@ make release
 ```
 
 Load it into DuckDB, start a local IPC listener, inspect the built-in
-manifest result shape, and stop it again:
+manifest string without dumping the full JSON document, and stop it
+again:
 
 ``` sql
 LOAD 'build/release/ducknng.duckdb_extension';
@@ -103,13 +104,22 @@ SELECT ducknng_start_server(
   0
 );
 
--- DESCRIBE shows the manifest helper's table shape without printing the full JSON document.
+-- The manifest column is JSON text kept as VARCHAR at the SQL API boundary.
 SELECT column_name, column_type
 FROM (DESCRIBE SELECT *
       FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT));
 
-SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
+-- Cast the string to JSON when you want fields instead of the full document.
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_extract_string(manifest::JSON, '$.server.version') AS server_version,
+       json_extract(manifest::JSON, '$.server.protocol_version')::UBIGINT AS protocol_version,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count
+FROM manifest_row;
 SELECT ducknng_stop_server('sql0');
 ```
 
@@ -125,11 +135,11 @@ SELECT ducknng_stop_server('sql0');
     | error       | VARCHAR     |
     | manifest    | VARCHAR     |
     +-------------+-------------+
-    +------+--------------+
-    |  ok  | has_manifest |
-    +------+--------------+
-    | true | true         |
-    +------+--------------+
+    +-------------+----------------+------------------+--------------+
+    | server_name | server_version | protocol_version | method_count |
+    +-------------+----------------+------------------+--------------+
+    | ducknng     | 0.1.0          | 1                | 5            |
+    +-------------+----------------+------------------+--------------+
     +-----------------------------+
     | ducknng_stop_server('sql0') |
     +-----------------------------+
@@ -377,10 +387,15 @@ SELECT ducknng_start_server(
 );
 
 -- The default RPC surface is minimal: manifest is built in, exec is opt-in.
-SELECT ok,
-       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count,
        position('"name":"exec"' IN manifest) > 0 AS has_exec
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+FROM manifest_row;
 SELECT name, family, response_mode, requires_auth, disabled
 FROM ducknng_list_methods()
 ORDER BY name;
@@ -390,10 +405,15 @@ SELECT ducknng_register_exec_method();
 SELECT name, family, response_mode, requires_auth, disabled
 FROM ducknng_list_methods()
 ORDER BY name;
-SELECT ok,
-       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count,
        position('"name":"exec"' IN manifest) > 0 AS has_exec
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+FROM manifest_row;
 
 -- RPC helper: run non-row statements and keep errors in-band.
 SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT);
@@ -495,11 +515,11 @@ SELECT ducknng_stop_server('sql_client_demo');
     +------------------------------------------------------------------------------------------------------------+
     | true                                                                                                       |
     +------------------------------------------------------------------------------------------------------------+
-    +------+--------------+----------+
-    |  ok  | has_manifest | has_exec |
-    +------+--------------+----------+
-    | true | true         | false    |
-    +------+--------------+----------+
+    +-------------+--------------+----------+
+    | server_name | method_count | has_exec |
+    +-------------+--------------+----------+
+    | ducknng     | 5            | false    |
+    +-------------+--------------+----------+
     +------------+---------+---------------+---------------+----------+
     |    name    | family  | response_mode | requires_auth | disabled |
     +------------+---------+---------------+---------------+----------+
@@ -524,11 +544,11 @@ SELECT ducknng_stop_server('sql_client_demo');
     | manifest   | control | metadata_only    | false         | false    |
     | query_open | query   | session_open     | false         | false    |
     +------------+---------+------------------+---------------+----------+
-    +------+--------------+----------+
-    |  ok  | has_manifest | has_exec |
-    +------+--------------+----------+
-    | true | true         | true     |
-    +------+--------------+----------+
+    +-------------+--------------+----------+
+    | server_name | method_count | has_exec |
+    +-------------+--------------+----------+
+    | ducknng     | 6            | true     |
+    +-------------+--------------+----------+
     +------+-------+--------------+----------------+-------------+
     |  ok  | error | rows_changed | statement_type | result_type |
     +------+-------+--------------+----------------+-------------+
@@ -756,8 +776,15 @@ SELECT ducknng_start_http_server(
   0::UBIGINT
 );
 
-SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
-FROM ducknng_get_rpc_manifest('http://127.0.0.1:18444/_ducknng', 0::UBIGINT);
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('http://127.0.0.1:18444/_ducknng', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count,
+       position('"name":"manifest"' IN manifest) > 0 AS has_manifest
+FROM manifest_row;
 
 SET VARIABLE http_demo_frame = (
   SELECT body
@@ -782,11 +809,11 @@ SELECT ducknng_stop_server('http_demo');
     +--------------------------------------------------------------------------------------------------------------------+
     | true                                                                                                               |
     +--------------------------------------------------------------------------------------------------------------------+
-    +------+--------------+
-    |  ok  | has_manifest |
-    +------+--------------+
-    | true | true         |
-    +------+--------------+
+    +-------------+--------------+--------------+
+    | server_name | method_count | has_manifest |
+    +-------------+--------------+--------------+
+    | ducknng     | 5            | true         |
+    +-------------+--------------+--------------+
     +------+-----------+----------+
     |  ok  | type_name |   name   |
     +------+-----------+----------+
@@ -1315,7 +1342,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | b72752ff3933ffb6a46c40d0792c6221 | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | 9209b49ac104e851118ef6ad2bd72199 | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1743,8 +1770,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_31e8c19c5752d.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_326000193ee08f.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

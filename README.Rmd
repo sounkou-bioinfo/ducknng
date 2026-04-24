@@ -57,7 +57,7 @@ make configure
 make release
 ```
 
-Load it into DuckDB, start a local IPC listener, inspect the built-in manifest result shape, and stop it again:
+Load it into DuckDB, start a local IPC listener, inspect the built-in manifest string without dumping the full JSON document, and stop it again:
 
 ```{sql eval=TRUE, autoload=FALSE, collapse=FALSE, comment=""}
 LOAD 'build/release/ducknng.duckdb_extension';
@@ -71,13 +71,22 @@ SELECT ducknng_start_server(
   0
 );
 
--- DESCRIBE shows the manifest helper's table shape without printing the full JSON document.
+-- The manifest column is JSON text kept as VARCHAR at the SQL API boundary.
 SELECT column_name, column_type
 FROM (DESCRIBE SELECT *
       FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT));
 
-SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
+-- Cast the string to JSON when you want fields instead of the full document.
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_extract_string(manifest::JSON, '$.server.version') AS server_version,
+       json_extract(manifest::JSON, '$.server.protocol_version')::UBIGINT AS protocol_version,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count
+FROM manifest_row;
 SELECT ducknng_stop_server('sql0');
 ```
 
@@ -165,10 +174,15 @@ SELECT ducknng_start_server(
 );
 
 -- The default RPC surface is minimal: manifest is built in, exec is opt-in.
-SELECT ok,
-       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count,
        position('"name":"exec"' IN manifest) > 0 AS has_exec
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+FROM manifest_row;
 SELECT name, family, response_mode, requires_auth, disabled
 FROM ducknng_list_methods()
 ORDER BY name;
@@ -178,10 +192,15 @@ SELECT ducknng_register_exec_method();
 SELECT name, family, response_mode, requires_auth, disabled
 FROM ducknng_list_methods()
 ORDER BY name;
-SELECT ok,
-       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count,
        position('"name":"exec"' IN manifest) > 0 AS has_exec
-FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+FROM manifest_row;
 
 -- RPC helper: run non-row statements and keep errors in-band.
 SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT);
@@ -445,8 +464,15 @@ SELECT ducknng_start_http_server(
   0::UBIGINT
 );
 
-SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
-FROM ducknng_get_rpc_manifest('http://127.0.0.1:18444/_ducknng', 0::UBIGINT);
+WITH manifest_row AS (
+  SELECT manifest
+  FROM ducknng_get_rpc_manifest('http://127.0.0.1:18444/_ducknng', 0::UBIGINT)
+  WHERE ok
+)
+SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count,
+       position('"name":"manifest"' IN manifest) > 0 AS has_manifest
+FROM manifest_row;
 
 SET VARIABLE http_demo_frame = (
   SELECT body
