@@ -3,10 +3,12 @@
 
 # ducknng: a DuckDB binding to the NNG Scalability Protocols library and an Arrow IPC-based RPC framework
 
-`ducknng` is a pure C DuckDB extension providing `nanonext`-inspired
-bindings to the NNG Scalability Protocols. It also includes a small
-framed RPC layer whose thin versioned envelope carries Arrow IPC or JSON
-payloads.
+`ducknng` is a pure C DuckDB extension providing
+[`nanonext`](https://github.com/r-lib/nanonext)-inspired bindings to the
+[NNG Scalability Protocols](https://nng.nanomsg.org/). It also includes
+a small framed RPC layer, informed by
+[`mangoro`](https://github.com/sounkou-bioinfo/mangoro), whose thin
+versioned envelope carries Arrow IPC or JSON payloads.
 
 The current implementation is easiest to understand as three layers.
 
@@ -1342,7 +1344,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | 95543d4684be6451c7cf1e842a9ece9f | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | 7461172c54fd6d1854eba04cdb50749e | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1770,7 +1772,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_33c4ae6ffe7409.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_33cc2e177c7a50.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
@@ -1843,10 +1845,10 @@ unlink(ipc_path)
 
 - [NNG](https://nng.nanomsg.org/) for the underlying messaging library
   and transport family.
-- [`r-lib/nanonext`](https://github.com/r-lib/nanonext) for the main
+- [`nanonext`](https://github.com/r-lib/nanonext) for the main
   client/server ergonomics reference.
-- [`sounkou-bioinfo/mangoro`](https://github.com/sounkou-bioinfo/mangoro)
-  for the thin-envelope + Arrow IPC RPC direction.
+- [`mangoro`](https://github.com/sounkou-bioinfo/mangoro) for the
+  thin-envelope + Arrow IPC RPC direction.
 - [DuckDB C API](https://duckdb.org/docs/stable/clients/c/api) for the
   extension and SQL integration boundary.
 - [Apache Arrow
