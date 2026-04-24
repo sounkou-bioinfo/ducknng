@@ -14,26 +14,10 @@ knitr::knit_engines$set(sql = function(options) {
     code <- paste(sprintf("LOAD '%s';", extension_path), code, sep = "\n")
   }
   if (isTRUE(options$eval)) {
-    run_code <- paste(".mode markdown", code, sep = "\n")
+    run_code <- paste(".mode table", code, sep = "\n")
     out <- system2("duckdb", "-unsigned", input = run_code, stdout = TRUE, stderr = TRUE)
     status <- attr(out, "status")
     if (!is.null(status) && status != 0) stop(paste(out, collapse = "\n"))
-    if (length(out) > 1) {
-      # DuckDB's markdown mode does not separate consecutive result tables.
-      # Insert a blank line before each new table so GitHub renders them
-      # as separate tables instead of a malformed combined table.
-      is_separator <- grepl("^\\|[-: |]+\\|$", out)
-      formatted <- character()
-      for (i in seq_along(out)) {
-        is_header <- startsWith(out[[i]], "|") && i < length(out) && is_separator[[i + 1]]
-        if (is_header && length(formatted) > 0 && tail(formatted, 1) != "") {
-          formatted <- c(formatted, "")
-        }
-        formatted <- c(formatted, out[[i]])
-      }
-      out <- formatted
-    }
-    options$results <- "asis"
     knitr::engine_output(options, code, out)
   } else {
     knitr::engine_output(options, code, NULL)
@@ -87,7 +71,8 @@ SELECT ducknng_start_server(
   0
 );
 
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
+SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
 SELECT ducknng_stop_server('sql0');
 ```
 
@@ -175,13 +160,23 @@ SELECT ducknng_start_server(
 );
 
 -- The default RPC surface is minimal: manifest is built in, exec is opt-in.
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
-SELECT * FROM ducknng_list_methods();
+SELECT ok,
+       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+       position('"name":"exec"' IN manifest) > 0 AS has_exec
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+SELECT name, family, response_mode, requires_auth, disabled
+FROM ducknng_list_methods()
+ORDER BY name;
 
 -- Register exec explicitly before exposing SQL execution over RPC.
 SELECT ducknng_register_exec_method();
-SELECT * FROM ducknng_list_methods();
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+SELECT name, family, response_mode, requires_auth, disabled
+FROM ducknng_list_methods()
+ORDER BY name;
+SELECT ok,
+       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+       position('"name":"exec"' IN manifest) > 0 AS has_exec
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
 
 -- RPC helper: run non-row statements and keep errors in-band.
 SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT);
@@ -230,14 +225,14 @@ SELECT * FROM ducknng_list_sockets();
 
 -- Primitive transport layer: send the built-in manifest request frame.
 -- The hex literal here is the current wire-format request for the always-on manifest method.
-SELECT *
+SELECT ok, error, octet_length(payload) > 0 AS has_payload
 FROM ducknng_request_socket(
   1::UBIGINT,                                        -- socket_id
   from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
   1000                                               -- timeout_ms
 );
 
-SELECT *
+SELECT ok, error, octet_length(payload) > 0 AS has_payload
 FROM ducknng_request(
   'ipc:///tmp/ducknng_sql_client_demo.ipc',          -- url
   from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
@@ -268,7 +263,7 @@ FROM ducknng_decode_frame(
 );
 
 -- The generic raw request helper can be decoded the same way.
-SELECT ok, version, type_name, name, payload_text
+SELECT ok, version, type_name, name, position('"name":"exec"' IN payload_text) > 0 AS has_exec
 FROM ducknng_decode_frame(
   ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT)
 );

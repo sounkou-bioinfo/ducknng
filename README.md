@@ -103,21 +103,26 @@ SELECT ducknng_start_server(
   0
 );
 
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
+SELECT ok, position('"name":"manifest"' IN manifest) > 0 AS has_manifest
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT);
 SELECT ducknng_stop_server('sql0');
 ```
 
-| ducknng_start_server(‘sql0’, ‘ipc:///tmp/ducknng_sql0.ipc’, 1, 134217728, 300000, 0) |
-|--------------------------------------------------------------------------------------|
-| true                                                                                 |
-
-| ok   | error | manifest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-|------|-------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| true | NULL  | {“server”:{“name”:“ducknng”,“version”:“0.1.0”,“protocol_version”:1,“security”:{“tls_enabled”:false,“tls_auth_mode”:0,“peer_identity_required”:false,“peer_identity_format”:“tls:san:<value>\|tls:cn:<common-name>”,“sessions_bind_peer_identity_when_present”:true}},“methods”:\[{“name”:“manifest”,“family”:“control”,“summary”:“Return the registry-derived manifest JSON”,“transport_pattern”:“reqrep”,“request_payload_format”:“none”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“stateless”,“requires_auth”:false,“requires_session”:false,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:4,“max_request_bytes”:0,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:null,“response_schema”:{“type”:“json”}},{“name”:“query_open”,“family”:“query”,“summary”:“Open a server-side query session”,“transport_pattern”:“reqrep”,“request_payload_format”:“arrow_ipc_stream”,“response_payload_format”:“json”,“response_mode”:“session_open”,“session_behavior”:“opens_session”,“requires_auth”:false,“requires_session”:false,“opens_session”:true,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:36,“max_request_bytes”:16777216,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“batch_rows”,“type”:“uint64”,“nullable”:true},{“name”:“batch_bytes”,“type”:“uint64”,“nullable”:true}\]},“response_schema”:{“type”:“json”,“session_open”:true,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false},{“name”:“next_method”,“type”:“string”,“nullable”:false}\]}},{“name”:“fetch”,“family”:“query”,“summary”:“Fetch the next Arrow batch from an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“arrow_ipc_stream”,“response_mode”:“rows”,“session_behavior”:“requires_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:29,“max_request_bytes”:1048576,“max_reply_bytes”:16777216,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“mode”:“rows_or_control”,“control”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}},{“name”:“close”,“family”:“query”,“summary”:“Close an open or exhausted session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“closes_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:68,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}},{“name”:“cancel”,“family”:“query”,“summary”:“Cancel and close an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“cancels_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:196,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}\]} |
-
-| ducknng_stop_server(‘sql0’) |
-|-----------------------------|
-| true                        |
+    +--------------------------------------------------------------------------------------+
+    | ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, 0) |
+    +--------------------------------------------------------------------------------------+
+    | true                                                                                 |
+    +--------------------------------------------------------------------------------------+
+    +------+--------------+
+    |  ok  | has_manifest |
+    +------+--------------+
+    | true | true         |
+    +------+--------------+
+    +-----------------------------+
+    | ducknng_stop_server('sql0') |
+    +-----------------------------+
+    | true                        |
+    +-----------------------------+
 
 ## Lifetime and manual cleanup
 
@@ -293,17 +298,21 @@ FROM ducknng_list_servers();
 SELECT ducknng_stop_server('sql0');
 ```
 
-| ducknng_start_server(‘sql0’, ‘ipc:///tmp/ducknng_sql0.ipc’, 1, 134217728, 300000, 0) |
-|--------------------------------------------------------------------------------------|
-| true                                                                                 |
-
-| name | listen                      | contexts | running | sessions |
-|------|-----------------------------|---------:|---------|---------:|
-| sql0 | ipc:///tmp/ducknng_sql0.ipc |        1 | true    |        0 |
-
-| ducknng_stop_server(‘sql0’) |
-|-----------------------------|
-| true                        |
+    +--------------------------------------------------------------------------------------+
+    | ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, 0) |
+    +--------------------------------------------------------------------------------------+
+    | true                                                                                 |
+    +--------------------------------------------------------------------------------------+
+    +------+-----------------------------+----------+---------+----------+
+    | name |           listen            | contexts | running | sessions |
+    +------+-----------------------------+----------+---------+----------+
+    | sql0 | ipc:///tmp/ducknng_sql0.ipc | 1        | true    | 0        |
+    +------+-----------------------------+----------+---------+----------+
+    +-----------------------------+
+    | ducknng_stop_server('sql0') |
+    +-----------------------------+
+    | true                        |
+    +-----------------------------+
 
 ### Request multiple REP contexts on one REP socket
 
@@ -325,17 +334,21 @@ WHERE name = 'sql_multi';
 SELECT ducknng_stop_server('sql_multi');
 ```
 
-| ducknng_start_server(‘sql_multi’, ‘ipc:///tmp/ducknng_sql_multi.ipc’, 3, 134217728, 300000, 0) |
-|------------------------------------------------------------------------------------------------|
-| true                                                                                           |
-
-| name      | contexts | running |
-|-----------|---------:|---------|
-| sql_multi |        3 | true    |
-
-| ducknng_stop_server(‘sql_multi’) |
-|----------------------------------|
-| true                             |
+    +------------------------------------------------------------------------------------------------+
+    | ducknng_start_server('sql_multi', 'ipc:///tmp/ducknng_sql_multi.ipc', 3, 134217728, 300000, 0) |
+    +------------------------------------------------------------------------------------------------+
+    | true                                                                                           |
+    +------------------------------------------------------------------------------------------------+
+    +-----------+----------+---------+
+    |   name    | contexts | running |
+    +-----------+----------+---------+
+    | sql_multi | 3        | true    |
+    +-----------+----------+---------+
+    +----------------------------------+
+    | ducknng_stop_server('sql_multi') |
+    +----------------------------------+
+    | true                             |
+    +----------------------------------+
 
 ### DuckDB can also act as a client
 
@@ -352,13 +365,23 @@ SELECT ducknng_start_server(
 );
 
 -- The default RPC surface is minimal: manifest is built in, exec is opt-in.
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
-SELECT * FROM ducknng_list_methods();
+SELECT ok,
+       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+       position('"name":"exec"' IN manifest) > 0 AS has_exec
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+SELECT name, family, response_mode, requires_auth, disabled
+FROM ducknng_list_methods()
+ORDER BY name;
 
 -- Register exec explicitly before exposing SQL execution over RPC.
 SELECT ducknng_register_exec_method();
-SELECT * FROM ducknng_list_methods();
-SELECT * FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
+SELECT name, family, response_mode, requires_auth, disabled
+FROM ducknng_list_methods()
+ORDER BY name;
+SELECT ok,
+       position('"name":"manifest"' IN manifest) > 0 AS has_manifest,
+       position('"name":"exec"' IN manifest) > 0 AS has_exec
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql_client_demo.ipc', 0::UBIGINT);
 
 -- RPC helper: run non-row statements and keep errors in-band.
 SELECT * FROM ducknng_run_rpc('ipc:///tmp/ducknng_sql_client_demo.ipc', 'CREATE TABLE IF NOT EXISTS client_side_demo(i INTEGER)', 0::UBIGINT);
@@ -407,14 +430,14 @@ SELECT * FROM ducknng_list_sockets();
 
 -- Primitive transport layer: send the built-in manifest request frame.
 -- The hex literal here is the current wire-format request for the always-on manifest method.
-SELECT *
+SELECT ok, error, octet_length(payload) > 0 AS has_payload
 FROM ducknng_request_socket(
   1::UBIGINT,                                        -- socket_id
   from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
   1000                                               -- timeout_ms
 );
 
-SELECT *
+SELECT ok, error, octet_length(payload) > 0 AS has_payload
 FROM ducknng_request(
   'ipc:///tmp/ducknng_sql_client_demo.ipc',          -- url
   from_hex('01000000000000000000000000000000000000000000'), -- manifest request frame
@@ -445,7 +468,7 @@ FROM ducknng_decode_frame(
 );
 
 -- The generic raw request helper can be decoded the same way.
-SELECT ok, version, type_name, name, payload_text
+SELECT ok, version, type_name, name, position('"name":"exec"' IN payload_text) > 0 AS has_exec
 FROM ducknng_decode_frame(
   ducknng_request_raw('ipc:///tmp/ducknng_sql_client_demo.ipc', from_hex('01000000000000000000000000000000000000000000'), 1000, 0::UBIGINT)
 );
@@ -455,115 +478,139 @@ SELECT ducknng_close_socket(1);
 SELECT ducknng_stop_server('sql_client_demo');
 ```
 
-| ducknng_start_server(‘sql_client_demo’, ‘ipc:///tmp/ducknng_sql_client_demo.ipc’, 1, 134217728, 300000, 0) |
-|------------------------------------------------------------------------------------------------------------|
-| true                                                                                                       |
-
-| ok   | error | manifest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-|------|-------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| true | NULL  | {“server”:{“name”:“ducknng”,“version”:“0.1.0”,“protocol_version”:1,“security”:{“tls_enabled”:false,“tls_auth_mode”:0,“peer_identity_required”:false,“peer_identity_format”:“tls:san:<value>\|tls:cn:<common-name>”,“sessions_bind_peer_identity_when_present”:true}},“methods”:\[{“name”:“manifest”,“family”:“control”,“summary”:“Return the registry-derived manifest JSON”,“transport_pattern”:“reqrep”,“request_payload_format”:“none”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“stateless”,“requires_auth”:false,“requires_session”:false,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:4,“max_request_bytes”:0,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:null,“response_schema”:{“type”:“json”}},{“name”:“query_open”,“family”:“query”,“summary”:“Open a server-side query session”,“transport_pattern”:“reqrep”,“request_payload_format”:“arrow_ipc_stream”,“response_payload_format”:“json”,“response_mode”:“session_open”,“session_behavior”:“opens_session”,“requires_auth”:false,“requires_session”:false,“opens_session”:true,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:36,“max_request_bytes”:16777216,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“batch_rows”,“type”:“uint64”,“nullable”:true},{“name”:“batch_bytes”,“type”:“uint64”,“nullable”:true}\]},“response_schema”:{“type”:“json”,“session_open”:true,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false},{“name”:“next_method”,“type”:“string”,“nullable”:false}\]}},{“name”:“fetch”,“family”:“query”,“summary”:“Fetch the next Arrow batch from an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“arrow_ipc_stream”,“response_mode”:“rows”,“session_behavior”:“requires_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:29,“max_request_bytes”:1048576,“max_reply_bytes”:16777216,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“mode”:“rows_or_control”,“control”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}},{“name”:“close”,“family”:“query”,“summary”:“Close an open or exhausted session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“closes_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:68,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}},{“name”:“cancel”,“family”:“query”,“summary”:“Cancel and close an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“cancels_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:196,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}\]} |
-
-| name       | family  | summary                                         | transport_pattern | request_payload_format | response_payload_format | response_mode | request_schema_json                                                                                                                                                       | response_schema_json                                                                                                                                                                                                                                                        | requires_auth | disabled |
-|------------|---------|-------------------------------------------------|-------------------|------------------------|-------------------------|---------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|----------|
-| manifest   | control | Return the registry-derived manifest JSON       | reqrep            | none                   | json                    | metadata_only | NULL                                                                                                                                                                      | {“type”:“json”}                                                                                                                                                                                                                                                             | false         | false    |
-| query_open | query   | Open a server-side query session                | reqrep            | arrow_ipc_stream       | json                    | session_open  | {“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“batch_rows”,“type”:“uint64”,“nullable”:true},{“name”:“batch_bytes”,“type”:“uint64”,“nullable”:true}\]} | {“type”:“json”,“session_open”:true,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false},{“name”:“next_method”,“type”:“string”,“nullable”:false}\]} | false         | false    |
-| fetch      | query   | Fetch the next Arrow batch from an open session | reqrep            | json                   | arrow_ipc_stream        | rows          | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]}                             | {“mode”:“rows_or_control”,“control”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}                                                                                                  | false         | false    |
-| close      | query   | Close an open or exhausted session              | reqrep            | json                   | json                    | metadata_only | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]}                             | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}                                                                                                                                       | false         | false    |
-| cancel     | query   | Cancel and close an open session                | reqrep            | json                   | json                    | metadata_only | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]}                             | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}                                                                                                                                       | false         | false    |
-
-| ducknng_register_exec_method() |
-|--------------------------------|
-| true                           |
-
-| name       | family  | summary                                         | transport_pattern | request_payload_format | response_payload_format | response_mode    | request_schema_json                                                                                                                                                       | response_schema_json                                                                                                                                                                                                                                                        | requires_auth | disabled |
-|------------|---------|-------------------------------------------------|-------------------|------------------------|-------------------------|------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|----------|
-| manifest   | control | Return the registry-derived manifest JSON       | reqrep            | none                   | json                    | metadata_only    | NULL                                                                                                                                                                      | {“type”:“json”}                                                                                                                                                                                                                                                             | false         | false    |
-| query_open | query   | Open a server-side query session                | reqrep            | arrow_ipc_stream       | json                    | session_open     | {“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“batch_rows”,“type”:“uint64”,“nullable”:true},{“name”:“batch_bytes”,“type”:“uint64”,“nullable”:true}\]} | {“type”:“json”,“session_open”:true,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false},{“name”:“next_method”,“type”:“string”,“nullable”:false}\]} | false         | false    |
-| fetch      | query   | Fetch the next Arrow batch from an open session | reqrep            | json                   | arrow_ipc_stream        | rows             | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]}                             | {“mode”:“rows_or_control”,“control”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}                                                                                                  | false         | false    |
-| close      | query   | Close an open or exhausted session              | reqrep            | json                   | json                    | metadata_only    | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]}                             | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}                                                                                                                                       | false         | false    |
-| cancel     | query   | Cancel and close an open session                | reqrep            | json                   | json                    | metadata_only    | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]}                             | {“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}                                                                                                                                       | false         | false    |
-| exec       | sql     | Execute SQL and return metadata or rows         | reqrep            | arrow_ipc_stream       | arrow_ipc_stream        | metadata_or_rows | {“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“want_result”,“type”:“bool”,“nullable”:false}\]}                                                        | {“mode”:“metadata_or_rows”}                                                                                                                                                                                                                                                 | false         | false    |
-
-| ok   | error | manifest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-|------|-------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| true | NULL  | {“server”:{“name”:“ducknng”,“version”:“0.1.0”,“protocol_version”:1,“security”:{“tls_enabled”:false,“tls_auth_mode”:0,“peer_identity_required”:false,“peer_identity_format”:“tls:san:<value>\|tls:cn:<common-name>”,“sessions_bind_peer_identity_when_present”:true}},“methods”:\[{“name”:“manifest”,“family”:“control”,“summary”:“Return the registry-derived manifest JSON”,“transport_pattern”:“reqrep”,“request_payload_format”:“none”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“stateless”,“requires_auth”:false,“requires_session”:false,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:4,“max_request_bytes”:0,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:null,“response_schema”:{“type”:“json”}},{“name”:“query_open”,“family”:“query”,“summary”:“Open a server-side query session”,“transport_pattern”:“reqrep”,“request_payload_format”:“arrow_ipc_stream”,“response_payload_format”:“json”,“response_mode”:“session_open”,“session_behavior”:“opens_session”,“requires_auth”:false,“requires_session”:false,“opens_session”:true,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:36,“max_request_bytes”:16777216,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“batch_rows”,“type”:“uint64”,“nullable”:true},{“name”:“batch_bytes”,“type”:“uint64”,“nullable”:true}\]},“response_schema”:{“type”:“json”,“session_open”:true,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false},{“name”:“next_method”,“type”:“string”,“nullable”:false}\]}},{“name”:“fetch”,“family”:“query”,“summary”:“Fetch the next Arrow batch from an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“arrow_ipc_stream”,“response_mode”:“rows”,“session_behavior”:“requires_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:29,“max_request_bytes”:1048576,“max_reply_bytes”:16777216,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“mode”:“rows_or_control”,“control”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}},{“name”:“close”,“family”:“query”,“summary”:“Close an open or exhausted session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“closes_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:68,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}},{“name”:“cancel”,“family”:“query”,“summary”:“Cancel and close an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“cancels_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:196,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}},{“name”:“exec”,“family”:“sql”,“summary”:“Execute SQL and return metadata or rows”,“transport_pattern”:“reqrep”,“request_payload_format”:“arrow_ipc_stream”,“response_payload_format”:“arrow_ipc_stream”,“response_mode”:“metadata_or_rows”,“session_behavior”:“stateless”,“requires_auth”:false,“requires_session”:false,“opens_session”:false,“closes_session”:false,“mutates_state”:true,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:11,“max_request_bytes”:16777216,“max_reply_bytes”:16777216,“version_introduced”:1,“request_schema”:{“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“want_result”,“type”:“bool”,“nullable”:false}\]},“response_schema”:{“mode”:“metadata_or_rows”}}\]} |
-
-| ok   | error | rows_changed | statement_type | result_type |
-|------|-------|-------------:|---------------:|------------:|
-| true | NULL  |            0 |              7 |           2 |
-
-| ok   | error | rows_changed | statement_type | result_type |
-|------|-------|-------------:|---------------:|------------:|
-| true | NULL  |            2 |              2 |           1 |
-
-|   i | gt_10 |
-|----:|-------|
-|  10 | false |
-|  11 | true  |
-
-| date_ok | ts_ok | decimal_ok | list_ok | struct_ok |
-|---------|-------|------------|---------|-----------|
-| true    | true  | true       | true    | true      |
-
-| provider      | output                |
-|---------------|-----------------------|
-| arrow_ipc     | dynamic table         |
-| csv           | body BLOB fallback    |
-| ducknng_frame | decoded frame columns |
-| json          | dynamic table         |
-| parquet       | body BLOB fallback    |
-| raw           | body BLOB             |
-| text          | body_text VARCHAR     |
-| tsv           | body BLOB fallback    |
-
-|   a | b   |
-|----:|-----|
-|   1 | x   |
-|   2 | y   |
-
-| ducknng_open_socket(‘req’) |
-|---------------------------:|
-|                          1 |
-
-| ducknng_dial_socket(1, ‘ipc:///tmp/ducknng_sql_client_demo.ipc’, 1000, CAST(0 AS “UBIGINT”)) |
-|----------------------------------------------------------------------------------------------|
-| true                                                                                         |
-
-| socket_id | protocol | url                                    | open | connected | listening | send_timeout_ms | recv_timeout_ms |
-|----------:|----------|----------------------------------------|------|-----------|-----------|----------------:|----------------:|
-|         1 | req      | ipc:///tmp/ducknng_sql_client_demo.ipc | true | true      | false     |            1000 |            1000 |
-
-| ok   | error | payload                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-|------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| true | NULL  | 00j00manifest{22server:{22name:22ducknng,22version:.0,22protocol_version:1,22security:{22tls_enabled:false,22tls_auth_mode:0,22peer_identity_required:false,22peer_identity_format:22tls:san:<value>\|tls:cn:<common-name>,22sessions_bind_peer_identity_when_present:true}},22methods:\[{22name:22manifest,22family:22control,22summary:22Return the registry-derived manifest JSON,22transport_pattern:22reqrep,22request_payload_format:22none,22response_payload_format:22json,22response_mode:22metadata_only,22session_behavior:22stateless,22requires_auth:false,22requires_session:false,22opens_session:false,22closes_session:false,22mutates_state:false,22idempotent:true,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:4,22max_request_bytes:0,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:null,22response_schema:{22type:22json}},{22name:22query_open,22family:22query,22summary:22Open a server-side query session,22transport_pattern:22reqrep,22request_payload_format:22arrow_ipc_stream,22response_payload_format:22json,22response_mode:22session_open,22session_behavior:22opens_session,22requires_auth:false,22requires_session:false,22opens_session:true,22closes_session:false,22mutates_state:false,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:36,22max_request_bytes:16777216,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:{22fields:\[{22name:22sql,22type:22utf8,22nullable:false},{22name:22batch_rows,22type:22uint64,22nullable:true},{22name:22batch_bytes,22type:22uint64,22nullable:true}\]},22response_schema:{22type:22json,22session_open:true,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false},{22name:22state,22type:22string,22nullable:false},{22name:22next_method,22type:22string,22nullable:false}\]}},{22name:22fetch,22family:22query,22summary:22Fetch the next Arrow batch from an open session,22transport_pattern:22reqrep,22request_payload_format:22json,22response_payload_format:22arrow_ipc_stream,22response_mode:22rows,22session_behavior:22requires_session,22requires_auth:false,22requires_session:true,22opens_session:false,22closes_session:false,22mutates_state:false,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:29,22max_request_bytes:1048576,22max_reply_bytes:16777216,22version_introduced:1,22request_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false}\]},22response_schema:{22mode:22rows_or_control,22control:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22state,22type:22string,22nullable:false}\]}}},{22name:22close,22family:22query,22summary:22Close an open or exhausted session,22transport_pattern:22reqrep,22request_payload_format:22json,22response_payload_format:22json,22response_mode:22metadata_only,22session_behavior:22closes_session,22requires_auth:false,22requires_session:true,22opens_session:false,22closes_session:true,22mutates_state:true,22idempotent:true,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:68,22max_request_bytes:1048576,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false}\]},22response_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22state,22type:22string,22nullable:false}\]}},{22name:22cancel,22family:22query,22summary:22Cancel and close an open session,22transport_pattern:22reqrep,22request_payload_format:22json,22response_payload_format:22json,22response_mode:22metadata_only,22session_behavior:22cancels_session,22requires_auth:false,22requires_session:true,22opens_session:false,22closes_session:true,22mutates_state:true,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:196,22max_request_bytes:1048576,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false}\]},22response_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22state,22type:22string,22nullable:false}\]}},{22name:22exec,22family:22sql,22summary:22Execute SQL and return metadata or rows,22transport_pattern:22reqrep,22request_payload_format:22arrow_ipc_stream,22response_payload_format:22arrow_ipc_stream,22response_mode:22metadata_or_rows,22session_behavior:22stateless,22requires_auth:false,22requires_session:false,22opens_session:false,22closes_session:false,22mutates_state:true,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:11,22max_request_bytes:16777216,22max_reply_bytes:16777216,22version_introduced:1,22request_schema:{22fields:\[{22name:22sql,22type:22utf8,22nullable:false},{22name:22want_result,22type:22bool,22nullable:false}\]},22response_schema:{22mode:22metadata_or_rows}}\]} |
-
-| ok   | error | payload                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-|------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| true | NULL  | 00j00manifest{22server:{22name:22ducknng,22version:.0,22protocol_version:1,22security:{22tls_enabled:false,22tls_auth_mode:0,22peer_identity_required:false,22peer_identity_format:22tls:san:<value>\|tls:cn:<common-name>,22sessions_bind_peer_identity_when_present:true}},22methods:\[{22name:22manifest,22family:22control,22summary:22Return the registry-derived manifest JSON,22transport_pattern:22reqrep,22request_payload_format:22none,22response_payload_format:22json,22response_mode:22metadata_only,22session_behavior:22stateless,22requires_auth:false,22requires_session:false,22opens_session:false,22closes_session:false,22mutates_state:false,22idempotent:true,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:4,22max_request_bytes:0,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:null,22response_schema:{22type:22json}},{22name:22query_open,22family:22query,22summary:22Open a server-side query session,22transport_pattern:22reqrep,22request_payload_format:22arrow_ipc_stream,22response_payload_format:22json,22response_mode:22session_open,22session_behavior:22opens_session,22requires_auth:false,22requires_session:false,22opens_session:true,22closes_session:false,22mutates_state:false,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:36,22max_request_bytes:16777216,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:{22fields:\[{22name:22sql,22type:22utf8,22nullable:false},{22name:22batch_rows,22type:22uint64,22nullable:true},{22name:22batch_bytes,22type:22uint64,22nullable:true}\]},22response_schema:{22type:22json,22session_open:true,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false},{22name:22state,22type:22string,22nullable:false},{22name:22next_method,22type:22string,22nullable:false}\]}},{22name:22fetch,22family:22query,22summary:22Fetch the next Arrow batch from an open session,22transport_pattern:22reqrep,22request_payload_format:22json,22response_payload_format:22arrow_ipc_stream,22response_mode:22rows,22session_behavior:22requires_session,22requires_auth:false,22requires_session:true,22opens_session:false,22closes_session:false,22mutates_state:false,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:29,22max_request_bytes:1048576,22max_reply_bytes:16777216,22version_introduced:1,22request_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false}\]},22response_schema:{22mode:22rows_or_control,22control:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22state,22type:22string,22nullable:false}\]}}},{22name:22close,22family:22query,22summary:22Close an open or exhausted session,22transport_pattern:22reqrep,22request_payload_format:22json,22response_payload_format:22json,22response_mode:22metadata_only,22session_behavior:22closes_session,22requires_auth:false,22requires_session:true,22opens_session:false,22closes_session:true,22mutates_state:true,22idempotent:true,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:68,22max_request_bytes:1048576,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false}\]},22response_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22state,22type:22string,22nullable:false}\]}},{22name:22cancel,22family:22query,22summary:22Cancel and close an open session,22transport_pattern:22reqrep,22request_payload_format:22json,22response_payload_format:22json,22response_mode:22metadata_only,22session_behavior:22cancels_session,22requires_auth:false,22requires_session:true,22opens_session:false,22closes_session:true,22mutates_state:true,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:196,22max_request_bytes:1048576,22max_reply_bytes:1048576,22version_introduced:1,22request_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22session_token,22type:22string,22nullable:false}\]},22response_schema:{22type:22json,22fields:\[{22name:22session_id,22type:22uint64,22nullable:false},{22name:22state,22type:22string,22nullable:false}\]}},{22name:22exec,22family:22sql,22summary:22Execute SQL and return metadata or rows,22transport_pattern:22reqrep,22request_payload_format:22arrow_ipc_stream,22response_payload_format:22arrow_ipc_stream,22response_mode:22metadata_or_rows,22session_behavior:22stateless,22requires_auth:false,22requires_session:false,22opens_session:false,22closes_session:false,22mutates_state:true,22idempotent:false,22deprecated:false,22disabled:false,22accepted_request_flags:0,22emitted_reply_flags:11,22max_request_bytes:16777216,22max_reply_bytes:16777216,22version_introduced:1,22request_schema:{22fields:\[{22name:22sql,22type:22utf8,22nullable:false},{22name:22want_result,22type:22bool,22nullable:false}\]},22response_schema:{22mode:22metadata_or_rows}}\]} |
-
-| substr(hex(ducknng_request_socket_raw(1, from_hex(‘01000000000000000000000000000000000000000000’), 1000)), 1, 28) |
-|-------------------------------------------------------------------------------------------------------------------|
-| 0102040000000800000000000000                                                                                      |
-
-| ok   | version | type_name | name     | (main.”position”(payload_text, ‘“name”:“exec”’) \> 0) |
-|------|--------:|-----------|----------|-------------------------------------------------------|
-| true |       1 | result    | manifest | true                                                  |
-
-| ok   | type_name | name |
-|------|-----------|------|
-| true | result    | exec |
-
-| ok   | version | type_name | name     | payload_text                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-|------|--------:|-----------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| true |       1 | result    | manifest | {“server”:{“name”:“ducknng”,“version”:“0.1.0”,“protocol_version”:1,“security”:{“tls_enabled”:false,“tls_auth_mode”:0,“peer_identity_required”:false,“peer_identity_format”:“tls:san:<value>\|tls:cn:<common-name>”,“sessions_bind_peer_identity_when_present”:true}},“methods”:\[{“name”:“manifest”,“family”:“control”,“summary”:“Return the registry-derived manifest JSON”,“transport_pattern”:“reqrep”,“request_payload_format”:“none”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“stateless”,“requires_auth”:false,“requires_session”:false,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:4,“max_request_bytes”:0,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:null,“response_schema”:{“type”:“json”}},{“name”:“query_open”,“family”:“query”,“summary”:“Open a server-side query session”,“transport_pattern”:“reqrep”,“request_payload_format”:“arrow_ipc_stream”,“response_payload_format”:“json”,“response_mode”:“session_open”,“session_behavior”:“opens_session”,“requires_auth”:false,“requires_session”:false,“opens_session”:true,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:36,“max_request_bytes”:16777216,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“batch_rows”,“type”:“uint64”,“nullable”:true},{“name”:“batch_bytes”,“type”:“uint64”,“nullable”:true}\]},“response_schema”:{“type”:“json”,“session_open”:true,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false},{“name”:“next_method”,“type”:“string”,“nullable”:false}\]}},{“name”:“fetch”,“family”:“query”,“summary”:“Fetch the next Arrow batch from an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“arrow_ipc_stream”,“response_mode”:“rows”,“session_behavior”:“requires_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:false,“mutates_state”:false,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:29,“max_request_bytes”:1048576,“max_reply_bytes”:16777216,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“mode”:“rows_or_control”,“control”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}}},{“name”:“close”,“family”:“query”,“summary”:“Close an open or exhausted session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“closes_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:true,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:68,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}},{“name”:“cancel”,“family”:“query”,“summary”:“Cancel and close an open session”,“transport_pattern”:“reqrep”,“request_payload_format”:“json”,“response_payload_format”:“json”,“response_mode”:“metadata_only”,“session_behavior”:“cancels_session”,“requires_auth”:false,“requires_session”:true,“opens_session”:false,“closes_session”:true,“mutates_state”:true,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:196,“max_request_bytes”:1048576,“max_reply_bytes”:1048576,“version_introduced”:1,“request_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“session_token”,“type”:“string”,“nullable”:false}\]},“response_schema”:{“type”:“json”,“fields”:\[{“name”:“session_id”,“type”:“uint64”,“nullable”:false},{“name”:“state”,“type”:“string”,“nullable”:false}\]}},{“name”:“exec”,“family”:“sql”,“summary”:“Execute SQL and return metadata or rows”,“transport_pattern”:“reqrep”,“request_payload_format”:“arrow_ipc_stream”,“response_payload_format”:“arrow_ipc_stream”,“response_mode”:“metadata_or_rows”,“session_behavior”:“stateless”,“requires_auth”:false,“requires_session”:false,“opens_session”:false,“closes_session”:false,“mutates_state”:true,“idempotent”:false,“deprecated”:false,“disabled”:false,“accepted_request_flags”:0,“emitted_reply_flags”:11,“max_request_bytes”:16777216,“max_reply_bytes”:16777216,“version_introduced”:1,“request_schema”:{“fields”:\[{“name”:“sql”,“type”:“utf8”,“nullable”:false},{“name”:“want_result”,“type”:“bool”,“nullable”:false}\]},“response_schema”:{“mode”:“metadata_or_rows”}}\]} |
-
-| ducknng_close_socket(1) |
-|-------------------------|
-| true                    |
-
-| ducknng_stop_server(‘sql_client_demo’) |
-|----------------------------------------|
-| true                                   |
+    +------------------------------------------------------------------------------------------------------------+
+    | ducknng_start_server('sql_client_demo', 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1, 134217728, 300000, 0) |
+    +------------------------------------------------------------------------------------------------------------+
+    | true                                                                                                       |
+    +------------------------------------------------------------------------------------------------------------+
+    +------+--------------+----------+
+    |  ok  | has_manifest | has_exec |
+    +------+--------------+----------+
+    | true | true         | false    |
+    +------+--------------+----------+
+    +------------+---------+---------------+---------------+----------+
+    |    name    | family  | response_mode | requires_auth | disabled |
+    +------------+---------+---------------+---------------+----------+
+    | cancel     | query   | metadata_only | false         | false    |
+    | close      | query   | metadata_only | false         | false    |
+    | fetch      | query   | rows          | false         | false    |
+    | manifest   | control | metadata_only | false         | false    |
+    | query_open | query   | session_open  | false         | false    |
+    +------------+---------+---------------+---------------+----------+
+    +--------------------------------+
+    | ducknng_register_exec_method() |
+    +--------------------------------+
+    | true                           |
+    +--------------------------------+
+    +------------+---------+------------------+---------------+----------+
+    |    name    | family  |  response_mode   | requires_auth | disabled |
+    +------------+---------+------------------+---------------+----------+
+    | cancel     | query   | metadata_only    | false         | false    |
+    | close      | query   | metadata_only    | false         | false    |
+    | exec       | sql     | metadata_or_rows | false         | false    |
+    | fetch      | query   | rows             | false         | false    |
+    | manifest   | control | metadata_only    | false         | false    |
+    | query_open | query   | session_open     | false         | false    |
+    +------------+---------+------------------+---------------+----------+
+    +------+--------------+----------+
+    |  ok  | has_manifest | has_exec |
+    +------+--------------+----------+
+    | true | true         | true     |
+    +------+--------------+----------+
+    +------+-------+--------------+----------------+-------------+
+    |  ok  | error | rows_changed | statement_type | result_type |
+    +------+-------+--------------+----------------+-------------+
+    | true | NULL  | 0            | 7              | 2           |
+    +------+-------+--------------+----------------+-------------+
+    +------+-------+--------------+----------------+-------------+
+    |  ok  | error | rows_changed | statement_type | result_type |
+    +------+-------+--------------+----------------+-------------+
+    | true | NULL  | 2            | 2              | 1           |
+    +------+-------+--------------+----------------+-------------+
+    +----+-------+
+    | i  | gt_10 |
+    +----+-------+
+    | 10 | false |
+    | 11 | true  |
+    +----+-------+
+    +---------+-------+------------+---------+-----------+
+    | date_ok | ts_ok | decimal_ok | list_ok | struct_ok |
+    +---------+-------+------------+---------+-----------+
+    | true    | true  | true       | true    | true      |
+    +---------+-------+------------+---------+-----------+
+    +---------------+-----------------------+
+    |   provider    |        output         |
+    +---------------+-----------------------+
+    | arrow_ipc     | dynamic table         |
+    | csv           | body BLOB fallback    |
+    | ducknng_frame | decoded frame columns |
+    | json          | dynamic table         |
+    | parquet       | body BLOB fallback    |
+    | raw           | body BLOB             |
+    | text          | body_text VARCHAR     |
+    | tsv           | body BLOB fallback    |
+    +---------------+-----------------------+
+    +---+---+
+    | a | b |
+    +---+---+
+    | 1 | x |
+    | 2 | y |
+    +---+---+
+    +----------------------------+
+    | ducknng_open_socket('req') |
+    +----------------------------+
+    | 1                          |
+    +----------------------------+
+    +----------------------------------------------------------------------------------------------+
+    | ducknng_dial_socket(1, 'ipc:///tmp/ducknng_sql_client_demo.ipc', 1000, CAST(0 AS "UBIGINT")) |
+    +----------------------------------------------------------------------------------------------+
+    | true                                                                                         |
+    +----------------------------------------------------------------------------------------------+
+    +-----------+----------+----------------------------------------+------+-----------+-----------+-----------------+-----------------+
+    | socket_id | protocol |                  url                   | open | connected | listening | send_timeout_ms | recv_timeout_ms |
+    +-----------+----------+----------------------------------------+------+-----------+-----------+-----------------+-----------------+
+    | 1         | req      | ipc:///tmp/ducknng_sql_client_demo.ipc | true | true      | false     | 1000            | 1000            |
+    +-----------+----------+----------------------------------------+------+-----------+-----------+-----------------+-----------------+
+    +------+-------+-------------+
+    |  ok  | error | has_payload |
+    +------+-------+-------------+
+    | true | NULL  | true        |
+    +------+-------+-------------+
+    +------+-------+-------------+
+    |  ok  | error | has_payload |
+    +------+-------+-------------+
+    | true | NULL  | true        |
+    +------+-------+-------------+
+    +-------------------------------------------------------------------------------------------------------------------+
+    | substr(hex(ducknng_request_socket_raw(1, from_hex('01000000000000000000000000000000000000000000'), 1000)), 1, 28) |
+    +-------------------------------------------------------------------------------------------------------------------+
+    | 0102040000000800000000000000                                                                                      |
+    +-------------------------------------------------------------------------------------------------------------------+
+    +------+---------+-----------+----------+------------------------------------------------------+
+    |  ok  | version | type_name |   name   | (main."position"(payload_text, '"name":"exec"') > 0) |
+    +------+---------+-----------+----------+------------------------------------------------------+
+    | true | 1       | result    | manifest | true                                                 |
+    +------+---------+-----------+----------+------------------------------------------------------+
+    +------+-----------+------+
+    |  ok  | type_name | name |
+    +------+-----------+------+
+    | true | result    | exec |
+    +------+-----------+------+
+    +------+---------+-----------+----------+----------+
+    |  ok  | version | type_name |   name   | has_exec |
+    +------+---------+-----------+----------+----------+
+    | true | 1       | result    | manifest | true     |
+    +------+---------+-----------+----------+----------+
+    +-------------------------+
+    | ducknng_close_socket(1) |
+    +-------------------------+
+    | true                    |
+    +-------------------------+
+    +----------------------------------------+
+    | ducknng_stop_server('sql_client_demo') |
+    +----------------------------------------+
+    | true                                   |
+    +----------------------------------------+
 
 ### Use `ducknng_ncurl()` against a local `nanonext` HTTPS server
 
@@ -658,21 +705,26 @@ FROM ducknng_ncurl(
 SELECT ducknng_drop_tls_config(1);
 ```
 
-| ducknng_tls_config_from_files(NULL, ‘/tmp/ducknng_readme_http_demo_ca.pem’, NULL, 2) |
-|-------------------------------------------------------------------------------------:|
-|                                                                                    1 |
-
-| ok   | status | error | body_text                        |
-|------|-------:|-------|----------------------------------|
-| true |    200 | NULL  | hello from nanonext https server |
-
-| ok   | status | error | body_hex | has_header |
-|------|-------:|-------|----------|------------|
-| true |    200 | NULL  | 01020304 | true       |
-
-| ducknng_drop_tls_config(1) |
-|----------------------------|
-| true                       |
+    +--------------------------------------------------------------------------------------+
+    | ducknng_tls_config_from_files(NULL, '/tmp/ducknng_readme_http_demo_ca.pem', NULL, 2) |
+    +--------------------------------------------------------------------------------------+
+    | 1                                                                                    |
+    +--------------------------------------------------------------------------------------+
+    +------+--------+-------+----------------------------------+
+    |  ok  | status | error |            body_text             |
+    +------+--------+-------+----------------------------------+
+    | true | 200    | NULL  | hello from nanonext https server |
+    +------+--------+-------+----------------------------------+
+    +------+--------+-------+----------+------------+
+    |  ok  | status | error | body_hex | has_header |
+    +------+--------+-------+----------+------------+
+    | true | 200    | NULL  | 01020304 | true       |
+    +------+--------+-------+----------+------------+
+    +----------------------------+
+    | ducknng_drop_tls_config(1) |
+    +----------------------------+
+    | true                       |
+    +----------------------------+
 
 ### Start `ducknng` on `http://` and use the routed helpers directly
 
@@ -713,21 +765,26 @@ FROM ducknng_decode_frame(getvariable('http_demo_frame'));
 SELECT ducknng_stop_server('http_demo');
 ```
 
-| ducknng_start_http_server(‘http_demo’, ‘<http://127.0.0.1:18444/_ducknng>’, 134217728, 300000, CAST(0 AS “UBIGINT”)) |
-|----------------------------------------------------------------------------------------------------------------------|
-| true                                                                                                                 |
-
-| ok   | has_manifest |
-|------|--------------|
-| true | true         |
-
-| ok   | type_name | name     |
-|------|-----------|----------|
-| true | result    | manifest |
-
-| ducknng_stop_server(‘http_demo’) |
-|----------------------------------|
-| true                             |
+    +--------------------------------------------------------------------------------------------------------------------+
+    | ducknng_start_http_server('http_demo', 'http://127.0.0.1:18444/_ducknng', 134217728, 300000, CAST(0 AS "UBIGINT")) |
+    +--------------------------------------------------------------------------------------------------------------------+
+    | true                                                                                                               |
+    +--------------------------------------------------------------------------------------------------------------------+
+    +------+--------------+
+    |  ok  | has_manifest |
+    +------+--------------+
+    | true | true         |
+    +------+--------------+
+    +------+-----------+----------+
+    |  ok  | type_name |   name   |
+    +------+-----------+----------+
+    | true | result    | manifest |
+    +------+-----------+----------+
+    +----------------------------------+
+    | ducknng_stop_server('http_demo') |
+    +----------------------------------+
+    | true                             |
+    +----------------------------------+
 
 ### Launch raw socket send/recv airos and inspect send status explicitly
 
@@ -782,17 +839,21 @@ SET VARIABLE pair_close_b = ducknng_close_socket(getvariable('pair_b')::UBIGINT)
 SET VARIABLE pair_close_a = ducknng_close_socket(getvariable('pair_a')::UBIGINT);
 ```
 
-| aio_id | ok   | no_frame |
-|-------:|------|----------|
-|      2 | true | true     |
-
-| aio_id | ok   | got_payload |
-|-------:|------|-------------|
-|      1 | true | true        |
-
-| kind | state     | phase | send_done | send_ok | recv_done | recv_ok_is_null |
-|------|-----------|-------|-----------|---------|-----------|-----------------|
-| send | collected | send  | true      | true    | false     | true            |
+    +--------+------+----------+
+    | aio_id |  ok  | no_frame |
+    +--------+------+----------+
+    | 2      | true | true     |
+    +--------+------+----------+
+    +--------+------+-------------+
+    | aio_id |  ok  | got_payload |
+    +--------+------+-------------+
+    | 1      | true | true        |
+    +--------+------+-------------+
+    +------+-----------+-------+-----------+---------+-----------+-----------------+
+    | kind |   state   | phase | send_done | send_ok | recv_done | recv_ok_is_null |
+    +------+-----------+-------+-----------+---------+-----------+-----------------+
+    | send | collected | send  | true      | true    | false     | true            |
+    +------+-----------+-------+-----------+---------+-----------+-----------------+
 
 ### Push one raw message through `push` / `pull`
 
@@ -835,9 +896,11 @@ SET VARIABLE push_close = ducknng_close_socket(getvariable('push_socket')::UBIGI
 SET VARIABLE pull_close = ducknng_close_socket(getvariable('pull_socket')::UBIGINT);
 ```
 
-| sent | ok   | got_payload |
-|------|------|-------------|
-| true | true | true        |
+    +------+------+-------------+
+    | sent |  ok  | got_payload |
+    +------+------+-------------+
+    | true | true | true        |
+    +------+------+-------------+
 
 ### Publish one raw message through `pub` / `sub`
 
@@ -880,9 +943,11 @@ SET VARIABLE sub_close = ducknng_close_socket(getvariable('sub_socket')::UBIGINT
 SET VARIABLE pub_close = ducknng_close_socket(getvariable('pub_socket')::UBIGINT);
 ```
 
-| sent | ok   | got_payload |
-|------|------|-------------|
-| true | true | true        |
+    +------+------+-------------+
+    | sent |  ok  | got_payload |
+    +------+------+-------------+
+    | true | true | true        |
+    +------+------+-------------+
 
 ### Exchange one survey and one response through `surveyor` / `respondent`
 
@@ -942,13 +1007,16 @@ SET VARIABLE surveyor_close = ducknng_close_socket(getvariable('surveyor_socket'
 SET VARIABLE respondent_close = ducknng_close_socket(getvariable('respondent_socket')::UBIGINT);
 ```
 
-| sent_survey | ok   | got_survey |
-|-------------|------|------------|
-| true        | true | true       |
-
-| sent_response | ok   | got_response |
-|---------------|------|--------------|
-| true          | true | true         |
+    +-------------+------+------------+
+    | sent_survey |  ok  | got_survey |
+    +-------------+------+------------+
+    | true        | true | true       |
+    +-------------+------+------------+
+    +---------------+------+--------------+
+    | sent_response |  ok  | got_response |
+    +---------------+------+--------------+
+    | true          | true | true         |
+    +---------------+------+--------------+
 
 ### Launch raw requests asynchronously and collect the reply frames later
 
@@ -1004,30 +1072,37 @@ DROP TABLE aio_demo;
 SELECT ducknng_stop_server('sql_aio_demo');
 ```
 
-| ducknng_start_server(‘sql_aio_demo’, ‘ipc:///tmp/ducknng_sql_aio_demo.ipc’, 1, 134217728, 300000, 0) |
-|------------------------------------------------------------------------------------------------------|
-| true                                                                                                 |
-
-| aio1_started | aio2_started_after_aio1 |
-|--------------|-------------------------|
-| true         | true                    |
-
-| aio_id | ok   | has_frame |
-|-------:|------|-----------|
-|      1 | true | true      |
-|      2 | true | true      |
-
-| aio1_ready | aio2_ready |
-|------------|------------|
-| true       | true       |
-
-| dropped |
-|---------|
-| true    |
-
-| ducknng_stop_server(‘sql_aio_demo’) |
-|-------------------------------------|
-| true                                |
+    +------------------------------------------------------------------------------------------------------+
+    | ducknng_start_server('sql_aio_demo', 'ipc:///tmp/ducknng_sql_aio_demo.ipc', 1, 134217728, 300000, 0) |
+    +------------------------------------------------------------------------------------------------------+
+    | true                                                                                                 |
+    +------------------------------------------------------------------------------------------------------+
+    +--------------+-------------------------+
+    | aio1_started | aio2_started_after_aio1 |
+    +--------------+-------------------------+
+    | true         | true                    |
+    +--------------+-------------------------+
+    +--------+------+-----------+
+    | aio_id |  ok  | has_frame |
+    +--------+------+-----------+
+    | 1      | true | true      |
+    | 2      | true | true      |
+    +--------+------+-----------+
+    +------------+------------+
+    | aio1_ready | aio2_ready |
+    +------------+------------+
+    | true       | true       |
+    +------------+------------+
+    +---------+
+    | dropped |
+    +---------+
+    | true    |
+    +---------+
+    +-------------------------------------+
+    | ducknng_stop_server('sql_aio_demo') |
+    +-------------------------------------+
+    | true                                |
+    +-------------------------------------+
 
 ### Launch unary RPC calls asynchronously and decode the replies later
 
@@ -1101,33 +1176,41 @@ DROP TABLE rpc_aio_collect;
 SELECT ducknng_stop_server('sql_rpc_aio_demo');
 ```
 
-| ducknng_start_server(‘sql_rpc_aio_demo’, ‘ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc’, 1, 134217728, 300000, 0) |
-|--------------------------------------------------------------------------------------------------------------|
-| true                                                                                                         |
-
-| ducknng_register_exec_method() |
-|--------------------------------|
-| true                           |
-
-| manifest_aio_started | exec_aio_started_after_manifest |
-|----------------------|---------------------------------|
-| true                 | true                            |
-
-| ok   | type_name | name     | has_exec |
-|------|-----------|----------|----------|
-| true | result    | manifest | true     |
-
-| ok   | type_name | name |
-|------|-----------|------|
-| true | result    | exec |
-
-| dropped |
-|---------|
-| true    |
-
-| ducknng_stop_server(‘sql_rpc_aio_demo’) |
-|-----------------------------------------|
-| true                                    |
+    +--------------------------------------------------------------------------------------------------------------+
+    | ducknng_start_server('sql_rpc_aio_demo', 'ipc:///tmp/ducknng_sql_rpc_aio_demo.ipc', 1, 134217728, 300000, 0) |
+    +--------------------------------------------------------------------------------------------------------------+
+    | true                                                                                                         |
+    +--------------------------------------------------------------------------------------------------------------+
+    +--------------------------------+
+    | ducknng_register_exec_method() |
+    +--------------------------------+
+    | true                           |
+    +--------------------------------+
+    +----------------------+---------------------------------+
+    | manifest_aio_started | exec_aio_started_after_manifest |
+    +----------------------+---------------------------------+
+    | true                 | true                            |
+    +----------------------+---------------------------------+
+    +------+-----------+----------+----------+
+    |  ok  | type_name |   name   | has_exec |
+    +------+-----------+----------+----------+
+    | true | result    | manifest | true     |
+    +------+-----------+----------+----------+
+    +------+-----------+------+
+    |  ok  | type_name | name |
+    +------+-----------+------+
+    | true | result    | exec |
+    +------+-----------+------+
+    +---------+
+    | dropped |
+    +---------+
+    | true    |
+    +---------+
+    +-----------------------------------------+
+    | ducknng_stop_server('sql_rpc_aio_demo') |
+    +-----------------------------------------+
+    | true                                    |
+    +-----------------------------------------+
 
 ### Open, fetch, and close a query session explicitly
 
@@ -1197,29 +1280,36 @@ FROM ducknng_close_query(
 SELECT ducknng_stop_server('sql_session_demo');
 ```
 
-| ducknng_start_server(‘sql_session_demo’, ‘ipc:///tmp/ducknng_sql_session_demo.ipc’, 1, 134217728, 300000, 0) |
-|--------------------------------------------------------------------------------------------------------------|
-| true                                                                                                         |
-
-| opened_session_id | session_token_chars |
-|------------------:|--------------------:|
-|                 1 |                  32 |
-
-| ok   | session_id | state_is_null | has_payload | end_of_stream |
-|------|-----------:|---------------|-------------|---------------|
-| true |          1 | true          | true        | false         |
-
-| ok   | session_id | state     | no_payload | end_of_stream |
-|------|-----------:|-----------|------------|---------------|
-| true |          1 | exhausted | true       | true          |
-
-| ok   | error | session_id | session_token                    | state  | next_method | control_json                      |
-|------|-------|-----------:|----------------------------------|--------|-------------|-----------------------------------|
-| true | NULL  |          1 | 6af1a1c8754451aa409e05a96c127e57 | closed | NULL        | {“session_id”:1,“state”:“closed”} |
-
-| ducknng_stop_server(‘sql_session_demo’) |
-|-----------------------------------------|
-| true                                    |
+    +--------------------------------------------------------------------------------------------------------------+
+    | ducknng_start_server('sql_session_demo', 'ipc:///tmp/ducknng_sql_session_demo.ipc', 1, 134217728, 300000, 0) |
+    +--------------------------------------------------------------------------------------------------------------+
+    | true                                                                                                         |
+    +--------------------------------------------------------------------------------------------------------------+
+    +-------------------+---------------------+
+    | opened_session_id | session_token_chars |
+    +-------------------+---------------------+
+    | 1                 | 32                  |
+    +-------------------+---------------------+
+    +------+------------+---------------+-------------+---------------+
+    |  ok  | session_id | state_is_null | has_payload | end_of_stream |
+    +------+------------+---------------+-------------+---------------+
+    | true | 1          | true          | true        | false         |
+    +------+------------+---------------+-------------+---------------+
+    +------+------------+-----------+------------+---------------+
+    |  ok  | session_id |   state   | no_payload | end_of_stream |
+    +------+------------+-----------+------------+---------------+
+    | true | 1          | exhausted | true       | true          |
+    +------+------------+-----------+------------+---------------+
+    +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
+    |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
+    +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
+    | true | NULL  | 1          | 25845aa88596b4447d8c47f2049e6b36 | closed | NULL        | {"session_id":1,"state":"closed"} |
+    +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
+    +-----------------------------------------+
+    | ducknng_stop_server('sql_session_demo') |
+    +-----------------------------------------+
+    | true                                    |
+    +-----------------------------------------+
 
 ### `tls+tcp://` with a self-signed development TLS config
 
@@ -1254,25 +1344,31 @@ SELECT ducknng_stop_server('tls_demo_self');
 SELECT ducknng_drop_tls_config(1);
 ```
 
-| ducknng_self_signed_tls_config(‘127.0.0.1’, 365, 0) |
-|----------------------------------------------------:|
-|                                                   1 |
-
-| ducknng_start_server(‘tls_demo_self’, ‘tls+tcp://127.0.0.1:45453’, 1, 134217728, 300000, 1) |
-|---------------------------------------------------------------------------------------------|
-| true                                                                                        |
-
-| ok   | type_name | name     | (main.”position”(payload_text, ‘“name”:“exec”’) \> 0) |
-|------|-----------|----------|-------------------------------------------------------|
-| true | result    | manifest | false                                                 |
-
-| ducknng_stop_server(‘tls_demo_self’) |
-|--------------------------------------|
-| true                                 |
-
-| ducknng_drop_tls_config(1) |
-|----------------------------|
-| true                       |
+    +-----------------------------------------------------+
+    | ducknng_self_signed_tls_config('127.0.0.1', 365, 0) |
+    +-----------------------------------------------------+
+    | 1                                                   |
+    +-----------------------------------------------------+
+    +---------------------------------------------------------------------------------------------+
+    | ducknng_start_server('tls_demo_self', 'tls+tcp://127.0.0.1:45453', 1, 134217728, 300000, 1) |
+    +---------------------------------------------------------------------------------------------+
+    | true                                                                                        |
+    +---------------------------------------------------------------------------------------------+
+    +------+-----------+----------+------------------------------------------------------+
+    |  ok  | type_name |   name   | (main."position"(payload_text, '"name":"exec"') > 0) |
+    +------+-----------+----------+------------------------------------------------------+
+    | true | result    | manifest | false                                                |
+    +------+-----------+----------+------------------------------------------------------+
+    +--------------------------------------+
+    | ducknng_stop_server('tls_demo_self') |
+    +--------------------------------------+
+    | true                                 |
+    +--------------------------------------+
+    +----------------------------+
+    | ducknng_drop_tls_config(1) |
+    +----------------------------+
+    | true                       |
+    +----------------------------+
 
 For mTLS, create the same kind of TLS handle with `auth_mode = 2`. On
 listeners this requires the peer to present a certificate trusted by the
@@ -1323,25 +1419,31 @@ SELECT ducknng_stop_server('tls_demo_files');
 SELECT ducknng_drop_tls_config(1);
 ```
 
-| ducknng_tls_config_from_files(‘test/certs/loopback-cert-key.pem’, ‘test/certs/loopback-ca.pem’, NULL, 0) |
-|---------------------------------------------------------------------------------------------------------:|
-|                                                                                                        1 |
-
-| ducknng_start_server(‘tls_demo_files’, ‘tls+tcp://127.0.0.1:45454’, 1, 134217728, 300000, 1) |
-|----------------------------------------------------------------------------------------------|
-| true                                                                                         |
-
-| ok   | type_name | name     | (main.”position”(payload_text, ‘“name”:“exec”’) \> 0) |
-|------|-----------|----------|-------------------------------------------------------|
-| true | result    | manifest | false                                                 |
-
-| ducknng_stop_server(‘tls_demo_files’) |
-|---------------------------------------|
-| true                                  |
-
-| ducknng_drop_tls_config(1) |
-|----------------------------|
-| true                       |
+    +----------------------------------------------------------------------------------------------------------+
+    | ducknng_tls_config_from_files('test/certs/loopback-cert-key.pem', 'test/certs/loopback-ca.pem', NULL, 0) |
+    +----------------------------------------------------------------------------------------------------------+
+    | 1                                                                                                        |
+    +----------------------------------------------------------------------------------------------------------+
+    +----------------------------------------------------------------------------------------------+
+    | ducknng_start_server('tls_demo_files', 'tls+tcp://127.0.0.1:45454', 1, 134217728, 300000, 1) |
+    +----------------------------------------------------------------------------------------------+
+    | true                                                                                         |
+    +----------------------------------------------------------------------------------------------+
+    +------+-----------+----------+------------------------------------------------------+
+    |  ok  | type_name |   name   | (main."position"(payload_text, '"name":"exec"') > 0) |
+    +------+-----------+----------+------------------------------------------------------+
+    | true | result    | manifest | false                                                |
+    +------+-----------+----------+------------------------------------------------------+
+    +---------------------------------------+
+    | ducknng_stop_server('tls_demo_files') |
+    +---------------------------------------+
+    | true                                  |
+    +---------------------------------------+
+    +----------------------------+
+    | ducknng_drop_tls_config(1) |
+    +----------------------------+
+    | true                       |
+    +----------------------------+
 
 ### `ws://` and `wss://` as NNG transports
 
@@ -1400,37 +1502,46 @@ SELECT ducknng_stop_server('wss_demo');
 SELECT ducknng_drop_tls_config(1);
 ```
 
-| ducknng_start_server(‘ws_demo’, ‘<ws://127.0.0.1:45455/_ducknng>’, 1, 134217728, 300000, CAST(0 AS “UBIGINT”)) |
-|----------------------------------------------------------------------------------------------------------------|
-| true                                                                                                           |
-
-| ok   | type_name | name     |
-|------|-----------|----------|
-| true | result    | manifest |
-
-| ducknng_stop_server(‘ws_demo’) |
-|--------------------------------|
-| true                           |
-
-| ducknng_self_signed_tls_config(‘127.0.0.1’, 365, 0) |
-|----------------------------------------------------:|
-|                                                   1 |
-
-| ducknng_start_server(‘wss_demo’, ‘<wss://127.0.0.1:45456/_ducknng>’, 1, 134217728, 300000, CAST(1 AS “UBIGINT”)) |
-|------------------------------------------------------------------------------------------------------------------|
-| true                                                                                                             |
-
-| ok   | type_name | name     |
-|------|-----------|----------|
-| true | result    | manifest |
-
-| ducknng_stop_server(‘wss_demo’) |
-|---------------------------------|
-| true                            |
-
-| ducknng_drop_tls_config(1) |
-|----------------------------|
-| true                       |
+    +--------------------------------------------------------------------------------------------------------------+
+    | ducknng_start_server('ws_demo', 'ws://127.0.0.1:45455/_ducknng', 1, 134217728, 300000, CAST(0 AS "UBIGINT")) |
+    +--------------------------------------------------------------------------------------------------------------+
+    | true                                                                                                         |
+    +--------------------------------------------------------------------------------------------------------------+
+    +------+-----------+----------+
+    |  ok  | type_name |   name   |
+    +------+-----------+----------+
+    | true | result    | manifest |
+    +------+-----------+----------+
+    +--------------------------------+
+    | ducknng_stop_server('ws_demo') |
+    +--------------------------------+
+    | true                           |
+    +--------------------------------+
+    +-----------------------------------------------------+
+    | ducknng_self_signed_tls_config('127.0.0.1', 365, 0) |
+    +-----------------------------------------------------+
+    | 1                                                   |
+    +-----------------------------------------------------+
+    +----------------------------------------------------------------------------------------------------------------+
+    | ducknng_start_server('wss_demo', 'wss://127.0.0.1:45456/_ducknng', 1, 134217728, 300000, CAST(1 AS "UBIGINT")) |
+    +----------------------------------------------------------------------------------------------------------------+
+    | true                                                                                                           |
+    +----------------------------------------------------------------------------------------------------------------+
+    +------+-----------+----------+
+    |  ok  | type_name |   name   |
+    +------+-----------+----------+
+    | true | result    | manifest |
+    +------+-----------+----------+
+    +---------------------------------+
+    | ducknng_stop_server('wss_demo') |
+    +---------------------------------+
+    | true                            |
+    +---------------------------------+
+    +----------------------------+
+    | ducknng_drop_tls_config(1) |
+    +----------------------------+
+    | true                       |
+    +----------------------------+
 
 ### REQ/REP `EXEC` via `nanonext` as an interop example
 
@@ -1620,7 +1731,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_30bf2324aaac1a.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_31c4065bc7b905.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
