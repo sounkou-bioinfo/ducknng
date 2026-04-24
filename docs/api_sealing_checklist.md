@@ -27,9 +27,13 @@ That is enough for serious use and interop work, but it is not yet enough to cal
 
 The previous bare-`session_id` ownership blocker is addressed by the current query-family bearer token model: `query_open` returns `session_token`, and `fetch`, `close`, and `cancel` must present it with the session id. Transport-derived mTLS identity has also landed for TLS-authenticated services, and sessions opened with a verified peer identity are bound to that identity in addition to the token. Before sealing, the remaining session question is whether this bearer-token plus optional mTLS owner-identity model is the stable public owner contract or whether an envelope-level RPC authentication layer is still required.
 
-The deeper remaining session blocker is execution isolation. Service-owned SQL is still serialized through the runtime init connection. That avoids concurrent connection misuse, but it does not yet provide isolated per-session DuckDB state. Before declaring multi-client session semantics sealed, decide whether per-session or per-request DuckDB connections with locked-down configuration are required for the stable surface.
+The deeper remaining session blocker is execution isolation. Service-owned SQL is still serialized through the runtime init connection. That avoids concurrent connection misuse, but it does not yet provide isolated per-session DuckDB state or a sandboxed execution profile. Before declaring multi-client session semantics sealed, decide whether per-session or per-request DuckDB connections with locked-down configuration are required for the stable surface, and decide which filesystem, extension-loading, external-access, and attachment capabilities are allowed over RPC.
 
-### 2. Final HTTP async scope
+### 2. Resource quotas for multi-client services
+
+The current implementation enforces listener receive-size limits, descriptor request/reply-size limits, and session idle timeout. It does not yet implement all owner/pipe-level quotas expected from a sealed multi-tenant RPC service. Before sealing multi-client deployment semantics, decide whether the stable surface needs explicit limits for concurrent in-flight requests, open sessions per owner identity, cumulative reply bytes per owner, and session-open rate.
+
+### 3. Final HTTP async scope
 
 The synchronous HTTP transport direction is now in place:
 
@@ -38,11 +42,11 @@ The synchronous HTTP transport direction is now in place:
 
 Before sealing, the remaining HTTP question is whether any HTTP aio helpers are intended to be part of the stable async story. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules.
 
-### 3. Final generic socket transport coverage story
+### 4. Final generic socket transport coverage story
 
 The generic socket dial surface now accepts an explicit `tls_config_id`, which makes `tls+tcp://` and `wss://` usable through the existing handle model. Before sealing, the remaining question is not whether TLS dialing exists, but whether the repo's examples and docs cover the intended supported transport matrix clearly enough across the broader protocol family.
 
-### 4. Final async surface scope
+### 5. Final async surface scope
 
 The project now has:
 
@@ -56,7 +60,7 @@ Before sealing, it should decide whether the stable async contract is:
 
 What matters is not maximizing surface area, but freezing a clear model: aio launch timeout bounds the pending operation, `ducknng_aio_collect(..., wait_ms)` is later polling/collection, and async helpers do not silently become a second background-job protocol.
 
-### 5. Final type and fetch ergonomics stance
+### 6. Final type and fetch ergonomics stance
 
 The unary Arrow row path now covers the next planned type wave for practical DuckDB tabular values: temporal types, decimals, lists, and structs in addition to the original scalar subset. Before sealing, the remaining type question is whether that documented set is the initial public contract or whether any additional Arrow features, such as map values, dictionary-preserving roundtrips, extension types, or broader deep-nesting guarantees, must land first.
 
@@ -64,13 +68,13 @@ Fetched Arrow payload ergonomics are still a separate sealing question: decide w
 
 ## Strongly recommended before sealing
 
-### 6. Representative protocol examples and tests
+### 7. Representative protocol examples and tests
 
 The repo now demonstrates req-style RPC, `pair`, `push` / `pull`, `pub` / `sub`, raw aio, unary RPC aio, and the current session control flow. Before sealing, the remaining question is not whether the protocol family is entirely undocumented, but whether the current examples and tests are representative enough for the less-common raw socket patterns that remain open/close-oriented rather than tutorial-driven.
 
 At minimum, the project should keep the existing runnable examples green and decide whether additional tutorial coverage for `bus` or any later event-oriented patterns belongs in the sealed public story.
 
-### 7. Explicit scope for `ws://` and `wss://`
+### 8. Explicit scope for `ws://` and `wss://`
 
 `ws://` and `wss://` are now explicit NNG transport schemes in scope for the public API. What still needs to stay explicit is the boundary: they belong to the NNG transport family, not to the HTTP carrier layer. The HTTP transport contract may still defer browser-style or HTTP-carrier WebSocket work even while NNG WebSocket transports are supported.
 
@@ -85,6 +89,7 @@ These items were worth resolving before the API hardens further and should stay 
 - the unary Arrow row path now includes `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `LIST`, and `STRUCT` coverage with SQL-visible regression tests
 - query sessions now bind ownership to an explicit `session_token` bearer capability instead of treating `session_id` as a capability
 - TLS-authenticated services now attach verified mTLS peer identity to requests and bind sessions to that identity when present
+- `ducknng_register_exec_method(true)` can register the opt-in `exec` descriptor with verified peer identity required, while the zero-argument form remains backwards compatible
 
 ## Not sealing blockers by themselves
 
