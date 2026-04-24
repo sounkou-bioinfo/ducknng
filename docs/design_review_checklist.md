@@ -107,6 +107,8 @@ This checklist tracks the implementation status of the main architecture, transp
     - CSV, TSV, and Parquet are recognized but use the generic `body BLOB` fallback until a scalarfs-style memory filesystem/provider path is available
   - Remaining work:
     - decide whether user-defined hooks such as `ducknng_register_codec` and `ducknng_unregister_codec` belong in the sealed API
+    - research a scalarfs-style in-memory filesystem/provider path for CSV/TSV/Parquet body parsing, including whether community-extension designs such as `duckdb_scalarfs` can be copied or adapted without pulling core `ducknng` onto unstable or C++ DuckDB APIs
+    - keep the generic `body BLOB` fallback as the safe default whenever a media type is recognized but no parsing provider is enabled
     - keep user-defined Arrow extension serde blocked until ownership, security, and the future DuckDB Arrow seam are clear enough not to freeze an unsafe callback ABI
 - [ ] Surface pipe events / readiness notifications.
   - Blocker: depends on the async/aio/runtime event model and broader session cleanup strategy.

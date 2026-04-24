@@ -98,5 +98,6 @@ These are still important, but they do not need to be finished before the API ca
 
 - splitting `src/ducknng_sql_api.c`
 - user-defined codec registration hooks beyond the current built-in body codec providers
+- scalarfs-style in-memory filesystem/provider research for CSV/TSV/Parquet body parsing, because the generic `body BLOB` fallback is an acceptable stable behavior until a clean provider exists
 - pipe event notification work
 - a future DuckDB-native Arrow re-plumb, if one ever becomes viable without unstable or deprecated APIs
