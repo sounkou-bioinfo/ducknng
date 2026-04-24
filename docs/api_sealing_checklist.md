@@ -17,7 +17,7 @@ This checklist is narrower than `docs/design_review_checklist.md`. It tracks wha
 - an HTTP/HTTPS server helper plus URL-routed synchronous request/RPC/session helpers
 - NNG WebSocket transport schemes through `ws://` and `wss://`
 - a low-level HTTP/HTTPS client helper
-- built-in content-type driven body codec helpers for raw/text/JSON/CSV/TSV/Parquet/Arrow IPC/frame bodies
+- built-in content-type driven body codec helpers for raw/text/JSON/Arrow IPC/frame bodies, with CSV/TSV/Parquet recognized and using the generic `body BLOB` fallback pending a memory-backed reader path
 
 That is enough for serious use and interop work, but it is not yet enough to call the full API sealed.
 

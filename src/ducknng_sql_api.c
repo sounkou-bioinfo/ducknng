@@ -478,45 +478,6 @@ static char *ducknng_sql_quote_literal(const char *s) {
     return out;
 }
 
-static char *ducknng_join_temp_file_path(const char *dir, const char *filename) {
-    size_t len;
-    char *out;
-    char sep = '/';
-#ifdef _WIN32
-    sep = '\\';
-#endif
-    if (!dir || !filename) return NULL;
-    len = strlen(dir) + 1 + strlen(filename) + 1;
-    out = (char *)duckdb_malloc(len);
-    if (!out) return NULL;
-    snprintf(out, len, "%s%c%s", dir, sep, filename);
-    return out;
-}
-
-static int ducknng_write_file_bytes(const char *path, const uint8_t *data, size_t len, char **errmsg) {
-    FILE *fp;
-    if (errmsg) *errmsg = NULL;
-    if (!path) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing temporary body path");
-        return -1;
-    }
-    fp = fopen(path, "wb");
-    if (!fp) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to open temporary body file");
-        return -1;
-    }
-    if (len > 0 && fwrite(data, 1, len, fp) != len) {
-        fclose(fp);
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to write temporary body file");
-        return -1;
-    }
-    if (fclose(fp) != 0) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to close temporary body file");
-        return -1;
-    }
-    return 0;
-}
-
 static char *ducknng_headers_json_get_header(const char *headers_json, const char *wanted_name) {
     const char *p = headers_json;
     char *last_value = NULL;
@@ -4638,63 +4599,70 @@ static void ducknng_body_parse_emit_frame_row(duckdb_data_chunk output, const du
 static int ducknng_body_parse_run_duckdb_reader(ducknng_sql_context *ctx,
     ducknng_body_parse_bind_data *bind, const uint8_t *body, size_t body_len,
     int codec_kind, char **errmsg) {
-    const char *filename = "body.bin";
-    const char *query_prefix = NULL;
-    const char *query_suffix = ")";
-    char *temp_dir = NULL;
-    char *path = NULL;
+    char *json_text = NULL;
     char *quoted = NULL;
     char *sql = NULL;
     uint8_t *payload = NULL;
     size_t payload_len = 0;
     size_t sql_len;
+    const char *template_array_struct =
+        "WITH _parsed(v) AS (SELECT from_json(%s::JSON, json_structure(%s::JSON))) "
+        "SELECT s.* FROM _parsed, unnest(v) AS t(s)";
+    const char *template_array_value =
+        "WITH _parsed(v) AS (SELECT from_json(%s::JSON, json_structure(%s::JSON))) "
+        "SELECT unnest(v) AS value FROM _parsed";
+    const char *template_object =
+        "WITH _parsed(v) AS (SELECT from_json(%s::JSON, json_structure(%s::JSON))) "
+        "SELECT v.* FROM _parsed";
+    const char *template_scalar =
+        "SELECT from_json(%s::JSON, json_structure(%s::JSON)) AS value";
+    const char *chosen_template = NULL;
+    const uint8_t *p;
+    const uint8_t *end;
+    int tried_array_struct = 0;
     int rc = -1;
     if (errmsg) *errmsg = NULL;
     if (!ctx || !ctx->rt || !ctx->rt->init_con || !bind) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: missing runtime for body parser");
         return -1;
     }
-    switch (codec_kind) {
-        case DUCKNNG_BODY_CODEC_JSON:
-            filename = "body.json";
-            query_prefix = "SELECT * FROM read_json_auto(";
-            break;
-        case DUCKNNG_BODY_CODEC_CSV:
-            filename = "body.csv";
-            query_prefix = "SELECT * FROM read_csv_auto(";
-            break;
-        case DUCKNNG_BODY_CODEC_TSV:
-            filename = "body.tsv";
-            query_prefix = "SELECT * FROM read_csv_auto(";
-            query_suffix = ", delim='\\t')";
-            break;
-        case DUCKNNG_BODY_CODEC_PARQUET:
-            filename = "body.parquet";
-            query_prefix = "SELECT * FROM read_parquet(";
-            break;
-        default:
-            if (errmsg) *errmsg = ducknng_strdup("ducknng: body codec does not use a DuckDB reader");
-            return -1;
+    if (codec_kind != DUCKNNG_BODY_CODEC_JSON) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: this body codec needs memory-backed DuckDB reader support and is not enabled");
+        return -1;
     }
-    temp_dir = ducknng_make_temp_dir("ducknng-body-");
-    path = ducknng_join_temp_file_path(temp_dir, filename);
-    if (!temp_dir || !path) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to allocate temporary body path");
+    if (!body || body_len == 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: JSON body must not be empty");
+        return -1;
+    }
+    if (!ducknng_bytes_look_text(body, body_len)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: JSON body is not valid UTF-8 text");
+        return -1;
+    }
+    json_text = ducknng_dup_bytes(body, body_len);
+    quoted = ducknng_sql_quote_literal(json_text ? json_text : "");
+    if (!json_text || !quoted) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory preparing JSON body");
         goto cleanup;
     }
-    if (ducknng_write_file_bytes(path, body, body_len, errmsg) != 0) goto cleanup;
-    quoted = ducknng_sql_quote_literal(path);
-    if (!quoted) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory quoting body path");
-        goto cleanup;
+    p = body;
+    end = body + body_len;
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
+    if (p < end && *p == '[') {
+        chosen_template = template_array_struct;
+        tried_array_struct = 1;
+    } else if (p < end && *p == '{') {
+        chosen_template = template_object;
+    } else {
+        chosen_template = template_scalar;
     }
-    sql_len = strlen(query_prefix) + strlen(quoted) + strlen(query_suffix) + 1;
+retry_build:
+    sql_len = snprintf(NULL, 0, chosen_template, quoted, quoted) + 1;
     sql = (char *)duckdb_malloc(sql_len);
     if (!sql) {
-        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory building body parser query");
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory building JSON parser query");
         goto cleanup;
     }
-    snprintf(sql, sql_len, "%s%s%s", query_prefix, quoted, query_suffix);
+    snprintf(sql, sql_len, chosen_template, quoted, quoted);
     if (ducknng_runtime_current_thread_request_service_get(ctx->rt)) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: DuckDB-reader body codecs cannot run inside service-owned SQL yet");
         goto cleanup;
@@ -4702,7 +4670,15 @@ static int ducknng_body_parse_run_duckdb_reader(ducknng_sql_context *ctx,
     ducknng_runtime_init_con_lock(ctx->rt);
     if (ducknng_query_to_ipc_stream(ctx->rt->init_con, sql, &payload, &payload_len, errmsg) != 0) {
         ducknng_runtime_init_con_unlock(ctx->rt);
-        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: body parser query failed");
+        if (tried_array_struct) {
+            if (errmsg && *errmsg) { duckdb_free(*errmsg); *errmsg = NULL; }
+            tried_array_struct = 0;
+            chosen_template = template_array_value;
+            duckdb_free(sql);
+            sql = NULL;
+            goto retry_build;
+        }
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: JSON body parser query failed");
         goto cleanup;
     }
     ducknng_runtime_init_con_unlock(ctx->rt);
@@ -4714,14 +4690,7 @@ cleanup:
     if (payload) duckdb_free(payload);
     if (sql) duckdb_free(sql);
     if (quoted) duckdb_free(quoted);
-    if (path) {
-        (void)ducknng_remove_file(path);
-        duckdb_free(path);
-    }
-    if (temp_dir) {
-        (void)ducknng_remove_dir(temp_dir);
-        duckdb_free(temp_dir);
-    }
+    if (json_text) duckdb_free(json_text);
     return rc;
 }
 
@@ -4808,9 +4777,6 @@ static int ducknng_body_parse_prepare(duckdb_bind_info info, ducknng_sql_context
             duckdb_bind_set_cardinality(info, bind->row_count, true);
             break;
         case DUCKNNG_BODY_CODEC_JSON:
-        case DUCKNNG_BODY_CODEC_CSV:
-        case DUCKNNG_BODY_CODEC_TSV:
-        case DUCKNNG_BODY_CODEC_PARQUET:
             if (ducknng_body_parse_run_duckdb_reader(ctx, bind, body, body_len, bind->codec_kind, &errmsg) != 0) {
                 destroy_body_parse_bind_data(bind);
                 duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: failed to parse body with DuckDB reader");
@@ -4836,6 +4802,9 @@ static int ducknng_body_parse_prepare(duckdb_bind_info info, ducknng_sql_context
             }
             duckdb_bind_set_cardinality(info, bind->row_count, true);
             break;
+        case DUCKNNG_BODY_CODEC_CSV:
+        case DUCKNNG_BODY_CODEC_TSV:
+        case DUCKNNG_BODY_CODEC_PARQUET:
         case DUCKNNG_BODY_CODEC_RAW:
         default:
             bind->raw_len = (idx_t)body_len;
@@ -5035,10 +5004,10 @@ static void ducknng_body_parse_scan(duckdb_function_info info, duckdb_data_chunk
 static const ducknng_codec_static_row DUCKNNG_BUILTIN_CODECS[] = {
     {"raw", "application/octet-stream, */* fallback", "body BLOB", "No decoding; bytes are returned unchanged."},
     {"text", "text/*", "body_text VARCHAR", "Valid UTF-8 text bodies are exposed as VARCHAR."},
-    {"json", "application/json, application/*+json, application/x-ndjson", "dynamic table", "Parsed through DuckDB read_json_auto() from a temporary file."},
-    {"csv", "text/csv, application/csv", "dynamic table", "Parsed through DuckDB read_csv_auto() from a temporary file."},
-    {"tsv", "text/tab-separated-values", "dynamic table", "Parsed through DuckDB read_csv_auto(..., delim='\\t') from a temporary file."},
-    {"parquet", "application/vnd.apache.parquet, application/parquet", "dynamic table", "Parsed through DuckDB read_parquet() from a temporary file."},
+    {"json", "application/json, application/*+json, application/x-ndjson", "dynamic table", "Parsed in memory through DuckDB JSON functions."},
+    {"csv", "text/csv, application/csv", "body BLOB fallback", "Recognized, but returned as raw bytes until a memory-backed DuckDB CSV reader path exists."},
+    {"tsv", "text/tab-separated-values", "body BLOB fallback", "Recognized, but returned as raw bytes until a memory-backed DuckDB CSV reader path exists."},
+    {"parquet", "application/vnd.apache.parquet, application/parquet", "body BLOB fallback", "Recognized, but returned as raw bytes until a memory-backed DuckDB Parquet reader path exists."},
     {"arrow_ipc", "application/vnd.apache.arrow.stream, application/vnd.apache.arrow.ipc, application/arrow", "dynamic table", "Decoded as Arrow IPC stream bytes with nanoarrow and mapped to DuckDB vectors."},
     {"ducknng_frame", "application/vnd.ducknng.frame", "decoded frame columns", "Decoded as one ducknng protocol frame, matching ducknng_decode_frame()."}
 };

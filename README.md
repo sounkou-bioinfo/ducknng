@@ -28,7 +28,9 @@ Today the extension already includes:
 - a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS routing
   for the synchronous request/RPC/session helper family
 - built-in content-type driven body codec helpers for
-  raw/text/JSON/CSV/TSV/Parquet/Arrow IPC/frame payloads
+  raw/text/JSON/Arrow IPC/frame payloads, with CSV/TSV/Parquet
+  recognized and safely returned through the generic BLOB fallback until
+  a memory-backed DuckDB filesystem path lands
 - explicit query-session helpers and TLS config handles
 
 `ducknng` is also intentionally low-level. Long-lived runtime handles
@@ -66,11 +68,14 @@ body codec layer instead: `ducknng_list_codecs()` shows the built-ins,
 `ducknng_parse_body(body, content_type)` parses an existing BLOB, and
 `ducknng_ncurl_table(...)` fetches a 2xx HTTP/HTTPS response and parses
 it into a table according to the response `Content-Type`. These helpers
-use DuckDB readers for JSON, CSV, TSV, and Parquet, nanoarrow for Arrow
-IPC stream bytes, and the existing frame decoder for
-`application/vnd.ducknng.frame`. Reader-backed codecs currently run as
-local helpers and fail fast inside service-owned SQL until the broader
-per-session connection model lands.
+parse JSON in memory through DuckDB JSON functions, use nanoarrow for
+Arrow IPC stream bytes, and use the existing frame decoder for
+`application/vnd.ducknng.frame`. CSV, TSV, and Parquet media types are
+recognized but currently use the generic `body BLOB` fallback rather
+than spilling to temp files; the right next step is a scalarfs-style
+in-memory filesystem/provider layer. JSON parsing currently runs through
+the runtime init-connection execution gate and fails fast inside
+service-owned SQL until the broader per-session connection model lands.
 
 ## Getting started
 
@@ -542,21 +547,21 @@ SELECT ducknng_stop_server('sql_client_demo');
     │    varchar    │        varchar        │
     ├───────────────┼───────────────────────┤
     │ arrow_ipc     │ dynamic table         │
-    │ csv           │ dynamic table         │
+    │ csv           │ body BLOB fallback    │
     │ ducknng_frame │ decoded frame columns │
     │ json          │ dynamic table         │
-    │ parquet       │ dynamic table         │
+    │ parquet       │ body BLOB fallback    │
     │ raw           │ body BLOB             │
     │ text          │ body_text VARCHAR     │
-    │ tsv           │ dynamic table         │
+    │ tsv           │ body BLOB fallback    │
     └───────────────┴───────────────────────┘
-    ┌───────┬─────────┐
-    │   a   │    b    │
-    │ int64 │ varchar │
-    ├───────┼─────────┤
-    │     1 │ x       │
-    │     2 │ y       │
-    └───────┴─────────┘
+    ┌────────┬─────────┐
+    │   a    │    b    │
+    │ uint64 │ varchar │
+    ├────────┼─────────┤
+    │      1 │ x       │
+    │      2 │ y       │
+    └────────┴─────────┘
     ┌────────────────────────────┐
     │ ducknng_open_socket('req') │
     │           uint64           │
@@ -1918,7 +1923,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_2ad9e474fb12be.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_2c07703427bdbf.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                              TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()

@@ -103,7 +103,8 @@ This checklist tracks the implementation status of the main architecture, transp
     - `ducknng_list_codecs()` lists the built-in content-type driven providers
     - `ducknng_parse_body(body, content_type)` parses raw bodies through built-in providers
     - `ducknng_ncurl_table(...)` performs HTTP/HTTPS and parses successful response bodies by `Content-Type`
-    - JSON, CSV, TSV, and Parquet use DuckDB readers through temporary files; Arrow IPC still uses nanoarrow plus the stable manual mapping layer
+    - JSON uses DuckDB JSON functions in memory; Arrow IPC still uses nanoarrow plus the stable manual mapping layer
+    - CSV, TSV, and Parquet are recognized but use the generic `body BLOB` fallback until a scalarfs-style memory filesystem/provider path is available
   - Remaining work:
     - decide whether user-defined hooks such as `ducknng_register_codec` and `ducknng_unregister_codec` belong in the sealed API
     - keep user-defined Arrow extension serde blocked until ownership, security, and the future DuckDB Arrow seam are clear enough not to freeze an unsafe callback ABI

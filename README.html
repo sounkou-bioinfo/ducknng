@@ -634,7 +634,9 @@ futures, and the first raw unary RPC futures</li>
 <li>a low-level HTTP/HTTPS client helper plus automatic HTTP/HTTPS
 routing for the synchronous request/RPC/session helper family</li>
 <li>built-in content-type driven body codec helpers for
-raw/text/JSON/CSV/TSV/Parquet/Arrow IPC/frame payloads</li>
+raw/text/JSON/Arrow IPC/frame payloads, with CSV/TSV/Parquet recognized
+and safely returned through the generic BLOB fallback until a
+memory-backed DuckDB filesystem path lands</li>
 <li>explicit query-session helpers and TLS config handles</li>
 </ul>
 <p><code>ducknng</code> is also intentionally low-level. Long-lived
@@ -674,12 +676,16 @@ instead: <code>ducknng_list_codecs()</code> shows the built-ins,
 <code>ducknng_parse_body(body, content_type)</code> parses an existing
 BLOB, and <code>ducknng_ncurl_table(...)</code> fetches a 2xx HTTP/HTTPS
 response and parses it into a table according to the response
-<code>Content-Type</code>. These helpers use DuckDB readers for JSON,
-CSV, TSV, and Parquet, nanoarrow for Arrow IPC stream bytes, and the
-existing frame decoder for <code>application/vnd.ducknng.frame</code>.
-Reader-backed codecs currently run as local helpers and fail fast inside
-service-owned SQL until the broader per-session connection model
-lands.</p>
+<code>Content-Type</code>. These helpers parse JSON in memory through
+DuckDB JSON functions, use nanoarrow for Arrow IPC stream bytes, and use
+the existing frame decoder for
+<code>application/vnd.ducknng.frame</code>. CSV, TSV, and Parquet media
+types are recognized but currently use the generic
+<code>body BLOB</code> fallback rather than spilling to temp files; the
+right next step is a scalarfs-style in-memory filesystem/provider layer.
+JSON parsing currently runs through the runtime init-connection
+execution gate and fails fast inside service-owned SQL until the broader
+per-session connection model lands.</p>
 <h2 id="getting-started">Getting started</h2>
 <p>Build the extension locally:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">make</span> configure</span>
@@ -1553,21 +1559,21 @@ client</h3>
 │    varchar    │        varchar        │
 ├───────────────┼───────────────────────┤
 │ arrow_ipc     │ dynamic table         │
-│ csv           │ dynamic table         │
+│ csv           │ body BLOB fallback    │
 │ ducknng_frame │ decoded frame columns │
 │ json          │ dynamic table         │
-│ parquet       │ dynamic table         │
+│ parquet       │ body BLOB fallback    │
 │ raw           │ body BLOB             │
 │ text          │ body_text VARCHAR     │
-│ tsv           │ dynamic table         │
+│ tsv           │ body BLOB fallback    │
 └───────────────┴───────────────────────┘
-┌───────┬─────────┐
-│   a   │    b    │
-│ int64 │ varchar │
-├───────┼─────────┤
-│     1 │ x       │
-│     2 │ y       │
-└───────┴─────────┘
+┌────────┬─────────┐
+│   a    │    b    │
+│ uint64 │ varchar │
+├────────┼─────────┤
+│      1 │ x       │
+│      2 │ y       │
+└────────┴─────────┘
 ┌────────────────────────────┐
 │ ducknng_open_socket(&#39;req&#39;) │
 │           uint64           │
@@ -2869,7 +2875,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_2ad9e474fb12be.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_2c07703427bdbf.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                              TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>

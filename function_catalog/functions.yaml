@@ -441,9 +441,9 @@
       "implemented": true,
       "description": "Parse one response/request body BLOB according to its content type.",
       "notes": [
-        "Supported built-ins include raw, UTF-8 text, JSON, CSV, TSV, Parquet, Arrow IPC stream, and ducknng frame bodies.",
-        "JSON, CSV, TSV, and Parquet delegate to DuckDB readers through a temporary file and then reuse ducknng's Arrow IPC row mapping for the returned table.",
-        "Reader-backed codecs currently fail fast inside service-owned SQL that already holds the runtime init-connection execution gate.",
+        "Supported built-ins include raw, UTF-8 text, JSON, Arrow IPC stream, and ducknng frame bodies.",
+        "JSON parses in memory through DuckDB JSON functions and then reuses ducknng's Arrow IPC row mapping for the returned table.",
+        "CSV, TSV, and Parquet media types are recognized but use the generic body BLOB fallback until a scalarfs-style memory-backed reader path lands.",
         "application/vnd.ducknng.frame returns the same decoded envelope columns as ducknng_decode_frame()."
       ],
       "examples": [
@@ -462,7 +462,7 @@
       "notes": [
         "HTTP status must be 2xx; use ducknng_ncurl() when you need in-band status, headers, or raw error bodies.",
         "The response Content-Type selects the provider. Missing or unknown content types fall back to raw BLOB output.",
-        "Reader-backed codecs currently fail fast inside service-owned SQL that already holds the runtime init-connection execution gate.",
+        "JSON parses in memory; CSV, TSV, and Parquet currently use the generic body BLOB fallback until a scalarfs-style memory-backed reader path lands.",
         "This helper is transport-local and does not change the framed RPC method surface."
       ],
       "examples": [

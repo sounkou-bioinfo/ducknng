@@ -16,16 +16,14 @@ ORDER BY a
 1	x
 2	y
 
-query IT
-SELECT a, b
+query T
+SELECT hex(body)
 FROM ducknng_parse_body(
   (concat('a,b', chr(10), '1,x', chr(10), '2,y', chr(10)))::BLOB,
   'text/csv'
 )
-ORDER BY a
 ----
-1	x
-2	y
+612C620A312C780A322C790A
 
 query T
 SELECT body_text
