@@ -124,49 +124,6 @@ Important details:
 
 The README should be enough to understand the public lifecycle expectations. The files under `docs/` are mostly deeper protocol/reference material and project design notes. If you want the more detailed lifetime write-up, see `docs/lifetime.md`. For protocol and transport reference details, see `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, `docs/codecs.md`, and `docs/types.md`. `NEWS.md` summarizes notable landed changes. TLS already supports both file-backed and in-memory PEM material through helpers such as `ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, and `ducknng_self_signed_tls_config(...)`; TLS authentication mode `2` enables mTLS peer verification for `tls+tcp://`, `wss://`, and `https://` services.
 
-## Deployment and admission policy
-
-`ducknng` defaults to low-level, default-open transport behavior. The application or deployment decides where the trust boundary is. For anything beyond process-local, filesystem-local, or loopback-only development, set the boundary deliberately before exposing a service.
-
-A strong direct-exposure baseline is:
-
-1. use `https://`, `wss://`, or `tls+tcp://` rather than plaintext network carriers;
-2. create the TLS handle with `auth_mode = 2` so peers must present a verified client certificate;
-3. configure a private CA or otherwise narrow certificate issuance so the trust root is not broader than the application;
-4. set an exact peer-identity allowlist before exposure with `ducknng_set_tls_peer_allowlist(...)`;
-5. optionally update a running service dynamically with `ducknng_set_service_peer_allowlist(...)`.
-
-The relevant identity strings currently come from verified TLS peer metadata and are SAN-first, CN-fallback: `tls:san:<value>` or `tls:cn:<common-name>`. An allowlist is exact-match. `NULL` or an empty SQL string clears it and returns to default-open admission subject to TLS/method/session policy. An empty JSON array, `[]`, is active deny-all.
-
-Example shape:
-
-```sql
--- Set a default allowlist on the TLS handle before starting services with it.
-SELECT ducknng_set_tls_peer_allowlist(
-  1::UBIGINT,
-  '["tls:san:client-a.example","tls:san:client-b.example"]'
-);
-
--- Later, rotate or tighten admission for a running service.
-SELECT ducknng_set_service_peer_allowlist(
-  'sql_rpc',
-  '["tls:san:client-b.example"]'
-);
-```
-
-Transport-specific deployment notes:
-
-- `inproc://` is a same-process boundary. It is useful for embedded testing/composition, but it is not network authentication.
-- `ipc://` relies on filesystem or named-pipe permissions. Avoid world-writable shared paths for multi-user deployments.
-- plaintext `tcp://`, `ws://`, and `http://` do not provide cryptographic peer identity. Use them only on loopback, a private network you already trust, or behind a reverse proxy/firewall/VPN that performs admission itself.
-- `http://` is still useful as a local or reverse-proxy upstream carrier. For public HTTP-style deployment, expose `https://` directly with mTLS or place `ducknng` behind a proxy such as Caddy, nginx, Envoy, or a cloud load balancer that terminates TLS and enforces authentication/rate limits before forwarding to loopback `http://` or `ipc://`.
-- `tls+tcp://` and `wss://` are NNG protocol transports. They use NNG socket protocols and NNG pipes, not the HTTP carrier semantics.
-- `https://` is the HTTP frame carrier over TLS. It shares the same framed RPC methods and admission policy, but HTTP status codes such as `403` can appear before RPC dispatch.
-
-For NNG transports, peer admission uses NNG's own pipe notification primitive: `nng_pipe_notify(..., NNG_PIPE_EV_ADD_PRE, ...)` lets `ducknng` inspect verified TLS pipe metadata and close a non-admitted pipe before it is added to the socket. For HTTP/HTTPS, NNG's supplemental HTTP API does not expose the same public protocol-socket pipe admission hook, so `ducknng` checks the same policy before RPC dispatch and returns HTTP `403` for non-admitted peers.
-
-The same pipe-event family is useful beyond admission. NNG exposes `ADD_PRE`, `ADD_POST`, and `REM_POST` pipe events; nanonext surfaces related tools as `pipe_notify()`, `monitor()`, and `read_monitor()`. Those primitives are a natural foundation for future SQL-visible telemetry such as connection counts, connection churn, or per-service pipe event streams. Today `ducknng` uses the NNG primitive internally for admission and exposes aggregate service state through `ducknng_list_servers()`; a richer public pipe-monitoring SQL surface is intentionally separate future work rather than a new wire protocol.
-
 ## Function catalog
 
 <details>
@@ -1288,6 +1245,51 @@ close(req)
 DBI::dbDisconnect(db_con)
 unlink(ipc_path)
 ```
+
+## Deployment and admission policy
+
+`ducknng` defaults to low-level, default-open transport behavior. The application or deployment decides where the trust boundary is. For anything beyond process-local, filesystem-local, or loopback-only development, set the boundary deliberately before exposing a service.
+
+A strong direct-exposure baseline is:
+
+1. use `https://`, `wss://`, or `tls+tcp://` rather than plaintext network carriers;
+2. create the TLS handle with `auth_mode = 2` so peers must present a verified client certificate;
+3. configure a private CA or otherwise narrow certificate issuance so the trust root is not broader than the application;
+4. set an exact peer-identity allowlist before exposure with `ducknng_set_tls_peer_allowlist(...)`;
+5. optionally update a running service dynamically with `ducknng_set_service_peer_allowlist(...)`.
+
+The relevant identity strings currently come from verified TLS peer metadata and are SAN-first, CN-fallback: `tls:san:<value>` or `tls:cn:<common-name>`. An allowlist is exact-match. `NULL` or an empty SQL string clears it and returns to default-open admission subject to TLS/method/session policy. An empty JSON array, `[]`, is active deny-all.
+
+Example shape:
+
+```sql
+-- Set a default allowlist on the TLS handle before starting services with it.
+SELECT ducknng_set_tls_peer_allowlist(
+  1::UBIGINT,
+  '["tls:san:client-a.example","tls:san:client-b.example"]'
+);
+
+-- Later, rotate or tighten admission for a running service.
+SELECT ducknng_set_service_peer_allowlist(
+  'sql_rpc',
+  '["tls:san:client-b.example"]'
+);
+```
+
+Transport-specific deployment notes:
+
+- `inproc://` is a same-process boundary. It is useful for embedded testing/composition, but it is not network authentication.
+- `ipc://` relies on filesystem or named-pipe permissions. Avoid world-writable shared paths for multi-user deployments.
+- plaintext `tcp://`, `ws://`, and `http://` do not provide cryptographic peer identity. Use them only on loopback, a private network you already trust, or behind a reverse proxy/firewall/VPN that performs admission itself.
+- `http://` is still useful as a local or reverse-proxy upstream carrier. For public HTTP-style deployment, expose `https://` directly with mTLS or place `ducknng` behind a proxy such as Caddy, nginx, Envoy, or a cloud load balancer that terminates TLS and enforces authentication/rate limits before forwarding to loopback `http://` or `ipc://`.
+- `tls+tcp://` and `wss://` are NNG protocol transports. They use NNG socket protocols and NNG pipes, not the HTTP carrier semantics.
+- `https://` is the HTTP frame carrier over TLS. It shares the same framed RPC methods and admission policy, but HTTP status codes such as `403` can appear before RPC dispatch.
+
+IP allowlisting is a useful lighter-weight gate when client certificates are too much operational overhead, but it is not the same as cryptographic client identity. HTTPS itself does not standardize an application IP allowlist; IP admission is normally implemented by the listener, firewall, reverse proxy, load balancer, or service mesh. Today `ducknng` exposes mTLS identity allowlists, not a SQL-visible IP allowlist. For NNG protocol transports, NNG pipes expose remote-address metadata such as `NNG_OPT_REMADDR`, so a future SQL-visible IP/subnet admission layer can reuse the same pipe-admission design. For HTTP/HTTPS, the most deployable pattern today is to enforce IP/CIDR allowlists in Caddy, nginx, Envoy, cloud firewall/security groups, Kubernetes network policy, or a similar front door, then forward only admitted traffic to loopback `http://`, `https://`, `ipc://`, or an internal NNG service.
+
+For NNG transports, peer admission uses NNG's own pipe notification primitive: `nng_pipe_notify(..., NNG_PIPE_EV_ADD_PRE, ...)` lets `ducknng` inspect verified TLS pipe metadata and close a non-admitted pipe before it is added to the socket. For HTTP/HTTPS, NNG's supplemental HTTP API does not expose the same public protocol-socket pipe admission hook, so `ducknng` checks the same policy before RPC dispatch and returns HTTP `403` for non-admitted peers.
+
+The same pipe-event family is useful beyond admission. NNG exposes `ADD_PRE`, `ADD_POST`, and `REM_POST` pipe events; nanonext surfaces related tools as `pipe_notify()`, `monitor()`, and `read_monitor()`. Those primitives are a natural foundation for future SQL-visible telemetry such as connection counts, connection churn, or per-service pipe event streams. Today `ducknng` uses the NNG primitive internally for admission and exposes aggregate service state through `ducknng_list_servers()`; a richer public pipe-monitoring SQL surface is intentionally separate future work rather than a new wire protocol.
 
 ## References
 
