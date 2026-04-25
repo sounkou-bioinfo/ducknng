@@ -2,7 +2,7 @@
 
 `ducknng` keeps transport bytes, protocol frames, and method payloads separate. The body codec provider layer is the opt-in serialization/deserialization layer for raw HTTP bodies and other content-type-tagged `BLOB` values. It is inspired by `nanonext` serialization providers, but it is keyed by media type instead of R object class and it is not part of the framed RPC method registry.
 
-The raw HTTP primitive remains `ducknng_ncurl(...)`. It returns status, headers, `body BLOB`, and a best-effort UTF-8 `body_text` column without interpreting the response by `Content-Type`. Parsed body behavior is explicit:
+The raw HTTP primitives remain `ducknng_ncurl(...)` and its async companion `ducknng_ncurl_aio(...)` / `ducknng_ncurl_aio_collect(...)`. They return status, headers, `body BLOB`, and a best-effort UTF-8 `body_text` column without interpreting the response by `Content-Type`. Parsed body behavior is explicit:
 
 ```sql
 SELECT * FROM ducknng_list_codecs();

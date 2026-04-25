@@ -470,6 +470,128 @@ int ducknng_validate_http_url(const char *url, char **errmsg) {
     return 0;
 }
 
+int ducknng_http_response_copy(nng_http_res *res, uint16_t *out_status,
+    char **out_headers_json, uint8_t **out_body, size_t *out_body_len, char **errmsg) {
+    char *header_block = NULL;
+    void *resp_body = NULL;
+    size_t resp_body_len = 0;
+    int rc = -1;
+    if (out_status) *out_status = 0;
+    if (out_headers_json) *out_headers_json = NULL;
+    if (out_body) *out_body = NULL;
+    if (out_body_len) *out_body_len = 0;
+    if (errmsg) *errmsg = NULL;
+    if (!res) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing HTTP response state");
+        return -1;
+    }
+    if (out_status) *out_status = nng_http_res_get_status(res);
+    header_block = nni_http_res_headers(res);
+    if (out_headers_json) {
+        *out_headers_json = ducknng_http_headers_block_to_json(header_block, errmsg);
+        if (!*out_headers_json && header_block) goto cleanup;
+    }
+    nng_http_res_get_data(res, &resp_body, &resp_body_len);
+    if (out_body_len) *out_body_len = resp_body_len;
+    if (out_body && resp_body_len > 0) {
+        *out_body = (uint8_t *)duckdb_malloc(resp_body_len);
+        if (!*out_body) {
+            if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying HTTP response body");
+            goto cleanup;
+        }
+        memcpy(*out_body, resp_body, resp_body_len);
+    }
+    rc = 0;
+cleanup:
+    if (header_block) nni_strfree(header_block);
+    if (rc != 0) {
+        if (out_headers_json && *out_headers_json) {
+            duckdb_free(*out_headers_json);
+            *out_headers_json = NULL;
+        }
+        if (out_body && *out_body) {
+            duckdb_free(*out_body);
+            *out_body = NULL;
+        }
+        if (out_body_len) *out_body_len = 0;
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: failed to copy HTTP response");
+    }
+    return rc;
+}
+
+int ducknng_http_transact_aio_prepare(const char *url, const char *method, const char *headers_json,
+    const uint8_t *body, size_t body_len, const ducknng_tls_opts *tls_opts,
+    nng_url **out_url, nng_http_client **out_client, nng_http_req **out_req,
+    nng_http_res **out_res, char **errmsg) {
+    ducknng_transport_url parsed;
+    nng_url *parsed_url = NULL;
+    nng_http_client *client = NULL;
+    nng_http_req *req = NULL;
+    nng_http_res *res = NULL;
+    nng_tls_config *tls_cfg = NULL;
+    int rv;
+    if (out_url) *out_url = NULL;
+    if (out_client) *out_client = NULL;
+    if (out_req) *out_req = NULL;
+    if (out_res) *out_res = NULL;
+    if (errmsg) *errmsg = NULL;
+    if (!out_url || !out_client || !out_req || !out_res) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing HTTP aio state");
+        return -1;
+    }
+    if (ducknng_validate_http_url(url, errmsg) != 0) return -1;
+    if (ducknng_transport_url_parse(url, &parsed, errmsg) != 0) return -1;
+    if (ducknng_http_tls_requested(tls_opts) && !parsed.uses_tls) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS configuration requires an https:// URL");
+        return -1;
+    }
+    rv = nng_url_parse(&parsed_url, url);
+    if (rv != 0) goto fail;
+    rv = nng_http_client_alloc(&client, parsed_url);
+    if (rv != 0) goto fail;
+    rv = nng_http_req_alloc(&req, parsed_url);
+    if (rv != 0) goto fail;
+    rv = nng_http_res_alloc(&res);
+    if (rv != 0) goto fail;
+    if (method && method[0]) {
+        rv = nng_http_req_set_method(req, method);
+        if (rv != 0) goto fail;
+    }
+    if (headers_json && headers_json[0]) {
+        if (ducknng_http_apply_headers_json(req, headers_json, errmsg) != 0) {
+            rv = NNG_EINVAL;
+            goto fail;
+        }
+    }
+    if (body && body_len > 0) {
+        rv = nng_http_req_copy_data(req, body, body_len);
+        if (rv != 0) goto fail;
+    }
+    if (parsed.uses_tls && ducknng_http_tls_requested(tls_opts)) {
+        rv = ducknng_http_tls_config_build(&tls_cfg, NNG_TLS_MODE_CLIENT, url, tls_opts);
+        if (rv != 0) goto fail;
+        if (tls_cfg) {
+            rv = nng_http_client_set_tls(client, tls_cfg);
+            nng_tls_config_free(tls_cfg);
+            tls_cfg = NULL;
+            if (rv != 0) goto fail;
+        }
+    }
+    *out_url = parsed_url;
+    *out_client = client;
+    *out_req = req;
+    *out_res = res;
+    return 0;
+fail:
+    if (tls_cfg) nng_tls_config_free(tls_cfg);
+    if (res) nng_http_res_free(res);
+    if (req) nng_http_req_free(req);
+    if (client) nng_http_client_free(client);
+    if (parsed_url) nng_url_free(parsed_url);
+    if (errmsg && !*errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));
+    return -1;
+}
+
 int ducknng_http_transact(const char *url, const char *method, const char *headers_json,
     const uint8_t *body, size_t body_len, int timeout_ms, const ducknng_tls_opts *tls_opts,
     uint16_t *out_status, char **out_headers_json, uint8_t **out_body, size_t *out_body_len,

@@ -35,12 +35,13 @@ The current implementation enforces listener receive-size limits, descriptor req
 
 ### 3. HTTP async and web-server framework scope
 
-The synchronous HTTP transport direction is now in place:
+The HTTP transport direction is now in place:
 
 - `ducknng_start_http_server(...)` is implemented
 - the existing synchronous request/RPC/session helpers route over `http://` and `https://`
+- `ducknng_ncurl_aio(...)` and `ducknng_ncurl_aio_collect(...)` provide the raw asynchronous HTTP/HTTPS client counterpart to `ducknng_ncurl(...)`
 
-Before sealing, `ducknng_ncurl_aio(...)` should be treated as the natural async counterpart to `ducknng_ncurl(...)`, matching the `nanonext` ergonomic reference while still using the existing future-like AIO handle model. The broader HTTP server framework question is separate: the current server is a non-blocking NNG HTTP server that mounts one framed RPC handler; a later web-toolkit layer may add explicit route handlers, static responses, or SQL-backed handlers, but it must not create path-specific copies of existing RPC methods. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules unless a separate web-framework surface is designed and documented.
+The remaining HTTP question is the broader server framework: the current server is a non-blocking NNG HTTP server that mounts one framed RPC handler; a later web-toolkit layer may add explicit route handlers, static responses, or SQL-backed handlers, but it must not create path-specific copies of existing RPC methods. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules unless a separate web-framework surface is designed and documented.
 
 ### 4. Final generic socket transport coverage story
 
@@ -51,6 +52,7 @@ The generic socket dial surface now accepts an explicit `tls_config_id`, which m
 The project now has:
 
 - raw transport aio helpers
+- raw HTTP/HTTPS ncurl aio helpers
 - the first raw unary RPC aio wrappers
 
 Before sealing, it should decide whether the stable async contract is:
@@ -92,6 +94,7 @@ These items were worth resolving before the API hardens further and should stay 
 - `ducknng_register_exec_method(true)` can register the opt-in `exec` descriptor with verified peer identity required, while the zero-argument form remains backwards compatible
 - `ducknng_set_method_auth(name, requires_auth)` can protect registry-backed methods such as `manifest` using the same descriptor-level auth path
 - unregistration now refuses to remove sessionful methods or families while any service has open sessions
+- `ducknng_ncurl_aio(...)` now provides the nanonext-style async HTTP client slice and collects through `ducknng_ncurl_aio_collect(...)`
 
 ## Not sealing blockers by themselves
 

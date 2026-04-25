@@ -12,13 +12,20 @@ The generic socket surface remains NNG-only. `ducknng_open_socket(...)`, `ducknn
 
 ## Current SQL surface
 
-The shipped low-level client entry point is:
+The shipped low-level synchronous client entry point is:
 
 ```sql
 ducknng_ncurl(url, method, headers_json, body, timeout_ms, tls_config_id)
 ```
 
-It is modeled ergonomically on `nanonext::ncurl()` while staying faithful to DuckDB SQL conventions and the project preference for in-band error tables.
+Its asynchronous companion is:
+
+```sql
+ducknng_ncurl_aio(url, method, headers_json, body, timeout_ms, tls_config_id)
+ducknng_ncurl_aio_collect(aio_ids, wait_ms)
+```
+
+They are modeled ergonomically on `nanonext::ncurl()` / `ncurl_aio()` while staying faithful to DuckDB SQL conventions and the project preference for in-band error tables.
 
 The implemented return shape is:
 
@@ -33,7 +40,7 @@ TABLE(
 )
 ```
 
-`ok` means the HTTP transport operation completed and a response was received. It does not mean the response status was 2xx. `status` is the HTTP status code when present. `error` is reserved for local client, connection, timeout, TLS, or adapter failures. `headers_json` is the response header block in a canonical JSON form that preserves order and duplicates. `body` is the raw response body. `body_text` is a best-effort UTF-8 decoding of `body` and is `NULL` when the body is absent or not valid text.
+`ok` means the HTTP transport operation completed and a response was received. It does not mean the response status was 2xx. `status` is the HTTP status code when present. `error` is reserved for local client, connection, timeout, TLS, cancellation, or adapter failures. `headers_json` is the response header block in a canonical JSON form that preserves order and duplicates. `body` is the raw response body. `body_text` is a best-effort UTF-8 decoding of `body` and is `NULL` when the body is absent or not valid text. `ducknng_ncurl_aio_collect(...)` returns the same raw result columns plus `aio_id` for terminal handles launched by `ducknng_ncurl_aio(...)`; those handles are inspected with `ducknng_aio_status(...)` and released with `ducknng_aio_drop(...)` like other aio handles.
 
 The request-side `headers_json` argument uses the same canonical JSON shape for symmetry. The preferred contract is an array of objects such as `[{"name":"Content-Type","value":"application/json"}]` rather than a plain JSON object, because HTTP header names may repeat and order sometimes matters operationally.
 
@@ -63,7 +70,7 @@ The arguments intentionally stay close to `ducknng_start_server(...)`. Starting 
 
 The matching stop and introspection path remains generic rather than adding HTTP-specific variants. `ducknng_stop_server(name)` stops a named service regardless of transport family, and `ducknng_list_servers()` reports the currently registered services without minting transport-specific lifecycle names. That keeps the public surface compact.
 
-`ducknng_ncurl(...)` is transport-local and not manifest-derived. It is meant for generic HTTP interactions, adapter debugging, and future interoperability helpers. It is not the only route to `ducknng` RPC over HTTP because the higher-level synchronous helpers already use the same carrier automatically.
+`ducknng_ncurl(...)` and `ducknng_ncurl_aio(...)` are transport-local and not manifest-derived. They are meant for generic HTTP interactions, adapter debugging, and future interoperability helpers. They are not the only route to `ducknng` RPC over HTTP because the higher-level synchronous helpers already use the same carrier automatically.
 
 ## Operation-oriented routing by URL scheme
 
@@ -133,7 +140,5 @@ The following are explicitly not part of the first HTTP adapter contract.
 Human-friendly convenience routes such as `GET /manifest` are deferred. They may later be added as transport conveniences that internally map onto the same registry-backed methods, but they are not part of the first binding.
 
 HTTP-carrier WebSocket, SSE, NDJSON, browser asset serving, and mixed HTTP-plus-static routing are deferred. They belong to broader web-toolkit work and should not be smuggled into the first RPC carrier implementation. This does not conflict with the separate NNG `ws://` and `wss://` transport schemes, which remain part of the NNG adapter rather than this HTTP carrier.
-
-A dedicated `ducknng_ncurl_aio(...)` is the next natural HTTP client increment. It should mirror `ducknng_ncurl(...)`'s raw status/header/body contract while returning a future-like AIO id that is collected through either the existing AIO collection surface or an HTTP-specific collect helper. It must remain one pending NNG HTTP operation, not a separate background-job protocol.
 
 A broader nanonext-style HTTP server framework is also future work. The current server framework is intentionally the framed RPC mount. A later layer may add explicit route registration for static responses, SQL-backed handlers, or codec-driven response helpers, but those routes should be documented as a web-toolkit surface beside the frame carrier. They must not mint method copies such as `http_exec`, `http_query_open`, or `http_fetch`, and they must not change the frame endpoint's `POST application/vnd.ducknng.frame` contract.

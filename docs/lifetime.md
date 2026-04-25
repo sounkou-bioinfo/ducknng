@@ -70,6 +70,7 @@ If you launch an aio with:
 - `ducknng_recv_socket_raw_aio(...)`
 - `ducknng_get_rpc_manifest_raw_aio(...)`
 - `ducknng_run_rpc_raw_aio(...)`
+- `ducknng_ncurl_aio(...)`
 
 then you should eventually release the aio handle explicitly with:
 
@@ -78,7 +79,7 @@ then you should eventually release the aio handle explicitly with:
 Important:
 
 - `ducknng_aio_cancel(aio_id)` requests cancellation, but it is **not** the destructor
-- `ducknng_aio_collect(...)` collects terminal results, but it does **not** auto-free the aio slot
+- `ducknng_aio_collect(...)` and `ducknng_ncurl_aio_collect(...)` collect terminal results, but they do **not** auto-free the aio slot
 - dropping the aio handle is still the explicit cleanup step
 
 ### TLS config handles

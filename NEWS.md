@@ -5,6 +5,7 @@
 ### Latest additions
 
 - Implemented `ducknng_start_http_server(...)` as the first real HTTP/HTTPS server slice over the existing registry-backed framed RPC surface, including adapter-level `405` / `415` / `400` handling and `200 OK` frame replies for protocol-level success and failure.
+- Added `ducknng_ncurl_aio(...)` and `ducknng_ncurl_aio_collect(...)` as the nanonext-style asynchronous HTTP/HTTPS client slice, preserving the raw `ducknng_ncurl(...)` status/header/body contract while using the same future-like aio handle lifecycle as other async helpers.
 - Taught the synchronous request, RPC, and session helper family to route by URL scheme so `ducknng_request(...)`, `ducknng_request_raw(...)`, `ducknng_get_rpc_manifest(...)`, `ducknng_get_rpc_manifest_raw(...)`, `ducknng_run_rpc(...)`, `ducknng_run_rpc_raw(...)`, `ducknng_query_rpc(...)`, `ducknng_open_query(...)`, `ducknng_fetch_query(...)`, `ducknng_close_query(...)`, and `ducknng_cancel_query(...)` now work over `http://` and `https://` without minting a second RPC surface.
 - Enabled the vendored NNG `ws://` and `wss://` transports and documented them as part of the NNG transport family rather than as part of the HTTP carrier layer.
 - Extended `ducknng_dial_socket(...)` to take `tls_config_id` and applied the same reusable TLS-handle model to generic socket dialing, including `wss://`.
@@ -84,7 +85,7 @@
 
 ## Planned next steps
 
-- Extend the async RPC wrapper family beyond the first raw unary slice only where that can be done honestly on top of the existing aio substrate, with `ducknng_ncurl_aio(...)` as the natural next HTTP client helper.
+- Extend the async RPC wrapper family beyond the first raw unary slice only where that can be done honestly on top of the existing aio substrate, now that the raw HTTP/HTTPS `ducknng_ncurl_aio(...)` helper is in place.
 - Continue Arrow type coverage beyond the current practical core where needed, and add a clean SQL-side decoder path for fetched Arrow payloads if richer session ergonomics are desired.
 - Decide whether the current bearer-token plus optional mTLS owner-identity model is the sealed session identity contract, document the single serialized DuckDB execution-lane model clearly, and reserve isolated per-session/per-request DuckDB execution for deployments that need hard state isolation.
 - Keep tightening lifetime and concurrency behavior around runtime-owned sockets, sessions, and aio handles now that the transport matrix is broader.

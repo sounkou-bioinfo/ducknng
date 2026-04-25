@@ -60,6 +60,8 @@ This file is generated from `function_catalog/functions.yaml`.
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
 | `ducknng_ncurl` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Perform one HTTP or HTTPS request and return an in-band result row. |
+| `ducknng_ncurl_aio` | scalar | `url, method, headers_json, body, timeout_ms, tls_config_id` | `UBIGINT` | Launch one asynchronous HTTP or HTTPS request and return a future-like aio handle id. |
+| `ducknng_ncurl_aio_collect` | table | `aio_ids, wait_ms` | `TABLE(aio_id UBIGINT, ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Wait for asynchronous ncurl handles and return one raw HTTP result row per newly collected terminal operation. |
 | `ducknng_ncurl_table` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(dynamic by response Content-Type)` | Perform one HTTP or HTTPS request and parse a successful response body into a DuckDB table using the built-in body codec providers. |
 
 ## Body Codecs

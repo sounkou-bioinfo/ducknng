@@ -625,8 +625,10 @@ part of this layer: helpers such as
 <code>ducknng_send_socket_raw_aio(...)</code>,
 <code>ducknng_recv_socket_raw_aio(...)</code>,
 <code>ducknng_request_raw_aio(...)</code>,
-<code>ducknng_aio_status(...)</code>, and
-<code>ducknng_aio_collect(...)</code> represent one pending NNG
+<code>ducknng_ncurl_aio(...)</code>,
+<code>ducknng_aio_status(...)</code>,
+<code>ducknng_aio_collect(...)</code>, and
+<code>ducknng_ncurl_aio_collect(...)</code> represent one pending NNG
 operation as a future-like SQL handle. This family uses NNG URL schemes:
 <code>inproc://</code>, <code>ipc://</code>, <code>tcp://</code>,
 <code>tls+tcp://</code>, <code>ws://</code>, and <code>wss://</code>.
@@ -655,10 +657,10 @@ Arrow IPC. RPC control metadata and the manifest are JSON text inside
 framed payloads; SQL helper columns such as <code>manifest</code> keep
 that JSON as <code>VARCHAR</code>, and examples cast to
 <code>JSON</code> only when extracting fields.
-<code>ducknng_ncurl(...)</code> intentionally stays raw
-(<code>status</code>, headers, <code>body BLOB</code>,
-<code>body_text</code>). The opt-in body codec layer
-(<code>ducknng_list_codecs()</code>,
+<code>ducknng_ncurl(...)</code> and <code>ducknng_ncurl_aio(...)</code>
+intentionally stay raw (<code>status</code>, headers,
+<code>body BLOB</code>, <code>body_text</code>). The opt-in body codec
+layer (<code>ducknng_list_codecs()</code>,
 <code>ducknng_parse_body(...)</code>,
 <code>ducknng_ncurl_table(...)</code>) parses selected content types.
 JSON is parsed in memory through DuckDB JSON functions; Arrow IPC and
@@ -676,8 +678,8 @@ path lands.</p></li>
 <li>generic NNG sockets and raw send/recv across the NNG transport
 schemes above</li>
 <li>first-class raw AIO handles for one pending NNG operation: socket
-send/recv, req-style request/reply futures, and the first raw unary RPC
-futures</li>
+send/recv, HTTP/HTTPS ncurl requests, req-style request/reply futures,
+and the first raw unary RPC futures</li>
 <li>manifest-driven RPC helpers, opt-in <code>exec</code>, and query
 sessions (<code>query_open</code>, <code>fetch</code>,
 <code>close</code>, <code>cancel</code>)</li>
@@ -694,8 +696,8 @@ to verified mTLS peer identity when present</li>
 </ul>
 <p>Still intentionally deferred or not sealed:</p>
 <ul>
-<li><code>ducknng_ncurl_aio(...)</code> is planned but not implemented
-yet</li>
+<li>a broader nanonext-style HTTP route/server framework is not designed
+yet; the current HTTP server is the framed RPC mount</li>
 <li>CSV/TSV/Parquet body parsers are not implemented beyond the safe
 BLOB fallback</li>
 <li>full SQL-side decoding of session <code>fetch</code> Arrow batch
@@ -1114,6 +1116,22 @@ material.</td>
 <td><code>TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)</code></td>
 <td>Perform one HTTP or HTTPS request and return an in-band result
 row.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_ncurl_aio</code></td>
+<td>scalar</td>
+<td><code>url, method, headers_json, body, timeout_ms, tls_config_id</code></td>
+<td><code>UBIGINT</code></td>
+<td>Launch one asynchronous HTTP or HTTPS request and return a
+future-like aio handle id.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_ncurl_aio_collect</code></td>
+<td>table</td>
+<td><code>aio_ids, wait_ms</code></td>
+<td><code>TABLE(aio_id UBIGINT, ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)</code></td>
+<td>Wait for asynchronous ncurl handles and return one raw HTTP result
+row per newly collected terminal operation.</td>
 </tr>
 <tr class="even">
 <td><code>ducknng_ncurl_table</code></td>
@@ -2347,7 +2365,7 @@ and close a query session explicitly</h3>
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-| true | NULL  | 1          | c719fd0647af7a33d29e4b20474dd707 | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
+| true | NULL  | 1          | 34a168822cebeb57dba359838b1b3a4c | closed | NULL        | {&quot;session_id&quot;:1,&quot;state&quot;:&quot;closed&quot;} |
 +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
 +-----------------------------------------+
 | ducknng_stop_server(&#39;sql_session_demo&#39;) |
@@ -2757,8 +2775,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_34daacc7f65ee.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_e476480080d5.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                            TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>

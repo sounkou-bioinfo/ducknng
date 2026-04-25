@@ -446,6 +446,44 @@
       ]
     },
     {
+      "name": "ducknng_ncurl_aio",
+      "kind": "scalar",
+      "category": "HTTP Transport",
+      "signature": "ducknng_ncurl_aio(url, method, headers_json, body, timeout_ms, tls_config_id)",
+      "returns": "UBIGINT",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Launch one asynchronous HTTP or HTTPS request and return a future-like aio handle id.",
+      "notes": [
+        "This is the async companion to ducknng_ncurl(); it preserves the same raw status/header/body contract.",
+        "timeout_ms bounds the pending NNG HTTP operation itself; it is separate from the wait_ms argument used during collection.",
+        "Collect with ducknng_ncurl_aio_collect(), not ducknng_aio_collect(), because HTTP results have status, headers_json, body, and body_text columns rather than a raw frame column.",
+        "The operation is a local HTTP transport helper and does not add any new manifest method."
+      ],
+      "examples": [
+        "SELECT ducknng_ncurl_aio('http://127.0.0.1:8080/health', 'GET', NULL, NULL, 2000, 0::UBIGINT);"
+      ]
+    },
+    {
+      "name": "ducknng_ncurl_aio_collect",
+      "kind": "table",
+      "category": "HTTP Transport",
+      "signature": "ducknng_ncurl_aio_collect(aio_ids, wait_ms)",
+      "returns": "TABLE(aio_id UBIGINT, ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Wait for asynchronous ncurl handles and return one raw HTTP result row per newly collected terminal operation.",
+      "notes": [
+        "Pass a LIST<UBIGINT> of aio ids returned by ducknng_ncurl_aio().",
+        "ok means the HTTP transport operation completed and a response was received; status may still be 4xx or 5xx.",
+        "wait_ms = 0 performs a pure poll; collected handles should be released with ducknng_aio_drop().",
+        "This is exposed as a SQL macro over internal volatile scalars so dynamic aio id expressions work under the stable DuckDB C API."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_ncurl_aio_collect(list_value(1::UBIGINT), 1000);"
+      ]
+    },
+    {
       "name": "ducknng_list_codecs",
       "kind": "table",
       "category": "Body Codecs",
@@ -656,7 +694,8 @@
         "Dynamic list expressions are supported through the SQL macro wrapper, including scalar subqueries that produce one list value.",
         "wait_ms controls only how long this collect call waits for already-launched aio handles; it is separate from the timeout_ms used when those handles were launched.",
         "wait_ms = 0 performs a pure poll.",
-        "For send-only airos, frame is NULL on success. For recv/request airos, frame contains the collected raw frame when present."
+        "For send-only aios, frame is NULL on success. For recv/request aios, frame contains the collected raw frame when present.",
+        "Use ducknng_ncurl_aio_collect() for handles returned by ducknng_ncurl_aio(), because HTTP results use status/header/body columns instead of a frame column."
       ],
       "examples": [
         "SELECT * FROM ducknng_aio_collect(list_value(1::UBIGINT, 2::UBIGINT), 1000);"

@@ -21,13 +21,14 @@ The current implementation is easiest to understand as three layers.
     `surveyor`, and `respondent`. AIO is a first-class part of this
     layer: helpers such as `ducknng_send_socket_raw_aio(...)`,
     `ducknng_recv_socket_raw_aio(...)`, `ducknng_request_raw_aio(...)`,
-    `ducknng_aio_status(...)`, and `ducknng_aio_collect(...)` represent
-    one pending NNG operation as a future-like SQL handle. This family
-    uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`,
-    `ws://`, and `wss://`. `tls+tcp://` is NNG’s TLS-over-TCP transport;
-    `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes;
-    `http://` and `https://` are supported by the HTTP/HTTPS carrier
-    layer below.
+    `ducknng_ncurl_aio(...)`, `ducknng_aio_status(...)`,
+    `ducknng_aio_collect(...)`, and `ducknng_ncurl_aio_collect(...)`
+    represent one pending NNG operation as a future-like SQL handle.
+    This family uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`,
+    `tls+tcp://`, `ws://`, and `wss://`. `tls+tcp://` is NNG’s
+    TLS-over-TCP transport; `wss://` is NNG WebSocket-over-TLS. They are
+    not HTTP routes; `http://` and `https://` are supported by the
+    HTTP/HTTPS carrier layer below.
 
 2.  **HTTP/HTTPS as a framed RPC carrier.**
     `ducknng_start_http_server(...)` mounts the same framed RPC protocol
@@ -47,9 +48,9 @@ The current implementation is easiest to understand as three layers.
     control metadata and the manifest are JSON text inside framed
     payloads; SQL helper columns such as `manifest` keep that JSON as
     `VARCHAR`, and examples cast to `JSON` only when extracting fields.
-    `ducknng_ncurl(...)` intentionally stays raw (`status`, headers,
-    `body BLOB`, `body_text`). The opt-in body codec layer
-    (`ducknng_list_codecs()`, `ducknng_parse_body(...)`,
+    `ducknng_ncurl(...)` and `ducknng_ncurl_aio(...)` intentionally stay
+    raw (`status`, headers, `body BLOB`, `body_text`). The opt-in body
+    codec layer (`ducknng_list_codecs()`, `ducknng_parse_body(...)`,
     `ducknng_ncurl_table(...)`) parses selected content types. JSON is
     parsed in memory through DuckDB JSON functions; Arrow IPC and frame
     bodies are decoded by their providers; CSV, TSV, and Parquet are
@@ -64,8 +65,8 @@ Implemented now:
 - generic NNG sockets and raw send/recv across the NNG transport schemes
   above
 - first-class raw AIO handles for one pending NNG operation: socket
-  send/recv, req-style request/reply futures, and the first raw unary
-  RPC futures
+  send/recv, HTTP/HTTPS ncurl requests, req-style request/reply futures,
+  and the first raw unary RPC futures
 - manifest-driven RPC helpers, opt-in `exec`, and query sessions
   (`query_open`, `fetch`, `close`, `cancel`)
 - registry auth policy controls such as
@@ -80,7 +81,8 @@ Implemented now:
 
 Still intentionally deferred or not sealed:
 
-- `ducknng_ncurl_aio(...)` is planned but not implemented yet
+- a broader nanonext-style HTTP route/server framework is not designed
+  yet; the current HTTP server is the framed RPC mount
 - CSV/TSV/Parquet body parsers are not implemented beyond the safe BLOB
   fallback
 - full SQL-side decoding of session `fetch` Arrow batch BLOBs is still a
@@ -266,10 +268,12 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## HTTP Transport
 
-| name                  | kind  | arguments                                                    | returns                                                                                                | description                                                                                                                         |
-|-----------------------|-------|--------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| `ducknng_ncurl`       | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Perform one HTTP or HTTPS request and return an in-band result row.                                                                 |
-| `ducknng_ncurl_table` | table | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(dynamic by response Content-Type)`                                                              | Perform one HTTP or HTTPS request and parse a successful response body into a DuckDB table using the built-in body codec providers. |
+| name                        | kind   | arguments                                                    | returns                                                                                                                | description                                                                                                                         |
+|-----------------------------|--------|--------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| `ducknng_ncurl`             | table  | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)`                 | Perform one HTTP or HTTPS request and return an in-band result row.                                                                 |
+| `ducknng_ncurl_aio`         | scalar | `url, method, headers_json, body, timeout_ms, tls_config_id` | `UBIGINT`                                                                                                              | Launch one asynchronous HTTP or HTTPS request and return a future-like aio handle id.                                               |
+| `ducknng_ncurl_aio_collect` | table  | `aio_ids, wait_ms`                                           | `TABLE(aio_id UBIGINT, ok BOOLEAN, status INTEGER, error VARCHAR, headers_json VARCHAR, body BLOB, body_text VARCHAR)` | Wait for asynchronous ncurl handles and return one raw HTTP result row per newly collected terminal operation.                      |
+| `ducknng_ncurl_table`       | table  | `url, method, headers_json, body, timeout_ms, tls_config_id` | `TABLE(dynamic by response Content-Type)`                                                                              | Perform one HTTP or HTTPS request and parse a successful response body into a DuckDB table using the built-in body codec providers. |
 
 ## Body Codecs
 
@@ -1359,7 +1363,7 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | c719fd0647af7a33d29e4b20474dd707 | closed | NULL        | {"session_id":1,"state":"closed"} |
+    | true | NULL  | 1          | 34a168822cebeb57dba359838b1b3a4c | closed | NULL        | {"session_id":1,"state":"closed"} |
     +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
@@ -1790,8 +1794,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_34daacc7f65ee.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_e476480080d5.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                            TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

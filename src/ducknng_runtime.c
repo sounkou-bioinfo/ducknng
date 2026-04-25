@@ -176,6 +176,13 @@ void ducknng_client_aio_destroy(ducknng_client_aio *aio) {
         ducknng_aio_free(aio->aio);
     }
     if (aio->reply_msg) nng_msg_free(aio->reply_msg);
+    if (aio->http_res) nng_http_res_free(aio->http_res);
+    if (aio->http_req) nng_http_req_free(aio->http_req);
+    if (aio->http_client) nng_http_client_free(aio->http_client);
+    if (aio->http_url) nng_url_free(aio->http_url);
+    if (aio->http_headers_json) duckdb_free(aio->http_headers_json);
+    if (aio->http_body) duckdb_free(aio->http_body);
+    if (aio->http_body_text) duckdb_free(aio->http_body_text);
     if (aio->has_ctx) ducknng_ctx_close(aio->ctx);
     if (aio->owns_socket && aio->open) ducknng_socket_close(aio->sock);
     if (aio->socket_ref) ducknng_runtime_release_client_socket(aio->socket_ref);

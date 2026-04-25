@@ -81,8 +81,8 @@ This checklist tracks the implementation status of the main architecture, transp
   - Current state: signatures were unified and transport reach no longer diverges.
   - Remaining work: decide whether to delete the raw or structured twins entirely.
 - [~] Prepare HTTP / HTTPS transport adapters without inventing a second RPC surface.
-  - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, `ducknng_start_http_server(...)` is implemented, `ducknng_ncurl(...)` remains the low-level HTTP/HTTPS client slice, and the synchronous request/RPC/session helpers now route by URL scheme.
-  - Remaining work: add an honest `ducknng_ncurl_aio(...)` on the same future-like aio substrate, then decide whether a broader nanonext-style HTTP route framework belongs beside the framed RPC carrier.
+  - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, `ducknng_start_http_server(...)` is implemented, `ducknng_ncurl(...)` and `ducknng_ncurl_aio(...)` provide low-level synchronous/asynchronous HTTP/HTTPS client slices, and the synchronous request/RPC/session helpers now route by URL scheme.
+  - Remaining work: decide whether a broader nanonext-style HTTP route framework belongs beside the framed RPC carrier.
 
 ## Blocked by larger architectural replacement work
 

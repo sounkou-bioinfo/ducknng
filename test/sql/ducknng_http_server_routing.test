@@ -23,6 +23,37 @@ FROM ducknng_ncurl('http://127.0.0.1:45458/_ducknng', 'GET', NULL, NULL, 2000, 0
 ----
 1	1	1
 
+statement ok
+CREATE TEMP TABLE http_ncurl_aio AS
+SELECT ducknng_ncurl_aio('http://127.0.0.1:45458/_ducknng', 'GET', NULL, NULL, 2000, 0::UBIGINT) AS aio_id
+
+query II
+SELECT http_ncurl_aio.aio_id > 0, kind = 'ncurl'
+FROM http_ncurl_aio, ducknng_aio_status(http_ncurl_aio.aio_id)
+----
+1	1
+
+query IIII
+SELECT aio_id IN (SELECT aio_id FROM http_ncurl_aio), ok, status = 405, error IS NULL
+FROM ducknng_ncurl_aio_collect((SELECT list_value(aio_id) FROM http_ncurl_aio), 2000)
+----
+1	1	1	1
+
+query III
+SELECT state = 'collected', terminal, has_reply_frame = false
+FROM http_ncurl_aio, ducknng_aio_status(http_ncurl_aio.aio_id)
+----
+1	1	1
+
+query I
+SELECT ducknng_aio_drop(aio_id)
+FROM http_ncurl_aio
+----
+1
+
+statement ok
+DROP TABLE http_ncurl_aio
+
 query III
 SELECT ok, status = 415, error IS NULL
 FROM ducknng_ncurl(

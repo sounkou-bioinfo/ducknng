@@ -1406,6 +1406,26 @@ static nng_msg *ducknng_client_raw_request_message(const uint8_t *payload, size_
     return req;
 }
 
+static void ducknng_client_aio_clear_http_handles(ducknng_client_aio *slot) {
+    if (!slot) return;
+    if (slot->http_res) {
+        nng_http_res_free(slot->http_res);
+        slot->http_res = NULL;
+    }
+    if (slot->http_req) {
+        nng_http_req_free(slot->http_req);
+        slot->http_req = NULL;
+    }
+    if (slot->http_client) {
+        nng_http_client_free(slot->http_client);
+        slot->http_client = NULL;
+    }
+    if (slot->http_url) {
+        nng_url_free(slot->http_url);
+        slot->http_url = NULL;
+    }
+}
+
 static void ducknng_client_aio_cb(void *arg) {
     ducknng_client_aio *slot = (ducknng_client_aio *)arg;
     ducknng_runtime *rt;
@@ -1417,7 +1437,12 @@ static void ducknng_client_aio_cb(void *arg) {
         ducknng_mutex_unlock(&rt->mu);
         return;
     }
-    if (slot->phase == DUCKNNG_CLIENT_AIO_PHASE_SEND) {
+    if (slot->kind == DUCKNNG_CLIENT_AIO_KIND_NCURL) {
+        slot->send_done = 1;
+        slot->recv_done = 1;
+        slot->send_result = rv;
+        slot->recv_result = rv;
+    } else if (slot->phase == DUCKNNG_CLIENT_AIO_PHASE_SEND) {
         slot->send_done = 1;
         slot->send_result = rv;
     } else if (slot->phase == DUCKNNG_CLIENT_AIO_PHASE_RECV) {
@@ -1438,6 +1463,40 @@ static void ducknng_client_aio_cb(void *arg) {
             ducknng_runtime_release_client_socket(slot->socket_ref);
             slot->socket_ref = NULL;
         }
+        if (slot->kind == DUCKNNG_CLIENT_AIO_KIND_NCURL) ducknng_client_aio_clear_http_handles(slot);
+        ducknng_cond_broadcast(&rt->aio_cv);
+        ducknng_mutex_unlock(&rt->mu);
+        return;
+    }
+    if (slot->kind == DUCKNNG_CLIENT_AIO_KIND_NCURL) {
+        uint16_t status = 0;
+        char *headers_json = NULL;
+        uint8_t *body = NULL;
+        size_t body_len = 0;
+        char *errmsg = NULL;
+        if (ducknng_http_response_copy(slot->http_res, &status, &headers_json, &body, &body_len, &errmsg) != 0) {
+            if (slot->error) duckdb_free(slot->error);
+            slot->error = errmsg ? errmsg : ducknng_strdup("ducknng: failed to copy HTTP response");
+            slot->state = DUCKNNG_CLIENT_AIO_ERROR;
+        } else {
+            slot->http_status = status;
+            slot->http_headers_json = headers_json;
+            slot->http_body = body;
+            slot->http_body_len = body_len;
+            if (body && body_len > 0 && ducknng_bytes_look_text(body, body_len)) {
+                slot->http_body_text = ducknng_dup_bytes(body, body_len);
+                if (!slot->http_body_text) {
+                    slot->error = ducknng_strdup("ducknng: out of memory copying HTTP response text");
+                    slot->state = DUCKNNG_CLIENT_AIO_ERROR;
+                } else {
+                    slot->state = DUCKNNG_CLIENT_AIO_READY;
+                }
+            } else {
+                slot->state = DUCKNNG_CLIENT_AIO_READY;
+            }
+        }
+        ducknng_client_aio_clear_http_handles(slot);
+        slot->finished_ms = ducknng_now_ms();
         ducknng_cond_broadcast(&rt->aio_cv);
         ducknng_mutex_unlock(&rt->mu);
         return;
@@ -1637,6 +1696,35 @@ static int ducknng_client_launch_url_request_aio(ducknng_sql_context *ctx, const
     if (ducknng_client_launch_request_aio(ctx->rt, slot, req, errmsg) != 0) {
         return -1;
     }
+    if (out_aio_id) *out_aio_id = slot->aio_id;
+    return 0;
+}
+
+static int ducknng_client_launch_ncurl_aio(ducknng_sql_context *ctx, const char *url,
+    const char *method, const char *headers_json, const uint8_t *body, size_t body_len,
+    int32_t timeout_ms, uint64_t tls_config_id, uint64_t *out_aio_id, char **errmsg) {
+    const ducknng_tls_opts *tls_opts = NULL;
+    ducknng_client_aio *slot = NULL;
+    if (out_aio_id) *out_aio_id = 0;
+    if (!ctx || !ctx->rt || !url || !url[0]) {
+        if (errmsg && !*errmsg) *errmsg = ducknng_strdup("ducknng: ncurl_aio URL must not be NULL or empty");
+        return -1;
+    }
+    if (ducknng_lookup_tls_opts(ctx, tls_config_id, &tls_opts, errmsg) != 0) return -1;
+    slot = ducknng_client_aio_alloc_slot(ctx->rt, timeout_ms, errmsg);
+    if (!slot) return -1;
+    slot->kind = DUCKNNG_CLIENT_AIO_KIND_NCURL;
+    slot->phase = DUCKNNG_CLIENT_AIO_PHASE_HTTP;
+    if (ducknng_http_transact_aio_prepare(url, method, headers_json, body, body_len, tls_opts,
+            &slot->http_url, &slot->http_client, &slot->http_req, &slot->http_res, errmsg) != 0) {
+        ducknng_client_aio_destroy(slot);
+        return -1;
+    }
+    if (ducknng_runtime_add_client_aio(ctx->rt, slot, errmsg) != 0) {
+        ducknng_client_aio_destroy(slot);
+        return -1;
+    }
+    nng_http_client_transact(slot->http_client, slot->http_req, slot->http_res, slot->aio);
     if (out_aio_id) *out_aio_id = slot->aio_id;
     return 0;
 }
@@ -2644,6 +2732,45 @@ static void ducknng_run_rpc_raw_aio_scalar(duckdb_function_info info, duckdb_dat
     }
 }
 
+static void ducknng_ncurl_aio_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        char *method = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
+        char *headers_json = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 2), row);
+        idx_t body_len = 0;
+        uint8_t *body = arg_blob_dup(duckdb_data_chunk_get_vector(input, 3), row, &body_len);
+        int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 4), row, 5000);
+        uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 5), row, 0);
+        char *errmsg = NULL;
+        if (!ctx || !ctx->rt || !url || (!body && body_len > 0)) {
+            if (url) duckdb_free(url);
+            if (method) duckdb_free(method);
+            if (headers_json) duckdb_free(headers_json);
+            if (body) duckdb_free(body);
+            duckdb_scalar_function_set_error(info, "ducknng: ncurl_aio requires url");
+            return;
+        }
+        if (ducknng_client_launch_ncurl_aio(ctx, url, method, headers_json,
+                body, (size_t)body_len, timeout_ms, tls_config_id, &out[row], &errmsg) != 0) {
+            duckdb_free(url);
+            if (method) duckdb_free(method);
+            if (headers_json) duckdb_free(headers_json);
+            if (body) duckdb_free(body);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to launch ncurl aio request");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        duckdb_free(url);
+        if (method) duckdb_free(method);
+        if (headers_json) duckdb_free(headers_json);
+        if (body) duckdb_free(body);
+    }
+}
+
 static void ducknng_request_socket_raw_aio_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
@@ -2821,6 +2948,7 @@ static const char *ducknng_aio_kind_name(int kind) {
         case DUCKNNG_CLIENT_AIO_KIND_REQUEST: return "request";
         case DUCKNNG_CLIENT_AIO_KIND_SEND: return "send";
         case DUCKNNG_CLIENT_AIO_KIND_RECV: return "recv";
+        case DUCKNNG_CLIENT_AIO_KIND_NCURL: return "ncurl";
         default: return NULL;
     }
 }
@@ -2840,6 +2968,7 @@ static const char *ducknng_aio_phase_name(int phase) {
     switch (phase) {
         case DUCKNNG_CLIENT_AIO_PHASE_SEND: return "send";
         case DUCKNNG_CLIENT_AIO_PHASE_RECV: return "recv";
+        case DUCKNNG_CLIENT_AIO_PHASE_HTTP: return "http";
         default: return NULL;
     }
 }
@@ -3007,7 +3136,8 @@ static void ducknng_aio_collect_row_scalar(duckdb_function_info info, duckdb_dat
             continue;
         }
         out_aio_id[row] = slot->aio_id;
-        out_ok[row] = slot->state == DUCKNNG_CLIENT_AIO_READY || slot->state == DUCKNNG_CLIENT_AIO_COLLECTED;
+        out_ok[row] = slot->state == DUCKNNG_CLIENT_AIO_READY ||
+            (slot->state == DUCKNNG_CLIENT_AIO_COLLECTED && !slot->error);
         if (slot->error) duckdb_vector_assign_string_element(child_vecs[2], row, slot->error);
         else set_null(child_vecs[2], row);
         if ((slot->state == DUCKNNG_CLIENT_AIO_READY || slot->state == DUCKNNG_CLIENT_AIO_COLLECTED) && slot->reply_msg) {
@@ -3015,6 +3145,66 @@ static void ducknng_aio_collect_row_scalar(duckdb_function_info info, duckdb_dat
         } else {
             set_null(child_vecs[3], row);
         }
+        ducknng_mutex_unlock(&ctx->rt->mu);
+    }
+}
+
+static void ducknng_ncurl_aio_collect_row_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    duckdb_vector aio_id_vec = duckdb_data_chunk_get_vector(input, 0);
+    duckdb_vector wait_vec = duckdb_data_chunk_get_vector(input, 1);
+    duckdb_vector child_vecs[7];
+    uint64_t *out_aio_id;
+    bool *out_ok;
+    int32_t *out_status;
+    idx_t row_count = duckdb_data_chunk_get_size(input);
+    for (int i = 0; i < 7; i++) child_vecs[i] = duckdb_struct_vector_get_child(output, (idx_t)i);
+    out_aio_id = (uint64_t *)duckdb_vector_get_data(child_vecs[0]);
+    out_ok = (bool *)duckdb_vector_get_data(child_vecs[1]);
+    out_status = (int32_t *)duckdb_vector_get_data(child_vecs[2]);
+    for (idx_t row = 0; row < row_count; row++) {
+        uint64_t aio_id;
+        int32_t wait_ms;
+        ducknng_client_aio *slot;
+        if (!ctx || !ctx->rt || arg_is_null(aio_id_vec, row) || arg_is_null(wait_vec, row)) {
+            set_null(output, row);
+            for (int i = 0; i < 7; i++) set_null(child_vecs[i], row);
+            continue;
+        }
+        aio_id = arg_u64(aio_id_vec, row, 0);
+        wait_ms = arg_int32(wait_vec, row, 0);
+        if (aio_id == 0 || wait_ms < 0) {
+            set_null(output, row);
+            for (int i = 0; i < 7; i++) set_null(child_vecs[i], row);
+            continue;
+        }
+        if (!ducknng_wait_any_for_ids(ctx->rt, &aio_id, 1, wait_ms) && wait_ms > 0) {
+            set_null(output, row);
+            for (int i = 0; i < 7; i++) set_null(child_vecs[i], row);
+            continue;
+        }
+        ducknng_mutex_lock(&ctx->rt->mu);
+        slot = ducknng_find_client_aio_locked(ctx->rt, aio_id);
+        if (!slot || slot->kind != DUCKNNG_CLIENT_AIO_KIND_NCURL ||
+                !(slot->state == DUCKNNG_CLIENT_AIO_READY || slot->state == DUCKNNG_CLIENT_AIO_ERROR ||
+                slot->state == DUCKNNG_CLIENT_AIO_CANCELLED || slot->state == DUCKNNG_CLIENT_AIO_COLLECTED)) {
+            ducknng_mutex_unlock(&ctx->rt->mu);
+            set_null(output, row);
+            for (int i = 0; i < 7; i++) set_null(child_vecs[i], row);
+            continue;
+        }
+        out_aio_id[row] = slot->aio_id;
+        out_ok[row] = slot->state == DUCKNNG_CLIENT_AIO_READY ||
+            (slot->state == DUCKNNG_CLIENT_AIO_COLLECTED && !slot->error);
+        if (out_ok[row]) out_status[row] = (int32_t)slot->http_status; else set_null(child_vecs[2], row);
+        if (slot->error) duckdb_vector_assign_string_element(child_vecs[3], row, slot->error);
+        else set_null(child_vecs[3], row);
+        if (slot->http_headers_json) duckdb_vector_assign_string_element(child_vecs[4], row, slot->http_headers_json);
+        else set_null(child_vecs[4], row);
+        if (slot->http_body) assign_blob(child_vecs[5], row, slot->http_body, (idx_t)slot->http_body_len);
+        else set_null(child_vecs[5], row);
+        if (slot->http_body_text) duckdb_vector_assign_string_element(child_vecs[6], row, slot->http_body_text);
+        else set_null(child_vecs[6], row);
         ducknng_mutex_unlock(&ctx->rt->mu);
     }
 }
@@ -3031,7 +3221,29 @@ static void ducknng_aio_collectable_scalar(duckdb_function_info info, duckdb_dat
         if (!ctx || !ctx->rt || aio_id == 0) continue;
         ducknng_mutex_lock(&ctx->rt->mu);
         slot = ducknng_find_client_aio_locked(ctx->rt, aio_id);
-        if (slot && (slot->state == DUCKNNG_CLIENT_AIO_READY || slot->state == DUCKNNG_CLIENT_AIO_ERROR ||
+        if (slot && slot->kind != DUCKNNG_CLIENT_AIO_KIND_NCURL &&
+                (slot->state == DUCKNNG_CLIENT_AIO_READY || slot->state == DUCKNNG_CLIENT_AIO_ERROR ||
+                slot->state == DUCKNNG_CLIENT_AIO_CANCELLED)) {
+            out[row] = true;
+        }
+        ducknng_mutex_unlock(&ctx->rt->mu);
+    }
+}
+
+static void ducknng_ncurl_aio_collectable_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    bool *out = (bool *)duckdb_vector_get_data(output);
+    for (row = 0; row < count; row++) {
+        uint64_t aio_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
+        ducknng_client_aio *slot;
+        out[row] = false;
+        if (!ctx || !ctx->rt || aio_id == 0) continue;
+        ducknng_mutex_lock(&ctx->rt->mu);
+        slot = ducknng_find_client_aio_locked(ctx->rt, aio_id);
+        if (slot && slot->kind == DUCKNNG_CLIENT_AIO_KIND_NCURL &&
+                (slot->state == DUCKNNG_CLIENT_AIO_READY || slot->state == DUCKNNG_CLIENT_AIO_ERROR ||
                 slot->state == DUCKNNG_CLIENT_AIO_CANCELLED)) {
             out[row] = true;
         }
@@ -5536,6 +5748,62 @@ static int register_aio_collect_row_scalar_named(duckdb_connection con, ducknng_
     return 1;
 }
 
+static int register_ncurl_aio_collect_row_scalar_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
+    duckdb_scalar_function fn;
+    duckdb_logical_type u64_type;
+    duckdb_logical_type int_type;
+    duckdb_logical_type bool_type;
+    duckdb_logical_type varchar_type;
+    duckdb_logical_type blob_type;
+    duckdb_logical_type fields[7];
+    const char *field_names[7] = {"aio_id", "ok", "status", "error", "headers_json", "body", "body_text"};
+    duckdb_logical_type struct_type;
+    if (!ctx || !ctx->rt) return 0;
+    fn = duckdb_create_scalar_function();
+    if (!fn) return 0;
+    duckdb_scalar_function_set_name(fn, name);
+    u64_type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
+    int_type = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
+    bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    blob_type = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+    fields[0] = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
+    fields[1] = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    fields[2] = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
+    fields[3] = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    fields[4] = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    fields[5] = duckdb_create_logical_type(DUCKDB_TYPE_BLOB);
+    fields[6] = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    struct_type = duckdb_create_struct_type(fields, field_names, 7);
+    duckdb_scalar_function_add_parameter(fn, u64_type);
+    duckdb_scalar_function_add_parameter(fn, int_type);
+    duckdb_scalar_function_set_return_type(fn, struct_type);
+    duckdb_scalar_function_set_function(fn, ducknng_ncurl_aio_collect_row_scalar);
+    duckdb_scalar_function_set_special_handling(fn);
+    duckdb_scalar_function_set_volatile(fn);
+    if (!ducknng_set_scalar_sql_context(fn, ctx)) { duckdb_destroy_scalar_function(&fn); return 0; }
+    if (duckdb_register_scalar_function(con, fn) == DuckDBError) {
+        duckdb_destroy_scalar_function(&fn);
+        duckdb_destroy_logical_type(&u64_type);
+        duckdb_destroy_logical_type(&int_type);
+        duckdb_destroy_logical_type(&bool_type);
+        duckdb_destroy_logical_type(&varchar_type);
+        duckdb_destroy_logical_type(&blob_type);
+        for (int i = 0; i < 7; i++) duckdb_destroy_logical_type(&fields[i]);
+        duckdb_destroy_logical_type(&struct_type);
+        return 0;
+    }
+    duckdb_destroy_scalar_function(&fn);
+    duckdb_destroy_logical_type(&u64_type);
+    duckdb_destroy_logical_type(&int_type);
+    duckdb_destroy_logical_type(&bool_type);
+    duckdb_destroy_logical_type(&varchar_type);
+    duckdb_destroy_logical_type(&blob_type);
+    for (int i = 0; i < 7; i++) duckdb_destroy_logical_type(&fields[i]);
+    duckdb_destroy_logical_type(&struct_type);
+    return 1;
+}
+
 static int register_aio_status_scalar_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_scalar_function fn;
     duckdb_logical_type u64_type;
@@ -5630,6 +5898,33 @@ static int register_aio_collect_macro(duckdb_connection con) {
         "UNNEST(list_transform("
         "  list_filter(aio_ids, lambda x: ducknng__aio_collectable(x) AND ducknng__aio_mark_collected(x)), "
         "  lambda x: ducknng__aio_collect_row(x, 0)" 
+        ")) AS t(r) "
+        "WHERE have_ready";
+    memset(&result, 0, sizeof(result));
+    if (duckdb_query(con, sql, &result) == DuckDBError) {
+        duckdb_destroy_result(&result);
+        return 0;
+    }
+    duckdb_destroy_result(&result);
+    return 1;
+}
+
+static int register_ncurl_aio_collect_macro(duckdb_connection con) {
+    duckdb_result result;
+    const char *sql =
+        "CREATE OR REPLACE MACRO ducknng_ncurl_aio_collect(aio_ids, wait_ms) AS TABLE "
+        "WITH _input AS (SELECT aio_ids AS aio_ids, ducknng__aio_wait_any(aio_ids, wait_ms) AS have_ready) "
+        "SELECT struct_extract(r, 'aio_id') AS aio_id, "
+        "       struct_extract(r, 'ok') AS ok, "
+        "       struct_extract(r, 'status') AS status, "
+        "       struct_extract(r, 'error') AS error, "
+        "       struct_extract(r, 'headers_json') AS headers_json, "
+        "       struct_extract(r, 'body') AS body, "
+        "       struct_extract(r, 'body_text') AS body_text "
+        "FROM _input, "
+        "UNNEST(list_transform("
+        "  list_filter(aio_ids, lambda x: ducknng__ncurl_aio_collectable(x) AND ducknng__aio_mark_collected(x)), "
+        "  lambda x: ducknng__ncurl_aio_collect_row(x, 0)"
         ")) AS t(r) "
         "WHERE have_ready";
     memset(&result, 0, sizeof(result));
@@ -6635,6 +6930,8 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type rpc_exec_raw_aio_types[4] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT};
     duckdb_type rpc_manifest_raw_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT};
     duckdb_type rpc_manifest_raw_aio_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT};
+    duckdb_type ncurl_aio_types[6] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR,
+        DUCKDB_TYPE_BLOB, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT};
     duckdb_type socket_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type dial_types[4] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_UBIGINT};
     duckdb_type listen_types[4] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
@@ -6670,6 +6967,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_run_rpc_raw_aio", 4, ducknng_run_rpc_raw_aio_scalar, &ctx, rpc_exec_raw_aio_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw", 2, ducknng_get_rpc_manifest_raw_scalar, &ctx, rpc_manifest_raw_types, DUCKDB_TYPE_BLOB)) return 0;
     if (!register_scalar(connection, "ducknng_get_rpc_manifest_raw_aio", 3, ducknng_get_rpc_manifest_raw_aio_scalar, &ctx, rpc_manifest_raw_aio_types, DUCKDB_TYPE_UBIGINT)) return 0;
+    if (!register_scalar(connection, "ducknng_ncurl_aio", 6, ducknng_ncurl_aio_scalar, &ctx, ncurl_aio_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_open_socket", 1, ducknng_socket_scalar, &ctx, socket_types, DUCKDB_TYPE_UBIGINT)) return 0;
     if (!register_scalar(connection, "ducknng_dial_socket", 4, ducknng_dial_scalar, &ctx, dial_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_listen_socket", 4, ducknng_listen_scalar, &ctx, listen_types, DUCKDB_TYPE_BOOLEAN)) return 0;
@@ -6688,9 +6986,11 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_aio_cancel", 1, ducknng_aio_cancel_scalar, &ctx, aio_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_aio_drop", 1, ducknng_aio_drop_scalar, &ctx, aio_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_volatile_scalar(connection, "ducknng__aio_collectable", 1, ducknng_aio_collectable_scalar, &ctx, aio_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_volatile_scalar(connection, "ducknng__ncurl_aio_collectable", 1, ducknng_ncurl_aio_collectable_scalar, &ctx, aio_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_volatile_scalar(connection, "ducknng__aio_mark_collected", 1, ducknng_aio_mark_collected_scalar, &ctx, aio_id_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_aio_wait_any_scalar_named(connection, &ctx, "ducknng__aio_wait_any")) return 0;
     if (!register_aio_collect_row_scalar_named(connection, &ctx, "ducknng__aio_collect_row")) return 0;
+    if (!register_ncurl_aio_collect_row_scalar_named(connection, &ctx, "ducknng__ncurl_aio_collect_row")) return 0;
     if (!register_aio_status_scalar_named(connection, &ctx, "ducknng__aio_status_row")) return 0;
     if (!register_named_servers_table(connection, &ctx, "ducknng_list_servers")) return 0;
     if (!register_named_sockets_table(connection, &ctx, "ducknng_list_sockets")) return 0;
@@ -6712,5 +7012,6 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_frame_decode_table_named(connection, "ducknng_decode_frame")) return 0;
     if (!register_aio_status_macro(connection)) return 0;
     if (!register_aio_collect_macro(connection)) return 0;
+    if (!register_ncurl_aio_collect_macro(connection)) return 0;
     return 1;
 }

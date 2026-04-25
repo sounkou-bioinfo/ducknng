@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <nng/supplemental/http/http.h>
 
 typedef struct ducknng_client_socket {
     uint64_t socket_id;
@@ -41,13 +42,15 @@ typedef struct ducknng_tls_config {
 
 enum ducknng_client_aio_phase {
     DUCKNNG_CLIENT_AIO_PHASE_SEND = 1,
-    DUCKNNG_CLIENT_AIO_PHASE_RECV = 2
+    DUCKNNG_CLIENT_AIO_PHASE_RECV = 2,
+    DUCKNNG_CLIENT_AIO_PHASE_HTTP = 3
 };
 
 enum ducknng_client_aio_kind {
     DUCKNNG_CLIENT_AIO_KIND_REQUEST = 1,
     DUCKNNG_CLIENT_AIO_KIND_SEND = 2,
-    DUCKNNG_CLIENT_AIO_KIND_RECV = 3
+    DUCKNNG_CLIENT_AIO_KIND_RECV = 3,
+    DUCKNNG_CLIENT_AIO_KIND_NCURL = 4
 };
 
 enum ducknng_client_aio_state {
@@ -67,6 +70,15 @@ typedef struct ducknng_client_aio {
     nng_ctx ctx;
     nng_aio *aio;
     nng_msg *reply_msg;
+    nng_url *http_url;
+    nng_http_client *http_client;
+    nng_http_req *http_req;
+    nng_http_res *http_res;
+    uint16_t http_status;
+    char *http_headers_json;
+    uint8_t *http_body;
+    size_t http_body_len;
+    char *http_body_text;
     int owns_socket;
     int open;
     int has_ctx;
