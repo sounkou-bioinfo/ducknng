@@ -178,11 +178,11 @@ SET VARIABLE http_session_token = (
   SELECT session_token FROM http_open
 )
 
-query IIITT
-SELECT ok, session_id = getvariable('http_session_id')::UBIGINT, length(session_token) = 32, state, next_method
+query IIIITT
+SELECT ok, session_id = getvariable('http_session_id')::UBIGINT, length(session_token) = 32, idle_timeout_ms, state, next_method
 FROM http_open
 ----
-1	1	1	open	fetch
+1	1	1	300000	open	fetch
 
 query IIIII
 SELECT ok, session_id = getvariable('http_session_id')::UBIGINT, state IS NULL, octet_length(payload) > 0, end_of_stream

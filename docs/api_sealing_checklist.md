@@ -31,7 +31,7 @@ The current service execution model is a single serialized DuckDB execution lane
 
 ### 2. Resource quotas for multi-client services
 
-The current implementation enforces listener receive-size limits, descriptor request/reply-size limits, and service-level session idle timeout. It does not yet implement all owner/pipe-level quotas useful for a sealed multi-tenant RPC service. Before sealing multi-client deployment semantics, decide whether the stable surface needs explicit limits for concurrent in-flight requests, open sessions per owner identity, cumulative reply bytes per owner, and session-open rate. If per-session idle timeout is accepted at `query_open` time, it should be bounded by server-side defaults and maxima rather than being an unbounded client choice.
+The current implementation enforces listener receive-size limits, descriptor request/reply-size limits, and service-level session idle timeout, and `query_open` replies now expose the server-owned effective `idle_timeout_ms`. It does not yet implement all owner/pipe-level quotas useful for a sealed multi-tenant RPC service. Before sealing multi-client deployment semantics, decide whether the stable surface needs explicit limits for concurrent in-flight requests, open sessions per owner identity, cumulative reply bytes per owner, and session-open rate. If per-session idle-timeout hints are later accepted from clients, they should be bounded by server-side defaults and maxima rather than being an unbounded client choice.
 
 ### 3. HTTP async and web-server framework scope
 

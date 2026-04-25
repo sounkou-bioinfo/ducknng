@@ -37,6 +37,7 @@ static int ducknng_method_manifest_handler(ducknng_service *svc,
         security.tls_auth_mode = svc->tls_opts.auth_mode;
         security.peer_identity_required = ducknng_service_requires_peer_identity(svc);
         security.sessions_bind_peer_identity_when_present = 1;
+        security.session_idle_timeout_ms = svc->session_idle_ms;
         security.peer_identity_format = "tls:san:<value>|tls:cn:<common-name>";
         ducknng_mutex_lock(&svc->rt->mu);
         json = ducknng_method_registry_manifest_json(&svc->rt->registry, "ducknng", "0.1.0",
@@ -143,7 +144,7 @@ static int ducknng_method_query_open_handler(ducknng_service *svc,
     duckdb_result result;
     uint64_t session_id = 0;
     char *owner_token = NULL;
-    char json[320];
+    char json[384];
     char *errmsg = NULL;
     (void)method;
     memset(&open_req, 0, sizeof(open_req));
@@ -193,8 +194,9 @@ static int ducknng_method_query_open_handler(ducknng_service *svc,
         }
     }
     ducknng_query_open_request_destroy(&open_req);
-    snprintf(json, sizeof(json), "{\"session_id\":%llu,\"session_token\":\"%s\",\"state\":\"open\",\"next_method\":\"fetch\"}",
-        (unsigned long long)session_id, owner_token ? owner_token : "");
+    snprintf(json, sizeof(json), "{\"session_id\":%llu,\"session_token\":\"%s\",\"state\":\"open\",\"next_method\":\"fetch\",\"idle_timeout_ms\":%llu}",
+        (unsigned long long)session_id, owner_token ? owner_token : "",
+        (unsigned long long)svc->session_idle_ms);
     if (ducknng_json_reply(reply, "query_open", DUCKNNG_RPC_FLAG_SESSION_OPEN, json) != 0) {
         ducknng_session *session = ducknng_service_remove_session(svc, session_id, owner_token,
             req->caller_identity, NULL);
@@ -528,7 +530,7 @@ const ducknng_method_descriptor ducknng_method_query_open = {
     0,
     1,
     "{\"fields\":[{\"name\":\"sql\",\"type\":\"utf8\",\"nullable\":false},{\"name\":\"batch_rows\",\"type\":\"uint64\",\"nullable\":true},{\"name\":\"batch_bytes\",\"type\":\"uint64\",\"nullable\":true}]}",
-    "{\"type\":\"json\",\"session_open\":true,\"fields\":[{\"name\":\"session_id\",\"type\":\"uint64\",\"nullable\":false},{\"name\":\"session_token\",\"type\":\"string\",\"nullable\":false},{\"name\":\"state\",\"type\":\"string\",\"nullable\":false},{\"name\":\"next_method\",\"type\":\"string\",\"nullable\":false}]}",
+    "{\"type\":\"json\",\"session_open\":true,\"fields\":[{\"name\":\"session_id\",\"type\":\"uint64\",\"nullable\":false},{\"name\":\"session_token\",\"type\":\"string\",\"nullable\":false},{\"name\":\"state\",\"type\":\"string\",\"nullable\":false},{\"name\":\"next_method\",\"type\":\"string\",\"nullable\":false},{\"name\":\"idle_timeout_ms\",\"type\":\"uint64\",\"nullable\":false,\"policy\":\"server_effective\"}]}",
     ducknng_method_query_open_handler
 };
 

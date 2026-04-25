@@ -102,7 +102,7 @@ If you open a query session with:
 
 - `ducknng_open_query(...)`
 
-keep both the returned `session_id` and `session_token`, then close it explicitly with:
+keep both the returned `session_id` and `session_token`. The `idle_timeout_ms` column is the server-owned effective idle cleanup policy for that session; it is not a client-authoritative lease extension. Close the session explicitly with:
 
 - `ducknng_close_query(...)`
 

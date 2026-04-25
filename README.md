@@ -77,7 +77,8 @@ Implemented now:
 - TLS config handles for `tls+tcp://`, `wss://`, and `https://`;
   `auth_mode = 2` enables required peer verification/mTLS
 - session ownership by `session_token`, additionally bound to verified
-  mTLS peer identity when present
+  mTLS peer identity when present; `query_open` replies expose the
+  server-owned effective `idle_timeout_ms`
 
 Still intentionally deferred or not sealed:
 
@@ -135,6 +136,7 @@ WITH manifest_row AS (
 SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
        json_extract_string(manifest::JSON, '$.server.version') AS server_version,
        json_extract(manifest::JSON, '$.server.protocol_version')::UBIGINT AS protocol_version,
+       json_extract(manifest::JSON, '$.server.session_policy.idle_timeout_ms')::UBIGINT AS idle_timeout_ms,
        json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count
 FROM manifest_row;
 SELECT ducknng_stop_server('sql0');
@@ -152,11 +154,11 @@ SELECT ducknng_stop_server('sql0');
     | error       | VARCHAR     |
     | manifest    | VARCHAR     |
     +-------------+-------------+
-    +-------------+----------------+------------------+--------------+
-    | server_name | server_version | protocol_version | method_count |
-    +-------------+----------------+------------------+--------------+
-    | ducknng     | 0.1.0          | 1                | 5            |
-    +-------------+----------------+------------------+--------------+
+    +-------------+----------------+------------------+-----------------+--------------+
+    | server_name | server_version | protocol_version | idle_timeout_ms | method_count |
+    +-------------+----------------+------------------+-----------------+--------------+
+    | ducknng     | 0.1.0          | 1                | 300000          | 5            |
+    +-------------+----------------+------------------+-----------------+--------------+
     +-----------------------------+
     | ducknng_stop_server('sql0') |
     +-----------------------------+
@@ -310,12 +312,12 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## RPC Session
 
-| name                   | kind  | arguments                                                                | returns                                                                                                                                                                      | description                                                                                                    |
-|------------------------|-------|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
-| `ducknng_open_query`   | table | `url, sql, batch_rows, batch_bytes, tls_config_id`                       | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Open a server-side query session and return the JSON control metadata as a structured row.                     |
-| `ducknng_fetch_query`  | table | `url, session_id, session_token, batch_rows, batch_bytes, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)` | Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.            |
-| `ducknng_close_query`  | table | `url, session_id, session_token, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Close a server-side query session and return the JSON control metadata as a structured row.                    |
-| `ducknng_cancel_query` | table | `url, session_id, session_token, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)`                                      | Request cancellation for a server-side query session and return the JSON control metadata as a structured row. |
+| name                   | kind  | arguments                                                                | returns                                                                                                                                                                                               | description                                                                                                    |
+|------------------------|-------|--------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| `ducknng_open_query`   | table | `url, sql, batch_rows, batch_bytes, tls_config_id`                       | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT)`                                      | Open a server-side query session and return the JSON control metadata as a structured row.                     |
+| `ducknng_fetch_query`  | table | `url, session_id, session_token, batch_rows, batch_bytes, tls_config_id` | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT, payload BLOB, end_of_stream BOOLEAN)` | Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.            |
+| `ducknng_close_query`  | table | `url, session_id, session_token, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT)`                                      | Close a server-side query session and return the JSON control metadata as a structured row.                    |
+| `ducknng_cancel_query` | table | `url, session_id, session_token, tls_config_id`                          | `TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT)`                                      | Request cancellation for a server-side query session and return the JSON control metadata as a structured row. |
 
 </details>
 
@@ -1303,7 +1305,10 @@ FROM ducknng_open_query(
 SET VARIABLE session_id = (SELECT session_id FROM session_open);
 SET VARIABLE session_token = (SELECT session_token FROM session_open);
 
-SELECT getvariable('session_id') AS opened_session_id, length(getvariable('session_token')::VARCHAR) AS session_token_chars;
+SELECT getvariable('session_id') AS opened_session_id,
+       length(getvariable('session_token')::VARCHAR) AS session_token_chars,
+       idle_timeout_ms AS effective_idle_timeout_ms
+FROM session_open;
 
 -- The first fetch returns one Arrow IPC batch in payload.
 SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
@@ -1328,7 +1333,7 @@ FROM ducknng_fetch_query(
 );
 
 -- Close the exhausted session explicitly.
-SELECT *
+SELECT ok, session_id, state
 FROM ducknng_close_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
   getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
@@ -1345,11 +1350,11 @@ SELECT ducknng_stop_server('sql_session_demo');
     +--------------------------------------------------------------------------------------------------------------+
     | true                                                                                                         |
     +--------------------------------------------------------------------------------------------------------------+
-    +-------------------+---------------------+
-    | opened_session_id | session_token_chars |
-    +-------------------+---------------------+
-    | 1                 | 32                  |
-    +-------------------+---------------------+
+    +-------------------+---------------------+---------------------------+
+    | opened_session_id | session_token_chars | effective_idle_timeout_ms |
+    +-------------------+---------------------+---------------------------+
+    | 1                 | 32                  | 300000                    |
+    +-------------------+---------------------+---------------------------+
     +------+------------+---------------+-------------+---------------+
     |  ok  | session_id | state_is_null | has_payload | end_of_stream |
     +------+------------+---------------+-------------+---------------+
@@ -1360,11 +1365,11 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+------------+-----------+------------+---------------+
     | true | 1          | exhausted | true       | true          |
     +------+------------+-----------+------------+---------------+
-    +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    |  ok  | error | session_id |          session_token           | state  | next_method |           control_json            |
-    +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
-    | true | NULL  | 1          | 34a168822cebeb57dba359838b1b3a4c | closed | NULL        | {"session_id":1,"state":"closed"} |
-    +------+-------+------------+----------------------------------+--------+-------------+-----------------------------------+
+    +------+------------+--------+
+    |  ok  | session_id | state  |
+    +------+------------+--------+
+    | true | 1          | closed |
+    +------+------------+--------+
     +-----------------------------------------+
     | ducknng_stop_server('sql_session_demo') |
     +-----------------------------------------+
@@ -1794,8 +1799,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_e476480080d5.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                            TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_143243c4c23db.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

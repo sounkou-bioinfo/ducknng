@@ -117,7 +117,7 @@ This distinction is essential. It keeps application errors inside the `ducknng` 
 
 The HTTP adapter does not alter the session contract. It carries the same methods and payloads that already exist over the NNG carrier.
 
-`query_open` still accepts an Arrow IPC payload containing exactly one logical request row with `sql` and optional batch controls. Over HTTP, that Arrow IPC payload remains the payload inside a `ducknng` request frame, and that frame becomes the HTTP request body.
+`query_open` still accepts an Arrow IPC payload containing exactly one logical request row with `sql` and optional batch controls. Over HTTP, that Arrow IPC payload remains the payload inside a `ducknng` request frame, and that frame becomes the HTTP request body. Its JSON reply includes the same `session_id`, `session_token`, state metadata, and server-owned effective `idle_timeout_ms` as the NNG carrier.
 
 `fetch` still accepts JSON control metadata keyed by `session_id` and `session_token`. Over HTTP, that JSON control payload remains the payload inside a `ducknng` request frame, and that frame becomes the HTTP request body.
 

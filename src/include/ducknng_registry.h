@@ -93,6 +93,7 @@ typedef struct ducknng_manifest_security {
     int tls_auth_mode;
     int peer_identity_required;
     int sessions_bind_peer_identity_when_present;
+    uint64_t session_idle_timeout_ms;
     const char *peer_identity_format;
 } ducknng_manifest_security;
 

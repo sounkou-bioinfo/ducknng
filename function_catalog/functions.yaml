@@ -120,7 +120,6 @@
         "SELECT ducknng_unregister_method('exec');"
       ]
     },
-
     {
       "name": "ducknng_unregister_family",
       "kind": "scalar",
@@ -828,12 +827,13 @@
       "kind": "table",
       "category": "RPC Session",
       "signature": "ducknng_open_query(url, sql, batch_rows, batch_bytes, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Open a server-side query session and return the JSON control metadata as a structured row.",
       "notes": [
         "Transport is selected by the URL scheme; the synchronous helper routes over NNG, HTTP, or HTTPS as appropriate.",
+        "idle_timeout_ms is the server-owned effective idle timeout for the session, derived from the service policy rather than a client-controlled value.",
         "batch_rows and batch_bytes are optional fetch-hint fields carried in the query_open payload.",
         "The returned session_token is a bearer capability; pass it unchanged to fetch, close, and cancel helpers.",
         "If the session is opened over verified mTLS, the server also binds it to that transport-derived peer identity."
@@ -847,7 +847,7 @@
       "kind": "table",
       "category": "RPC Session",
       "signature": "ducknng_fetch_query(url, session_id, session_token, batch_rows, batch_bytes, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, payload BLOB, end_of_stream BOOLEAN)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT, payload BLOB, end_of_stream BOOLEAN)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Fetch the next session reply and return either JSON control metadata or an Arrow IPC batch payload.",
@@ -867,7 +867,7 @@
       "kind": "table",
       "category": "RPC Session",
       "signature": "ducknng_close_query(url, session_id, session_token, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Close a server-side query session and return the JSON control metadata as a structured row.",
@@ -886,7 +886,7 @@
       "kind": "table",
       "category": "RPC Session",
       "signature": "ducknng_cancel_query(url, session_id, session_token, tls_config_id)",
-      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR)",
+      "returns": "TABLE(ok BOOLEAN, error VARCHAR, session_id UBIGINT, session_token VARCHAR, state VARCHAR, next_method VARCHAR, control_json VARCHAR, idle_timeout_ms UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Request cancellation for a server-side query session and return the JSON control metadata as a structured row.",

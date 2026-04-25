@@ -49,7 +49,7 @@ Implemented now:
 - registry auth policy controls such as `ducknng_set_method_auth('manifest', true)` for protecting discovery through verified peer identity
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on URL scheme
 - TLS config handles for `tls+tcp://`, `wss://`, and `https://`; `auth_mode = 2` enables required peer verification/mTLS
-- session ownership by `session_token`, additionally bound to verified mTLS peer identity when present
+- session ownership by `session_token`, additionally bound to verified mTLS peer identity when present; `query_open` replies expose the server-owned effective `idle_timeout_ms`
 
 Still intentionally deferred or not sealed:
 
@@ -97,6 +97,7 @@ WITH manifest_row AS (
 SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
        json_extract_string(manifest::JSON, '$.server.version') AS server_version,
        json_extract(manifest::JSON, '$.server.protocol_version')::UBIGINT AS protocol_version,
+       json_extract(manifest::JSON, '$.server.session_policy.idle_timeout_ms')::UBIGINT AS idle_timeout_ms,
        json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count
 FROM manifest_row;
 SELECT ducknng_stop_server('sql0');
@@ -845,7 +846,10 @@ FROM ducknng_open_query(
 SET VARIABLE session_id = (SELECT session_id FROM session_open);
 SET VARIABLE session_token = (SELECT session_token FROM session_open);
 
-SELECT getvariable('session_id') AS opened_session_id, length(getvariable('session_token')::VARCHAR) AS session_token_chars;
+SELECT getvariable('session_id') AS opened_session_id,
+       length(getvariable('session_token')::VARCHAR) AS session_token_chars,
+       idle_timeout_ms AS effective_idle_timeout_ms
+FROM session_open;
 
 -- The first fetch returns one Arrow IPC batch in payload.
 SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
@@ -870,7 +874,7 @@ FROM ducknng_fetch_query(
 );
 
 -- Close the exhausted session explicitly.
-SELECT *
+SELECT ok, session_id, state
 FROM ducknng_close_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
   getvariable('session_id')::UBIGINT,        -- session_id returned by open_query

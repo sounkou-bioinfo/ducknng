@@ -240,6 +240,8 @@ typedef struct {
     char *state;
     char *next_method;
     char *control_json;
+    uint64_t idle_timeout_ms;
+    int has_idle_timeout_ms;
     uint8_t *payload;
     idx_t payload_len;
     bool end_of_stream;
@@ -1851,6 +1853,9 @@ static void ducknng_session_result_fill_from_response(ducknng_session_result_bin
         if (!bind->session_token) bind->session_token = ducknng_json_extract_string_dup(bind->control_json, "session_token");
         bind->state = ducknng_json_extract_string_dup(bind->control_json, "state");
         bind->next_method = ducknng_json_extract_string_dup(bind->control_json, "next_method");
+        if (ducknng_json_extract_u64_value(bind->control_json, "idle_timeout_ms", &bind->idle_timeout_ms) == 0) {
+            bind->has_idle_timeout_ms = 1;
+        }
         bind->ok = true;
         return;
     }
@@ -4105,6 +4110,9 @@ static void ducknng_session_bind_add_control_columns(duckdb_bind_info info) {
     duckdb_bind_add_result_column(info, "next_method", type);
     duckdb_bind_add_result_column(info, "control_json", type);
     duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
+    duckdb_bind_add_result_column(info, "idle_timeout_ms", type);
+    duckdb_destroy_logical_type(&type);
 }
 
 static void ducknng_session_bind_common(ducknng_session_result_bind_data *bind,
@@ -4360,12 +4368,14 @@ static void ducknng_session_control_scan(duckdb_function_info info, duckdb_data_
     ducknng_session_result_bind_data *bind = (ducknng_session_result_bind_data *)duckdb_function_get_bind_data(info);
     bool *ok_data;
     uint64_t *session_ids;
+    uint64_t *idle_timeout_ms;
     if (!init || !bind || init->emitted) {
         duckdb_data_chunk_set_size(output, 0);
         return;
     }
     ok_data = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 0));
     session_ids = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 2));
+    idle_timeout_ms = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 7));
     ok_data[0] = bind->ok;
     if (bind->error) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), 0, bind->error);
     else set_null(duckdb_data_chunk_get_vector(output, 1), 0);
@@ -4378,6 +4388,8 @@ static void ducknng_session_control_scan(duckdb_function_info info, duckdb_data_
     else set_null(duckdb_data_chunk_get_vector(output, 5), 0);
     if (bind->control_json) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 6), 0, bind->control_json);
     else set_null(duckdb_data_chunk_get_vector(output, 6), 0);
+    if (bind->has_idle_timeout_ms) idle_timeout_ms[0] = bind->idle_timeout_ms;
+    else set_null(duckdb_data_chunk_get_vector(output, 7), 0);
     duckdb_data_chunk_set_size(output, 1);
     init->emitted = 1;
 }
@@ -4387,6 +4399,7 @@ static void ducknng_fetch_query_scan(duckdb_function_info info, duckdb_data_chun
     ducknng_session_result_bind_data *bind = (ducknng_session_result_bind_data *)duckdb_function_get_bind_data(info);
     bool *ok_data;
     uint64_t *session_ids;
+    uint64_t *idle_timeout_ms;
     bool *end_of_stream;
     if (!init || !bind || init->emitted) {
         duckdb_data_chunk_set_size(output, 0);
@@ -4394,7 +4407,8 @@ static void ducknng_fetch_query_scan(duckdb_function_info info, duckdb_data_chun
     }
     ok_data = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 0));
     session_ids = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 2));
-    end_of_stream = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 8));
+    idle_timeout_ms = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 7));
+    end_of_stream = (bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 9));
     ok_data[0] = bind->ok;
     if (bind->error) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), 0, bind->error);
     else set_null(duckdb_data_chunk_get_vector(output, 1), 0);
@@ -4407,8 +4421,10 @@ static void ducknng_fetch_query_scan(duckdb_function_info info, duckdb_data_chun
     else set_null(duckdb_data_chunk_get_vector(output, 5), 0);
     if (bind->control_json) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 6), 0, bind->control_json);
     else set_null(duckdb_data_chunk_get_vector(output, 6), 0);
-    if (bind->payload) assign_blob(duckdb_data_chunk_get_vector(output, 7), 0, bind->payload, bind->payload_len);
+    if (bind->has_idle_timeout_ms) idle_timeout_ms[0] = bind->idle_timeout_ms;
     else set_null(duckdb_data_chunk_get_vector(output, 7), 0);
+    if (bind->payload) assign_blob(duckdb_data_chunk_get_vector(output, 8), 0, bind->payload, bind->payload_len);
+    else set_null(duckdb_data_chunk_get_vector(output, 8), 0);
     end_of_stream[0] = bind->end_of_stream;
     duckdb_data_chunk_set_size(output, 1);
     init->emitted = 1;

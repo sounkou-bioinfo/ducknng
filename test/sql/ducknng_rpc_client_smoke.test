@@ -34,11 +34,14 @@ FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIG
 ----
 1	1
 
-query I
-SELECT position('"session_token"' IN manifest) > 0
+query IIIT
+SELECT position('"session_token"' IN manifest) > 0,
+       position('"idle_timeout_ms"' IN manifest) > 0,
+       json_extract(manifest::JSON, '$.server.session_policy.idle_timeout_ms')::UBIGINT = 300000,
+       json_extract_string(manifest::JSON, '$.server.session_policy.idle_timeout_owner')
 FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 0::UBIGINT)
 ----
-1
+1	1	1	server
 
 query IIIIIII
 SELECT ok, version, type, flags, type_name, name, position('"name":"exec"' IN payload_text) > 0
@@ -171,11 +174,11 @@ CREATE TEMP TABLE rpc_open AS
 SELECT *
 FROM ducknng_open_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i FROM remote_t ORDER BY i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
 
-query IIITT
-SELECT ok, session_id, length(session_token) = 32, state, next_method
+query IIIITT
+SELECT ok, session_id, length(session_token) = 32, idle_timeout_ms, state, next_method
 FROM rpc_open
 ----
-1	1	1	open	fetch
+1	1	1	300000	open	fetch
 
 statement ok
 SET VARIABLE rpc_session_token = (
@@ -234,11 +237,11 @@ CREATE TEMP TABLE rpc_open_cancel AS
 SELECT *
 FROM ducknng_open_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 'SELECT i FROM remote_t ORDER BY i', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
 
-query IIITT
-SELECT ok, session_id, length(session_token) = 32, state, next_method
+query IIIITT
+SELECT ok, session_id, length(session_token) = 32, idle_timeout_ms, state, next_method
 FROM rpc_open_cancel
 ----
-1	2	1	open	fetch
+1	2	1	300000	open	fetch
 
 statement ok
 SET VARIABLE rpc_cancel_session_token = (
