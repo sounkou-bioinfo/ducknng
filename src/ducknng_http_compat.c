@@ -902,13 +902,25 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
         ducknng_http_finish_response(aio, res, rv);
         return;
     }
+    caller_identity = ducknng_http_conn_verified_peer_identity(conn);
+    {
+        char *admission_err = NULL;
+        if (ducknng_service_peer_admission_check(state->svc, caller_identity, &admission_err) != 0) {
+            rv = ducknng_http_alloc_text_response(&res, 403,
+                admission_err ? admission_err : "ducknng: peer identity is not admitted");
+            if (admission_err) duckdb_free(admission_err);
+            if (caller_identity) duckdb_free(caller_identity);
+            ducknng_http_finish_response(aio, res, rv);
+            return;
+        }
+    }
     rv = nng_msg_alloc(&req_msg, body_len);
     if (rv != 0) {
+        if (caller_identity) duckdb_free(caller_identity);
         ducknng_http_finish_response(aio, NULL, rv);
         return;
     }
     if (body_len) memcpy(nng_msg_body(req_msg), body, body_len);
-    caller_identity = ducknng_http_conn_verified_peer_identity(conn);
     reply_msg = ducknng_handle_request_with_identity(state->svc, req_msg, caller_identity);
     if (caller_identity) duckdb_free(caller_identity);
     nng_msg_free(req_msg);

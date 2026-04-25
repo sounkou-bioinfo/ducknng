@@ -72,6 +72,10 @@ Implemented now:
 - registry auth policy controls such as
   `ducknng_set_method_auth('manifest', true)` for protecting discovery
   through verified peer identity
+- dynamic exact peer-identity allowlists through
+  `ducknng_set_tls_peer_allowlist(...)` and
+  `ducknng_set_service_peer_allowlist(...)`; NNG services use NNG pipe
+  notifications for new-pipe admission
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on
   URL scheme
 - TLS config handles for `tls+tcp://`, `wss://`, and `https://`;
@@ -225,9 +229,9 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Introspection
 
-| name                   | kind  | arguments | returns                                                                                                                                                                                    | description                       |
-|------------------------|-------|-----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
-| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN)` | List registered ducknng services. |
+| name                   | kind  | arguments | returns                                                                                                                                                                                                                                                 | description                       |
+|------------------------|-------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT)` | List registered ducknng services. |
 
 ## Method Registry
 
@@ -260,13 +264,15 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Transport Security
 
-| name                             | kind   | arguments                                        | returns                                                                                                                                                                                                                 | description                                                                            |
-|----------------------------------|--------|--------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `ducknng_list_tls_configs`       | table  |                                                  | `TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)` | List registered TLS config handles and the kinds of material they contain.             |
-| `ducknng_drop_tls_config`        | scalar | `tls_config_id`                                  | `BOOLEAN`                                                                                                                                                                                                               | Remove a registered TLS config handle from the runtime.                                |
-| `ducknng_self_signed_tls_config` | scalar | `common_name, valid_days, auth_mode`             | `UBIGINT`                                                                                                                                                                                                               | Generate a self-signed development certificate and register it as a TLS config handle. |
-| `ducknng_tls_config_from_pem`    | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from in-memory PEM material.                              |
-| `ducknng_tls_config_from_files`  | scalar | `cert_key_file, ca_file, password, auth_mode`    | `UBIGINT`                                                                                                                                                                                                               | Register a TLS config handle from file-backed certificate material.                    |
+| name                                 | kind   | arguments                                        | returns                                                                                                                                                                                                                                                                                                           | description                                                                            |
+|--------------------------------------|--------|--------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
+| `ducknng_list_tls_configs`           | table  |                                                  | `TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, peer_allowlist_json VARCHAR)` | List registered TLS config handles and the kinds of material they contain.             |
+| `ducknng_drop_tls_config`            | scalar | `tls_config_id`                                  | `BOOLEAN`                                                                                                                                                                                                                                                                                                         | Remove a registered TLS config handle from the runtime.                                |
+| `ducknng_set_tls_peer_allowlist`     | scalar | `tls_config_id, identities_json`                 | `BOOLEAN`                                                                                                                                                                                                                                                                                                         | Set the default exact peer-identity allowlist on a TLS config handle.                  |
+| `ducknng_set_service_peer_allowlist` | scalar | `name, identities_json`                          | `BOOLEAN`                                                                                                                                                                                                                                                                                                         | Dynamically set the exact peer-identity allowlist for a running service.               |
+| `ducknng_self_signed_tls_config`     | scalar | `common_name, valid_days, auth_mode`             | `UBIGINT`                                                                                                                                                                                                                                                                                                         | Generate a self-signed development certificate and register it as a TLS config handle. |
+| `ducknng_tls_config_from_pem`        | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT`                                                                                                                                                                                                                                                                                                         | Register a TLS config handle from in-memory PEM material.                              |
+| `ducknng_tls_config_from_files`      | scalar | `cert_key_file, ca_file, password, auth_mode`    | `UBIGINT`                                                                                                                                                                                                                                                                                                         | Register a TLS config handle from file-backed certificate material.                    |
 
 ## HTTP Transport
 
@@ -1442,12 +1448,19 @@ dispatcher derives the current caller identity from the first verified
 peer certificate SAN as `tls:san:<value>`, falling back to the common
 name as `tls:cn:<common-name>`. Sessions opened over mTLS are still
 controlled by `session_token`, but they are also bound to that verified
-peer identity. `ducknng_list_servers()` exposes `tls_enabled`,
-`tls_auth_mode`, and `peer_identity_required` so deployments can
-distinguish TLS without client verification from mTLS. Individual
-registry-backed methods can also require verified peer identity; for
-example, `ducknng_set_method_auth('manifest', true)` protects manifest
-discovery without unregistering the method.
+peer identity. `ducknng_set_tls_peer_allowlist(...)` sets an exact
+identity allowlist copied into future services, and
+`ducknng_set_service_peer_allowlist(...)` changes the allowlist
+dynamically for a running service. NNG listeners use NNG’s
+`NNG_PIPE_EV_ADD_PRE` pipe notification to close non-admitted new pipes
+before they are added to the socket; HTTP/HTTPS returns HTTP `403`
+before RPC dispatch. `ducknng_list_servers()` exposes `tls_enabled`,
+`tls_auth_mode`, `peer_identity_required`, `peer_allowlist_active`, and
+`peer_allowlist_count` so deployments can distinguish TLS without client
+verification from mTLS and allowlisted mTLS. Individual registry-backed
+methods can also require verified peer identity; for example,
+`ducknng_set_method_auth('manifest', true)` protects manifest discovery
+without unregistering the method.
 
 ### `tls+tcp://` from file-backed certificate material
 
@@ -1799,8 +1812,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_143243c4c23db.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_1f0a7f3fab32.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                            TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

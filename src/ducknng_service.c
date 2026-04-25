@@ -23,9 +23,14 @@ static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_fra
         return ducknng_error_msg(NULL, DUCKNNG_STATUS_INTERNAL,
             "ducknng: missing dispatcher state");
     }
-    if (ducknng_service_requires_peer_identity(svc) && (!caller_identity || !caller_identity[0])) {
-        return ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
-            "ducknng: mTLS peer identity is required");
+    {
+        char *admission_err = NULL;
+        if (ducknng_service_peer_admission_check(svc, caller_identity, &admission_err) != 0) {
+            nng_msg *err = ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
+                admission_err ? admission_err : "ducknng: peer identity is not admitted");
+            if (admission_err) duckdb_free(admission_err);
+            return err;
+        }
     }
     ducknng_service_prune_idle_sessions(svc, ducknng_now_ms());
     memset(&method_snapshot, 0, sizeof(method_snapshot));
@@ -291,6 +296,17 @@ void ducknng_service_destroy(ducknng_service *svc) {
     duckdb_free(svc);
 }
 
+static void ducknng_service_pipe_add_pre_cb(nng_pipe pipe, nng_pipe_ev ev, void *arg) {
+    ducknng_service *svc = (ducknng_service *)arg;
+    char *identity = NULL;
+    int allowed = 1;
+    if (ev != NNG_PIPE_EV_ADD_PRE || !svc) return;
+    identity = ducknng_pipe_verified_peer_identity(pipe);
+    allowed = ducknng_service_peer_admission_check(svc, identity, NULL) == 0;
+    if (identity) duckdb_free(identity);
+    if (!allowed) (void)nng_pipe_close(pipe);
+}
+
 int ducknng_service_start(ducknng_service *svc, char **errmsg) {
     int rv;
     int i;
@@ -349,6 +365,8 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
     }
 
     rv = ducknng_rep_socket_open(&svc->rep_sock);
+    if (rv != 0) goto fail;
+    rv = nng_pipe_notify(svc->rep_sock, NNG_PIPE_EV_ADD_PRE, ducknng_service_pipe_add_pre_cb, svc);
     if (rv != 0) goto fail;
     rv = ducknng_listener_create(&svc->listener, svc->rep_sock, svc->listen_url);
     if (rv != 0) goto fail;
@@ -424,6 +442,54 @@ fail:
 
 int ducknng_service_requires_peer_identity(const ducknng_service *svc) {
     return svc && svc->tls_enabled && svc->tls_opts.auth_mode == 2;
+}
+
+int ducknng_service_peer_allowlist_active(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return svc->tls_opts.peer_allowlist_active ? 1 : 0;
+}
+
+size_t ducknng_service_peer_allowlist_count(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return svc->tls_opts.peer_allowlist_count;
+}
+
+int ducknng_service_peer_admission_check(ducknng_service *svc, const char *caller_identity, char **errmsg) {
+    int require_identity;
+    int allowlist_active;
+    int allowed;
+    if (errmsg) *errmsg = NULL;
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing service for peer admission");
+        return -1;
+    }
+    require_identity = ducknng_service_requires_peer_identity(svc);
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    allowlist_active = svc->tls_opts.peer_allowlist_active ? 1 : 0;
+    allowed = ducknng_tls_opts_peer_allowed(&svc->tls_opts, caller_identity);
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    if (require_identity && (!caller_identity || !caller_identity[0])) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: mTLS peer identity is required");
+        return -1;
+    }
+    if (allowlist_active && !allowed) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: peer identity is not admitted");
+        return -1;
+    }
+    return 0;
+}
+
+int ducknng_service_set_peer_allowlist(ducknng_service *svc, const char *identities_json, char **errmsg) {
+    int rc;
+    if (errmsg) *errmsg = NULL;
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
+        return -1;
+    }
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    rc = ducknng_tls_opts_set_peer_allowlist(&svc->tls_opts, identities_json, errmsg);
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    return rc;
 }
 
 int ducknng_service_stop(ducknng_service *svc, char **errmsg) {

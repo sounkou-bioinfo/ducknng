@@ -53,13 +53,15 @@
       "kind": "table",
       "category": "Introspection",
       "signature": "ducknng_list_servers()",
-      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN)",
+      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List registered ducknng services.",
       "notes": [
         "tls_auth_mode follows the TLS config handle: 0 = no peer authentication, 1 = optional peer verification, 2 = required peer verification/mTLS.",
-        "peer_identity_required is true when the service requires a verified transport-derived peer identity before dispatch."
+        "peer_identity_required is true when the service requires a verified transport-derived peer identity before dispatch.",
+        "peer_allowlist_active reports whether service-level peer admission uses an exact verified-identity allowlist.",
+        "peer_allowlist_count reports the number of admitted identities; an active allowlist with count 0 denies every verified peer."
       ],
       "examples": [
         "SELECT * FROM ducknng_list_servers();"
@@ -311,12 +313,13 @@
       "kind": "table",
       "category": "Transport Security",
       "signature": "ducknng_list_tls_configs()",
-      "returns": "TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)",
+      "returns": "TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, peer_allowlist_json VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List registered TLS config handles and the kinds of material they contain.",
       "notes": [
-        "This is runtime introspection only and does not expose the sensitive PEM content itself."
+        "This is runtime introspection only and does not expose the sensitive PEM content itself.",
+        "peer_allowlist_json contains only configured identity strings, not certificate material or private keys."
       ],
       "examples": [
         "SELECT * FROM ducknng_list_tls_configs();"
@@ -334,6 +337,45 @@
       "notes": [],
       "examples": [
         "SELECT ducknng_drop_tls_config(1);"
+      ]
+    },
+    {
+      "name": "ducknng_set_tls_peer_allowlist",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_set_tls_peer_allowlist(tls_config_id, identities_json)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Set the default exact peer-identity allowlist on a TLS config handle.",
+      "notes": [
+        "identities_json must be a JSON array of exact verified peer identity strings such as [\"tls:san:client-a.example\"].",
+        "Services copy this policy from the TLS config at start time; use ducknng_set_service_peer_allowlist() to update a running service dynamically.",
+        "NULL or an empty string clears the allowlist and returns to default-open admission for that handle.",
+        "An empty JSON array [] is an active deny-all allowlist."
+      ],
+      "examples": [
+        "SELECT ducknng_set_tls_peer_allowlist(1::UBIGINT, '[\"tls:san:client-a.example\"]');"
+      ]
+    },
+    {
+      "name": "ducknng_set_service_peer_allowlist",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_set_service_peer_allowlist(name, identities_json)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Dynamically set the exact peer-identity allowlist for a running service.",
+      "notes": [
+        "identities_json must be a JSON array of exact verified peer identity strings such as [\"tls:san:client-a.example\"].",
+        "NULL or an empty string clears the allowlist and returns the service to default-open admission subject to its TLS auth_mode and method policy.",
+        "An empty JSON array [] is an active deny-all allowlist.",
+        "For NNG transports, new pipes are closed during the NNG ADD_PRE pipe notification when the verified identity is not admitted; dispatch also re-checks the policy for existing pipes.",
+        "For the HTTP/HTTPS carrier, unauthorized requests receive HTTP 403 before RPC dispatch."
+      ],
+      "examples": [
+        "SELECT ducknng_set_service_peer_allowlist('svc', '[\"tls:san:client-a.example\"]');"
       ]
     },
     {

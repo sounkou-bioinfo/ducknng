@@ -359,6 +359,11 @@ char *ducknng_method_registry_manifest_json(const ducknng_method_registry *regis
         if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
         if (!append_text(&buf, &len, &cap, ",\"peer_identity_required\":")) goto oom;
         if (!append_text(&buf, &len, &cap, security->peer_identity_required ? "true" : "false")) goto oom;
+        if (!append_text(&buf, &len, &cap, ",\"peer_allowlist_active\":")) goto oom;
+        if (!append_text(&buf, &len, &cap, security->peer_allowlist_active ? "true" : "false")) goto oom;
+        snprintf(numbuf, sizeof(numbuf), ",\"peer_allowlist_count\":%llu",
+            (unsigned long long)security->peer_allowlist_count);
+        if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
         if (!append_text(&buf, &len, &cap, ",\"peer_identity_format\":")) goto oom;
         if (!append_json_string(&buf, &len, &cap,
                 security->peer_identity_format ? security->peer_identity_format : "tls:san:<value>|tls:cn:<common-name>")) goto oom;

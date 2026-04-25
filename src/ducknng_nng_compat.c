@@ -13,6 +13,243 @@ void ducknng_tls_opts_init(ducknng_tls_opts *opts) {
     memset(opts, 0, sizeof(*opts));
 }
 
+static void ducknng_tls_opts_clear_peer_allowlist(ducknng_tls_opts *opts) {
+    size_t i;
+    if (!opts) return;
+    if (opts->peer_allowlist) {
+        for (i = 0; i < opts->peer_allowlist_count; i++) {
+            if (opts->peer_allowlist[i]) duckdb_free(opts->peer_allowlist[i]);
+        }
+        duckdb_free(opts->peer_allowlist);
+    }
+    if (opts->peer_allowlist_json) duckdb_free(opts->peer_allowlist_json);
+    opts->peer_allowlist = NULL;
+    opts->peer_allowlist_count = 0;
+    opts->peer_allowlist_json = NULL;
+    opts->peer_allowlist_active = 0;
+}
+
+static void ducknng_json_skip_ws(const char **p) {
+    while (p && *p && (**p == ' ' || **p == '\t' || **p == '\r' || **p == '\n')) (*p)++;
+}
+
+static int ducknng_json_hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static char *ducknng_json_parse_string(const char **p, char **errmsg) {
+    const char *s;
+    char *out;
+    size_t len = 0;
+    size_t cap = 32;
+    if (!p || !*p || **p != '"') {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: peer allowlist must be a JSON array of strings");
+        return NULL;
+    }
+    s = ++(*p);
+    out = (char *)duckdb_malloc(cap);
+    if (!out) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory parsing peer allowlist");
+        return NULL;
+    }
+    while (*s) {
+        unsigned char ch = (unsigned char)*s++;
+        if (ch == '"') {
+            out[len] = '\0';
+            *p = s;
+            return out;
+        }
+        if (ch == '\\') {
+            char esc = *s++;
+            if (!esc) break;
+            switch (esc) {
+                case '"': ch = '"'; break;
+                case '\\': ch = '\\'; break;
+                case '/': ch = '/'; break;
+                case 'b': ch = '\b'; break;
+                case 'f': ch = '\f'; break;
+                case 'n': ch = '\n'; break;
+                case 'r': ch = '\r'; break;
+                case 't': ch = '\t'; break;
+                case 'u': {
+                    int h0, h1, h2, h3;
+                    if (!s[0] || !s[1] || !s[2] || !s[3]) goto invalid_escape;
+                    h0 = ducknng_json_hex_value(s[0]);
+                    h1 = ducknng_json_hex_value(s[1]);
+                    h2 = ducknng_json_hex_value(s[2]);
+                    h3 = ducknng_json_hex_value(s[3]);
+                    if (h0 != 0 || h1 != 0 || h2 < 0 || h3 < 0) goto invalid_escape;
+                    ch = (unsigned char)((h2 << 4) | h3);
+                    if (ch == 0) goto invalid_escape;
+                    s += 4;
+                    break;
+                }
+                default:
+invalid_escape:
+                    duckdb_free(out);
+                    if (errmsg) *errmsg = ducknng_strdup("ducknng: unsupported JSON escape in peer allowlist");
+                    return NULL;
+            }
+        } else if (ch < 0x20) {
+            duckdb_free(out);
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: invalid control character in peer allowlist");
+            return NULL;
+        }
+        if (len + 2 > cap) {
+            char *next;
+            cap *= 2;
+            next = (char *)duckdb_malloc(cap);
+            if (!next) {
+                duckdb_free(out);
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory parsing peer allowlist");
+                return NULL;
+            }
+            memcpy(next, out, len);
+            duckdb_free(out);
+            out = next;
+        }
+        out[len++] = (char)ch;
+    }
+    duckdb_free(out);
+    if (errmsg) *errmsg = ducknng_strdup("ducknng: unterminated JSON string in peer allowlist");
+    return NULL;
+}
+
+static void ducknng_peer_allowlist_free(char **items, size_t count) {
+    size_t i;
+    if (!items) return;
+    for (i = 0; i < count; i++) {
+        if (items[i]) duckdb_free(items[i]);
+    }
+    duckdb_free(items);
+}
+
+static int ducknng_peer_allowlist_parse(const char *json, char ***out_items,
+    size_t *out_count, char **out_json, char **errmsg) {
+    const char *p = json;
+    char **items = NULL;
+    size_t count = 0;
+    size_t cap = 0;
+    if (out_items) *out_items = NULL;
+    if (out_count) *out_count = 0;
+    if (out_json) *out_json = NULL;
+    if (errmsg) *errmsg = NULL;
+    ducknng_json_skip_ws(&p);
+    if (!p || *p != '[') {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: peer allowlist must be a JSON array of strings");
+        return -1;
+    }
+    p++;
+    ducknng_json_skip_ws(&p);
+    if (*p == ']') {
+        p++;
+        ducknng_json_skip_ws(&p);
+        if (*p) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: trailing characters after peer allowlist JSON");
+            return -1;
+        }
+        if (out_json) {
+            *out_json = ducknng_strdup(json);
+            if (!*out_json) {
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying peer allowlist");
+                return -1;
+            }
+        }
+        return 0;
+    }
+    for (;;) {
+        char *item;
+        ducknng_json_skip_ws(&p);
+        item = ducknng_json_parse_string(&p, errmsg);
+        if (!item) goto fail;
+        if (!item[0]) {
+            duckdb_free(item);
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: peer allowlist identities must be non-empty strings");
+            goto fail;
+        }
+        if (count == cap) {
+            char **next;
+            size_t new_cap = cap ? cap * 2 : 4;
+            next = (char **)duckdb_malloc(sizeof(*next) * new_cap);
+            if (!next) {
+                duckdb_free(item);
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory parsing peer allowlist");
+                goto fail;
+            }
+            if (items && count) memcpy(next, items, sizeof(*items) * count);
+            if (items) duckdb_free(items);
+            items = next;
+            cap = new_cap;
+        }
+        items[count++] = item;
+        ducknng_json_skip_ws(&p);
+        if (*p == ',') {
+            p++;
+            continue;
+        }
+        if (*p == ']') {
+            p++;
+            break;
+        }
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: expected ',' or ']' in peer allowlist JSON");
+        goto fail;
+    }
+    ducknng_json_skip_ws(&p);
+    if (*p) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: trailing characters after peer allowlist JSON");
+        goto fail;
+    }
+    if (out_json) {
+        *out_json = ducknng_strdup(json);
+        if (!*out_json) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying peer allowlist");
+            goto fail;
+        }
+    }
+    if (out_items) *out_items = items;
+    else ducknng_peer_allowlist_free(items, count);
+    if (out_count) *out_count = count;
+    return 0;
+fail:
+    ducknng_peer_allowlist_free(items, count);
+    return -1;
+}
+
+int ducknng_tls_opts_set_peer_allowlist(ducknng_tls_opts *opts, const char *identities_json, char **errmsg) {
+    char **items = NULL;
+    size_t count = 0;
+    char *json = NULL;
+    if (errmsg) *errmsg = NULL;
+    if (!opts) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing TLS config for peer allowlist");
+        return -1;
+    }
+    if (!identities_json || !identities_json[0]) {
+        ducknng_tls_opts_clear_peer_allowlist(opts);
+        return 0;
+    }
+    if (ducknng_peer_allowlist_parse(identities_json, &items, &count, &json, errmsg) != 0) return -1;
+    ducknng_tls_opts_clear_peer_allowlist(opts);
+    opts->peer_allowlist_active = 1;
+    opts->peer_allowlist = items;
+    opts->peer_allowlist_count = count;
+    opts->peer_allowlist_json = json;
+    return 0;
+}
+
+int ducknng_tls_opts_peer_allowed(const ducknng_tls_opts *opts, const char *identity) {
+    size_t i;
+    if (!opts || !opts->peer_allowlist_active) return 1;
+    if (!identity || !identity[0]) return 0;
+    for (i = 0; i < opts->peer_allowlist_count; i++) {
+        if (opts->peer_allowlist[i] && strcmp(opts->peer_allowlist[i], identity) == 0) return 1;
+    }
+    return 0;
+}
+
 int ducknng_tls_opts_copy(ducknng_tls_opts *dst, const ducknng_tls_opts *src) {
     if (!dst) return -1;
     ducknng_tls_opts_init(dst);
@@ -34,6 +271,12 @@ int ducknng_tls_opts_copy(ducknng_tls_opts *dst, const ducknng_tls_opts *src) {
         ducknng_tls_opts_reset(dst);
         return -1;
     }
+    if (src->peer_allowlist_active) {
+        if (ducknng_tls_opts_set_peer_allowlist(dst, src->peer_allowlist_json ? src->peer_allowlist_json : "[]", NULL) != 0) {
+            ducknng_tls_opts_reset(dst);
+            return -1;
+        }
+    }
     return 0;
 }
 
@@ -45,6 +288,7 @@ void ducknng_tls_opts_reset(ducknng_tls_opts *opts) {
     if (opts->key_pem) duckdb_free(opts->key_pem);
     if (opts->ca_pem) duckdb_free(opts->ca_pem);
     if (opts->password) duckdb_free(opts->password);
+    ducknng_tls_opts_clear_peer_allowlist(opts);
     memset(opts, 0, sizeof(*opts));
 }
 
@@ -129,14 +373,11 @@ static int ducknng_pipe_tls_verified(nng_pipe pipe, bool *out_verified) {
     return 0;
 }
 
-char *ducknng_msg_verified_peer_identity(nng_msg *msg) {
-    nng_pipe pipe;
+char *ducknng_pipe_verified_peer_identity(nng_pipe pipe) {
     bool verified = false;
     char **alt_names = NULL;
     char *cn = NULL;
     char *identity = NULL;
-    if (!msg) return NULL;
-    pipe = nng_msg_get_pipe(msg);
     if (ducknng_pipe_tls_verified(pipe, &verified) != 0 || !verified) return NULL;
     if (nng_pipe_get_ptr(pipe, NNG_OPT_TLS_PEER_ALT_NAMES, (void **)&alt_names) == 0 && alt_names) {
         identity = ducknng_tls_identity_from_alt_names(alt_names);
@@ -147,6 +388,11 @@ char *ducknng_msg_verified_peer_identity(nng_msg *msg) {
     }
     if (cn) nng_strfree(cn);
     return identity;
+}
+
+char *ducknng_msg_verified_peer_identity(nng_msg *msg) {
+    if (!msg) return NULL;
+    return ducknng_pipe_verified_peer_identity(nng_msg_get_pipe(msg));
 }
 
 static int ducknng_tls_config_build(nng_tls_config **out, nng_tls_mode mode, const char *url,

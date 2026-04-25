@@ -24,11 +24,17 @@ typedef struct ducknng_tls_opts {
     char *ca_pem;
     char *password;
     int auth_mode;
+    int peer_allowlist_active;
+    char **peer_allowlist;
+    size_t peer_allowlist_count;
+    char *peer_allowlist_json;
 } ducknng_tls_opts;
 
 void ducknng_tls_opts_init(ducknng_tls_opts *opts);
 int ducknng_tls_opts_copy(ducknng_tls_opts *dst, const ducknng_tls_opts *src);
 void ducknng_tls_opts_reset(ducknng_tls_opts *opts);
+int ducknng_tls_opts_set_peer_allowlist(ducknng_tls_opts *opts, const char *identities_json, char **errmsg);
+int ducknng_tls_opts_peer_allowed(const ducknng_tls_opts *opts, const char *identity);
 
 int ducknng_rep_socket_open(nng_socket *out);
 int ducknng_req_socket_open(nng_socket *out);
@@ -42,6 +48,7 @@ int ducknng_socket_subscribe(nng_socket sock, const void *topic, size_t len);
 int ducknng_socket_unsubscribe(nng_socket sock, const void *topic, size_t len);
 int ducknng_ctx_send(nng_ctx ctx, nng_msg *msg);
 int ducknng_ctx_recv(nng_ctx ctx, nng_msg **msg);
+char *ducknng_pipe_verified_peer_identity(nng_pipe pipe);
 char *ducknng_msg_verified_peer_identity(nng_msg *msg);
 int ducknng_req_dial(nng_socket sock, const char *url, int timeout_ms);
 int ducknng_req_transact(nng_socket sock, nng_msg *req, nng_msg **resp);

@@ -79,4 +79,8 @@ nng_msg *ducknng_handle_request(ducknng_service *svc, nng_msg *req);
 nng_msg *ducknng_handle_request_with_identity(ducknng_service *svc, nng_msg *req,
     const char *caller_identity);
 int ducknng_service_requires_peer_identity(const ducknng_service *svc);
+int ducknng_service_peer_allowlist_active(const ducknng_service *svc);
+size_t ducknng_service_peer_allowlist_count(const ducknng_service *svc);
+int ducknng_service_peer_admission_check(ducknng_service *svc, const char *caller_identity, char **errmsg);
+int ducknng_service_set_peer_allowlist(ducknng_service *svc, const char *identities_json, char **errmsg);
 const char *ducknng_service_resolved_listen(const ducknng_service *svc);

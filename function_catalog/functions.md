@@ -14,7 +14,7 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_list_servers` | table |  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN)` | List registered ducknng services. |
+| `ducknng_list_servers` | table |  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT)` | List registered ducknng services. |
 
 ## Method Registry
 
@@ -49,8 +49,10 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_list_tls_configs` | table |  | `TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)` | List registered TLS config handles and the kinds of material they contain. |
+| `ducknng_list_tls_configs` | table |  | `TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, peer_allowlist_json VARCHAR)` | List registered TLS config handles and the kinds of material they contain. |
 | `ducknng_drop_tls_config` | scalar | `tls_config_id` | `BOOLEAN` | Remove a registered TLS config handle from the runtime. |
+| `ducknng_set_tls_peer_allowlist` | scalar | `tls_config_id, identities_json` | `BOOLEAN` | Set the default exact peer-identity allowlist on a TLS config handle. |
+| `ducknng_set_service_peer_allowlist` | scalar | `name, identities_json` | `BOOLEAN` | Dynamically set the exact peer-identity allowlist for a running service. |
 | `ducknng_self_signed_tls_config` | scalar | `common_name, valid_days, auth_mode` | `UBIGINT` | Generate a self-signed development certificate and register it as a TLS config handle. |
 | `ducknng_tls_config_from_pem` | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT` | Register a TLS config handle from in-memory PEM material. |
 | `ducknng_tls_config_from_files` | scalar | `cert_key_file, ca_file, password, auth_mode` | `UBIGINT` | Register a TLS config handle from file-backed certificate material. |

@@ -686,6 +686,10 @@ sessions (<code>query_open</code>, <code>fetch</code>,
 <li>registry auth policy controls such as
 <code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> for protecting
 discovery through verified peer identity</li>
+<li>dynamic exact peer-identity allowlists through
+<code>ducknng_set_tls_peer_allowlist(...)</code> and
+<code>ducknng_set_service_peer_allowlist(...)</code>; NNG services use
+NNG pipe notifications for new-pipe admission</li>
 <li>automatic synchronous helper routing over NNG or HTTP/HTTPS based on
 URL scheme</li>
 <li>TLS config handles for <code>tls+tcp://</code>, <code>wss://</code>,
@@ -873,7 +877,7 @@ Expand the full generated function catalog
 <td><code>ducknng_list_servers</code></td>
 <td>table</td>
 <td></td>
-<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN)</code></td>
+<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT)</code></td>
 <td>List registered ducknng services.</td>
 </tr>
 </tbody>
@@ -1064,7 +1068,7 @@ payload columns.</td>
 <td><code>ducknng_list_tls_configs</code></td>
 <td>table</td>
 <td></td>
-<td><code>TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER)</code></td>
+<td><code>TABLE(tls_config_id UBIGINT, source VARCHAR, enabled BOOLEAN, has_cert_key_file BOOLEAN, has_ca_file BOOLEAN, has_cert_pem BOOLEAN, has_key_pem BOOLEAN, has_ca_pem BOOLEAN, has_password BOOLEAN, auth_mode INTEGER, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, peer_allowlist_json VARCHAR)</code></td>
 <td>List registered TLS config handles and the kinds of material they
 contain.</td>
 </tr>
@@ -1074,6 +1078,22 @@ contain.</td>
 <td><code>tls_config_id</code></td>
 <td><code>BOOLEAN</code></td>
 <td>Remove a registered TLS config handle from the runtime.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_set_tls_peer_allowlist</code></td>
+<td>scalar</td>
+<td><code>tls_config_id, identities_json</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Set the default exact peer-identity allowlist on a TLS config
+handle.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_set_service_peer_allowlist</code></td>
+<td>scalar</td>
+<td><code>name, identities_json</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Dynamically set the exact peer-identity allowlist for a running
+service.</td>
 </tr>
 <tr class="odd">
 <td><code>ducknng_self_signed_tls_config</code></td>
@@ -2441,13 +2461,22 @@ identity from the first verified peer certificate SAN as
 <code>tls:san:&lt;value&gt;</code>, falling back to the common name as
 <code>tls:cn:&lt;common-name&gt;</code>. Sessions opened over mTLS are
 still controlled by <code>session_token</code>, but they are also bound
-to that verified peer identity. <code>ducknng_list_servers()</code>
-exposes <code>tls_enabled</code>, <code>tls_auth_mode</code>, and
-<code>peer_identity_required</code> so deployments can distinguish TLS
-without client verification from mTLS. Individual registry-backed
-methods can also require verified peer identity; for example,
-<code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> protects manifest
-discovery without unregistering the method.</p>
+to that verified peer identity.
+<code>ducknng_set_tls_peer_allowlist(...)</code> sets an exact identity
+allowlist copied into future services, and
+<code>ducknng_set_service_peer_allowlist(...)</code> changes the
+allowlist dynamically for a running service. NNG listeners use NNG’s
+<code>NNG_PIPE_EV_ADD_PRE</code> pipe notification to close non-admitted
+new pipes before they are added to the socket; HTTP/HTTPS returns HTTP
+<code>403</code> before RPC dispatch.
+<code>ducknng_list_servers()</code> exposes <code>tls_enabled</code>,
+<code>tls_auth_mode</code>, <code>peer_identity_required</code>,
+<code>peer_allowlist_active</code>, and
+<code>peer_allowlist_count</code> so deployments can distinguish TLS
+without client verification from mTLS and allowlisted mTLS. Individual
+registry-backed methods can also require verified peer identity; for
+example, <code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> protects
+manifest discovery without unregistering the method.</p>
 <h3 id="tlstcp-from-file-backed-certificate-material"><code>tls+tcp://</code>
 from file-backed certificate material</h3>
 <div class="sourceCode" id="cb31"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb31-1"><a href="#cb31-1" tabindex="-1"></a>LOAD <span class="st">&#39;build/release/ducknng.duckdb_extension&#39;</span>;</span>
@@ -2781,8 +2810,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_143243c4c23db.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_1f0a7f3fab32.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                            TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>
