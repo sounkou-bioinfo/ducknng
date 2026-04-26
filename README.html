@@ -608,12 +608,12 @@ padding-top: 0px;
 bindings to the <a href="https://nng.nanomsg.org/">NNG Scalability
 Protocols</a>. It also includes a small framed RPC layer, informed by <a href="https://github.com/sounkou-bioinfo/mangoro"><code>mangoro</code></a>,
 whose thin versioned envelope carries Arrow IPC or JSON payloads.</p>
-<p>The current implementation is easiest to understand as three
-layers.</p>
+<p>The current implementation is easiest to understand as four surfaces
+layered on the same runtime.</p>
 <ol style="list-style-type: decimal">
-<li><p><strong>NNG transports, socket patterns, and AIO.</strong>
-<code>ducknng_start_server(...)</code> starts the framed RPC service on
-NNG <code>REP</code>, and the generic socket API
+<li><p><strong>NNG transports, socket patterns, AIO, and pipe
+telemetry.</strong> <code>ducknng_start_server(...)</code> starts the
+framed RPC service on NNG <code>REP</code>, and the generic socket API
 (<code>ducknng_open_socket(...)</code>,
 <code>ducknng_dial_socket(...)</code>,
 <code>ducknng_listen_socket(...)</code>, raw send/recv, and socket AIO
@@ -625,39 +625,59 @@ part of this layer: helpers such as
 <code>ducknng_send_socket_raw_aio(...)</code>,
 <code>ducknng_recv_socket_raw_aio(...)</code>,
 <code>ducknng_request_raw_aio(...)</code>,
-<code>ducknng_ncurl_aio(...)</code>,
-<code>ducknng_aio_status(...)</code>,
-<code>ducknng_aio_collect(...)</code>, and
-<code>ducknng_ncurl_aio_collect(...)</code> represent one pending NNG
+<code>ducknng_aio_status(...)</code>, and
+<code>ducknng_aio_collect(...)</code> represent one pending NNG
 operation as a future-like SQL handle. This family uses NNG URL schemes:
 <code>inproc://</code>, <code>ipc://</code>, <code>tcp://</code>,
 <code>tls+tcp://</code>, <code>ws://</code>, and <code>wss://</code>.
 <code>tls+tcp://</code> is NNG’s TLS-over-TCP transport;
 <code>wss://</code> is NNG WebSocket-over-TLS. They are not HTTP routes;
 <code>http://</code> and <code>https://</code> are supported by the
-HTTP/HTTPS carrier layer below.</p></li>
-<li><p><strong>HTTP/HTTPS as a framed RPC carrier.</strong>
-<code>ducknng_start_http_server(...)</code> mounts the same framed RPC
-protocol at an <code>http://</code> or <code>https://</code> URL path.
-The endpoint accepts <code>POST</code> with
-<code>Content-Type: application/vnd.ducknng.frame</code>, and the body
-is one complete <code>ducknng</code> frame. The synchronous
+HTTP/HTTPS carrier layer below. NNG services also expose pipe/membership
+telemetry through
+<code>ducknng_read_monitor(name, after_seq, max_events)</code> and the
+active-pipe snapshot <code>ducknng_list_pipes(name)</code>.</p></li>
+<li><p><strong>HTTP/HTTPS as a framed RPC carrier and raw HTTP client
+surface.</strong> <code>ducknng_start_http_server(...)</code> mounts the
+same framed RPC protocol at an <code>http://</code> or
+<code>https://</code> URL path. The endpoint accepts <code>POST</code>
+with <code>Content-Type: application/vnd.ducknng.frame</code>, and the
+body is one complete <code>ducknng</code> frame. The synchronous
 request/RPC/session helpers route over <code>http://</code> and
 <code>https://</code> by URL scheme, so there are no duplicate method
-names such as <code>http_exec</code> or <code>http_fetch</code>. This
-mirrors the split in NNG/nanonext: HTTP tools live beside the socket
+names such as <code>http_exec</code> or <code>http_fetch</code>. Raw
+HTTP helpers (<code>ducknng_ncurl(...)</code>,
+<code>ducknng_ncurl_aio(...)</code>, and
+<code>ducknng_ncurl_aio_collect(...)</code>) live beside the socket
 transports, but <code>http://</code> is not an NNG protocol-socket
 transport in the same sense as <code>tcp://</code>.
 <code>https://</code> means HTTP over TLS; it is wire-incompatible with
 NNG <code>tls+tcp://</code> because HTTP has methods, headers, status
 codes, and paths, while NNG <code>tls+tcp://</code> carries NNG
 socket-protocol frames directly.</p></li>
+<li><p><strong>Framed RPC, registry policy, authorization, and
+sessions.</strong> The RPC envelope is manifest/registry-driven.
+Built-in helpers cover discovery, opt-in <code>exec</code>, raw unary
+RPC, and query sessions (<code>query_open</code>, <code>fetch</code>,
+<code>close</code>, <code>cancel</code>). Descriptor policy controls
+such as <code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> can
+require verified peer identity for selected methods. Fast C admission
+runs before dispatch for required mTLS, exact peer-identity allowlists,
+compiled IP/CIDR allowlists, and service limits; optional SQL
+authorizers installed with
+<code>ducknng_set_service_authorizer(...)</code> run at the request
+boundary and expose context through <code>ducknng_auth_context()</code>.
+<code>session_id</code> is only a lookup key; <code>session_token</code>
+is the bearer capability, and sessions opened with verified mTLS
+identity are additionally bound to that identity. Server-owned session
+policy, including <code>idle_timeout_ms</code> and
+<code>max_open_sessions</code>, is exposed in service/manifest
+metadata.</p></li>
 <li><p><strong>Payload and body codecs.</strong> RPC row payloads use
 Arrow IPC. RPC control metadata and the manifest are JSON text inside
 framed payloads; SQL helper columns such as <code>manifest</code> keep
 that JSON as <code>VARCHAR</code>, and examples cast to
-<code>JSON</code> only when extracting fields.
-<code>ducknng_ncurl(...)</code> and <code>ducknng_ncurl_aio(...)</code>
+<code>JSON</code> only when extracting fields. Raw HTTP helpers
 intentionally stay raw (<code>status</code>, headers,
 <code>body BLOB</code>, <code>body_text</code>). The opt-in body codec
 layer (<code>ducknng_list_codecs()</code>,
@@ -677,9 +697,12 @@ path lands.</p></li>
 <code>ducknng_list_servers()</code></li>
 <li>generic NNG sockets and raw send/recv across the NNG transport
 schemes above</li>
-<li>first-class raw AIO handles for one pending NNG operation: socket
+<li>first-class raw AIO handles for one pending operation: socket
 send/recv, HTTP/HTTPS ncurl requests, req-style request/reply futures,
-and the first raw unary RPC futures</li>
+and raw unary RPC futures</li>
+<li>bounded NNG pipe event telemetry and active-pipe membership
+snapshots: <code>ducknng_read_monitor(...)</code> and
+<code>ducknng_list_pipes(...)</code></li>
 <li>manifest-driven RPC helpers, opt-in <code>exec</code>, and query
 sessions (<code>query_open</code>, <code>fetch</code>,
 <code>close</code>, <code>cancel</code>)</li>
@@ -687,20 +710,19 @@ sessions (<code>query_open</code>, <code>fetch</code>,
 <code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> for protecting
 discovery through verified peer identity</li>
 <li>fast C admission checks for mTLS, exact peer-identity allowlists,
-and compiled IP/CIDR allowlists, plus flexible service-level SQL
-authorization callbacks through
+compiled IP/CIDR allowlists, and service limits, plus flexible
+service-level SQL authorization callbacks through
 <code>ducknng_set_service_authorizer(...)</code> and
-<code>ducknng_auth_context()</code>; NNG services use NNG pipe
-notifications for new-pipe admission</li>
+<code>ducknng_auth_context()</code></li>
 <li>automatic synchronous helper routing over NNG or HTTP/HTTPS based on
 URL scheme</li>
 <li>TLS config handles for <code>tls+tcp://</code>, <code>wss://</code>,
 and <code>https://</code>; <code>auth_mode = 2</code> enables required
 peer verification/mTLS</li>
 <li>session ownership by <code>session_token</code>, additionally bound
-to verified mTLS peer identity when present; <code>query_open</code>
-replies expose the server-owned effective
-<code>idle_timeout_ms</code></li>
+to verified mTLS peer identity when present; service/manifest metadata
+exposes server-owned effective session policy including
+<code>idle_timeout_ms</code> and <code>max_open_sessions</code></li>
 </ul>
 <p>Still intentionally deferred or not sealed:</p>
 <ul>
@@ -712,7 +734,10 @@ BLOB fallback</li>
 BLOBs is still a future table-function layer</li>
 <li>envelope-level application authentication is not implemented; the
 current contract is <code>session_token</code> plus optional verified
-mTLS owner identity</li>
+mTLS owner identity plus deployment admission/authorization policy</li>
+<li>routing/forwarding and mesh scheduling are not sealed APIs yet; the
+new pipe monitor and active-pipe snapshot are the first
+membership/telemetry foundation</li>
 </ul>
 <p><code>ducknng</code> is intentionally low-level. Long-lived runtime
 handles are <strong>manually managed</strong>: stop servers, close
@@ -888,6 +913,13 @@ Expand the full generated function catalog
 <td><code>name, after_seq, max_events</code></td>
 <td><code>TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)</code></td>
 <td>Read the bounded per-service NNG pipe monitor event stream.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_list_pipes</code></td>
+<td>table</td>
+<td><code>name</code></td>
+<td><code>TABLE(pipe_id UBIGINT, opened_ms UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)</code></td>
+<td>List currently active NNG pipes for a running service.</td>
 </tr>
 </tbody>
 </table>
@@ -2877,8 +2909,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_369e15d10ff6f.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_3966c45358fc.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                            TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>
@@ -3065,18 +3097,21 @@ pipe events; nanonext surfaces related tools as
 <code>pipe_notify()</code>, <code>monitor()</code>, and
 <code>read_monitor()</code>. <code>ducknng</code> now records a bounded
 per-service NNG pipe event stream and exposes it with
-<code>ducknng_read_monitor(name, after_seq, max_events)</code>. That
-stream includes event sequence, timestamp, service, transport, pipe id,
-admission result for <code>ADD_PRE</code>, remote address, and verified
-peer identity when present. These primitives are a natural foundation
-for telemetry, connection counts, connection churn, per-service pipe
-event streams, presence/worker membership, dynamic routing,
-backpressure-aware scheduling, mesh-style DuckDB service discovery,
-routing/forwarding demos, and other application-level event streams.
-HTTP/HTTPS framed RPC currently uses the same admission policy but does
-not expose NNG protocol-socket pipe events; a broader HTTP server
-framework can reuse the same request context and monitor concepts
-without changing the framed RPC wire protocol.</p>
+<code>ducknng_read_monitor(name, after_seq, max_events)</code>. It also
+exposes current active NNG pipes with
+<code>ducknng_list_pipes(name)</code>. The event stream includes event
+sequence, timestamp, service, transport, pipe id, admission result for
+<code>ADD_PRE</code>, remote address, and verified peer identity when
+present; the active-pipe table gives the current pipe set for routing
+and membership decisions. These primitives are a natural foundation for
+telemetry, connection counts, connection churn, per-service pipe event
+streams, presence/worker membership, dynamic routing, backpressure-aware
+scheduling, mesh-style DuckDB service discovery, routing/forwarding
+demos, and other application-level event streams. HTTP/HTTPS framed RPC
+currently uses the same admission policy but does not expose NNG
+protocol-socket pipe events; a broader HTTP server framework can reuse
+the same request context and monitor concepts without changing the
+framed RPC wire protocol.</p>
 <h2 id="references">References</h2>
 <ul>
 <li><a href="https://nng.nanomsg.org/">NNG</a> for the underlying

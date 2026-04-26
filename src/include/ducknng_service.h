@@ -54,6 +54,15 @@ typedef struct ducknng_pipe_event {
     char *peer_identity;
 } ducknng_pipe_event;
 
+typedef struct ducknng_pipe_state {
+    uint64_t pipe_id;
+    uint64_t opened_ms;
+    char *remote_addr;
+    char *remote_ip;
+    int32_t remote_port;
+    char *peer_identity;
+} ducknng_pipe_state;
+
 struct ducknng_rep_ctx {
     ducknng_service *svc;
     nng_ctx ctx;
@@ -91,6 +100,9 @@ struct ducknng_service {
     size_t pipe_event_count;
     size_t pipe_event_cap;
     uint64_t next_pipe_event_seq;
+    ducknng_pipe_state *pipe_states;
+    size_t pipe_state_count;
+    size_t pipe_state_cap;
     nng_socket rep_sock;
     nng_listener listener;
     ducknng_rep_ctx *ctxs;
@@ -149,6 +161,9 @@ uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc);
 int ducknng_service_pipe_events_snapshot(ducknng_service *svc, uint64_t after_seq, uint64_t max_events,
     ducknng_pipe_event **out_events, size_t *out_count, char **errmsg);
 void ducknng_service_pipe_events_free(ducknng_pipe_event *events, size_t count);
+int ducknng_service_pipe_states_snapshot(ducknng_service *svc,
+    ducknng_pipe_state **out_states, size_t *out_count, char **errmsg);
+void ducknng_service_pipe_states_free(ducknng_pipe_state *states, size_t count);
 void ducknng_authorizer_decision_init(ducknng_authorizer_decision *decision);
 void ducknng_authorizer_decision_reset(ducknng_authorizer_decision *decision);
 int ducknng_service_authorize_request(ducknng_service *svc, const ducknng_authorizer_context *auth_ctx,

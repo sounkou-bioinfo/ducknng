@@ -183,6 +183,24 @@
       ]
     },
     {
+      "name": "ducknng_list_pipes",
+      "kind": "table",
+      "category": "Introspection",
+      "signature": "ducknng_list_pipes(name)",
+      "returns": "TABLE(pipe_id UBIGINT, opened_ms UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "List currently active NNG pipes for a running service.",
+      "notes": [
+        "Active pipe state is maintained from NNG ADD_POST and REM_POST pipe notifications.",
+        "HTTP/HTTPS framed RPC carrier connections are not NNG protocol-socket pipes and are not listed here.",
+        "This table is useful as a mesh/routing foundation alongside ducknng_read_monitor()."
+      ],
+      "examples": [
+        "SELECT * FROM ducknng_list_pipes('svc');"
+      ]
+    },
+    {
       "name": "ducknng_open_socket",
       "kind": "scalar",
       "category": "Primitive Transport",
