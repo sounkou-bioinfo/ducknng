@@ -672,12 +672,10 @@ boundary and expose context through <code>ducknng_auth_context()</code>.
 is the bearer capability, and sessions opened with verified mTLS
 identity are additionally bound to that identity. Server-owned session
 policy, including <code>idle_timeout_ms</code> and
-<code>max_open_sessions</code>, is exposed in service/manifest metadata,
-and live service introspection also reports current
-<code>active_pipes</code>, <code>inflight_requests</code>, and
-configured
-<code>max_active_pipes</code>/<code>max_inflight_requests</code> for
-services.</p></li>
+<code>max_open_sessions</code>, is exposed in service/manifest metadata.
+Live counters such as <code>active_pipes</code> and
+<code>inflight_requests</code> intentionally live in service/monitor
+introspection instead of the manifest.</p></li>
 <li><p><strong>Payload and body codecs.</strong> RPC row payloads use
 Arrow IPC. RPC control metadata and the manifest are JSON text inside
 framed payloads; SQL helper columns such as <code>manifest</code> keep
@@ -2933,8 +2931,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_7b8fb48a9a3c2.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_7df054150a97.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                            TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>

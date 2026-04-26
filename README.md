@@ -63,9 +63,9 @@ layered on the same runtime.
     sessions opened with verified mTLS identity are additionally bound
     to that identity. Server-owned session policy, including
     `idle_timeout_ms` and `max_open_sessions`, is exposed in
-    service/manifest metadata, and live service introspection also
-    reports current `active_pipes`, `inflight_requests`, and configured
-    `max_active_pipes`/`max_inflight_requests` for services.
+    service/manifest metadata. Live counters such as `active_pipes` and
+    `inflight_requests` intentionally live in service/monitor
+    introspection instead of the manifest.
 
 4.  **Payload and body codecs.** RPC row payloads use Arrow IPC. RPC
     control metadata and the manifest are JSON text inside framed
@@ -1880,8 +1880,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_7b8fb48a9a3c2.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_7df054150a97.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                                            TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

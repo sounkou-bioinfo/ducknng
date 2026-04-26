@@ -70,6 +70,31 @@ FROM ducknng_decode_frame(from_hex('00'))
 0	ducknng: invalid frame envelope
 
 statement error
+SELECT ducknng_drop_tls_config(999::UBIGINT)
+----
+ducknng: tls config not found
+
+statement error
+SELECT ducknng_set_tls_peer_allowlist(999::UBIGINT, '[]')
+----
+ducknng: tls config not found
+
+statement error
+SELECT ducknng_tls_config_from_pem(NULL, NULL, NULL, NULL, 0)
+----
+ducknng: invalid tls pem arguments
+
+statement error
+SELECT ducknng_tls_config_from_files(NULL, NULL, NULL, 0)
+----
+ducknng: invalid tls config file arguments
+
+statement error
+SELECT ducknng_self_signed_tls_config('bad name!', 1, 0)
+----
+ducknng: common name must use only letters, digits, dot, colon, dash, or underscore
+
+statement error
 SELECT ducknng_start_server('bad_ip_json', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT, 'not-json')
 ----
 ducknng: IP allowlist must be a JSON array of strings
