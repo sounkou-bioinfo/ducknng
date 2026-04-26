@@ -231,10 +231,10 @@ protocol/reference material and project design notes. If you want the
 more detailed lifetime write-up, see `docs/lifetime.md`. For protocol
 and transport reference details, see `docs/protocol.md`,
 `docs/manifest.md`, `docs/security.md`, `docs/registry.md`,
-`docs/transports.md`, `docs/http.md`, `docs/codecs.md`, and
-`docs/types.md`; for the non-sealed routing demo sketch, see
-`docs/mesh_routing_demo.md`. `NEWS.md` summarizes notable landed
-changes. TLS already supports both file-backed and in-memory PEM
+`docs/transports.md`, `docs/http.md`, `docs/http_server_framework.md`,
+`docs/codecs.md`, and `docs/types.md`; for the non-sealed routing demo
+sketch, see `docs/mesh_routing_demo.md`. `NEWS.md` summarizes notable
+landed changes. TLS already supports both file-backed and in-memory PEM
 material through helpers such as `ducknng_tls_config_from_files(...)`,
 `ducknng_tls_config_from_pem(...)`, and
 `ducknng_self_signed_tls_config(...)`; TLS authentication mode `2`
@@ -1881,7 +1881,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_7fedc507a4a8c.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_81cd97f6e44a7.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
