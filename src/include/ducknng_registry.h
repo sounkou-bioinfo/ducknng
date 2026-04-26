@@ -94,6 +94,8 @@ typedef struct ducknng_manifest_security {
     int peer_identity_required;
     int peer_allowlist_active;
     uint64_t peer_allowlist_count;
+    int ip_allowlist_active;
+    uint64_t ip_allowlist_count;
     int sessions_bind_peer_identity_when_present;
     uint64_t session_idle_timeout_ms;
     const char *peer_identity_format;

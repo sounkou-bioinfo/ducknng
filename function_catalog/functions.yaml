@@ -4,14 +4,16 @@
       "name": "ducknng_start_server",
       "kind": "scalar",
       "category": "Service Control",
-      "signature": "ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id)",
+      "signature": "ducknng_start_server(name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id[, ip_allowlist_json])",
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
       "description": "Start a named ducknng NNG listener.",
       "notes": [
         "Transport is selected by the NNG listen URL scheme. Supported listener schemes now include inproc://, ipc://, tcp://, tls+tcp://, ws://, and wss://.",
-        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for tls+tcp:// and wss:// listeners."
+        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for tls+tcp:// and wss:// listeners.",
+        "Optional ip_allowlist_json is a JSON array of IPv4/IPv6 literals or CIDR blocks copied into the service before it starts.",
+        "For network-exposed services, prefer TLS/mTLS and use IP allowlists as an additional or proxy-friendly admission layer."
       ],
       "examples": [
         "SELECT ducknng_start_server('sql0', 'ipc:///tmp/ducknng_sql0.ipc', 1, 134217728, 300000, 0);"
@@ -21,14 +23,16 @@
       "name": "ducknng_start_http_server",
       "kind": "scalar",
       "category": "Service Control",
-      "signature": "ducknng_start_http_server(name, listen, recv_max_bytes, session_idle_ms, tls_config_id)",
+      "signature": "ducknng_start_http_server(name, listen, recv_max_bytes, session_idle_ms, tls_config_id[, ip_allowlist_json])",
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
       "description": "Start a named ducknng HTTP or HTTPS frame carrier.",
       "notes": [
         "listen must be an http:// or https:// URL whose path becomes the mounted RPC endpoint.",
-        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for https:// listeners."
+        "Use ducknng_tls_config_from_files(), ducknng_tls_config_from_pem(), or ducknng_self_signed_tls_config() to create a reusable TLS handle for https:// listeners.",
+        "Optional ip_allowlist_json is a JSON array of IPv4/IPv6 literals or CIDR blocks checked before HTTP framed-RPC dispatch.",
+        "For public HTTP-style deployments, prefer https:// directly or a reverse proxy/firewall enforcing IP/CIDR policy before loopback http://."
       ],
       "examples": [
         "SELECT ducknng_start_http_server('http0', 'http://127.0.0.1:8080/_ducknng', 134217728, 300000, 0::UBIGINT);"
@@ -53,7 +57,7 @@
       "kind": "table",
       "category": "Introspection",
       "signature": "ducknng_list_servers()",
-      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT)",
+      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List registered ducknng services.",
@@ -61,7 +65,9 @@
         "tls_auth_mode follows the TLS config handle: 0 = no peer authentication, 1 = optional peer verification, 2 = required peer verification/mTLS.",
         "peer_identity_required is true when the service requires a verified transport-derived peer identity before dispatch.",
         "peer_allowlist_active reports whether service-level peer admission uses an exact verified-identity allowlist.",
-        "peer_allowlist_count reports the number of admitted identities; an active allowlist with count 0 denies every verified peer."
+        "peer_allowlist_count reports the number of admitted identities; an active allowlist with count 0 denies every verified peer.",
+        "ip_allowlist_active reports whether service-level remote-address admission uses an IP/CIDR allowlist.",
+        "ip_allowlist_count reports the number of configured IP/CIDR rules; an active allowlist with count 0 denies every remote address."
       ],
       "examples": [
         "SELECT * FROM ducknng_list_servers();"
@@ -376,6 +382,26 @@
       ],
       "examples": [
         "SELECT ducknng_set_service_peer_allowlist('svc', '[\"tls:san:client-a.example\"]');"
+      ]
+    },
+    {
+      "name": "ducknng_set_service_ip_allowlist",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_set_service_ip_allowlist(name, cidrs_json)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Dynamically set the IP/CIDR remote-address allowlist for a running service.",
+      "notes": [
+        "cidrs_json must be a JSON array of IPv4/IPv6 literals or CIDR blocks such as [\"127.0.0.1/32\", \"10.0.0.0/8\", \"::1/128\"].",
+        "NULL or an empty string clears the allowlist and returns the service to default-open remote-address admission subject to other TLS/method/session policy.",
+        "An empty JSON array [] is an active deny-all IP allowlist.",
+        "For NNG transports, new pipes are checked using NNG_OPT_REMADDR during the ADD_PRE pipe notification; dispatch also re-checks the policy for existing pipes.",
+        "For HTTP/HTTPS, non-admitted remote addresses receive HTTP 403 before RPC dispatch."
+      ],
+      "examples": [
+        "SELECT ducknng_set_service_ip_allowlist('svc', '[\"127.0.0.1/32\",\"10.0.0.0/8\"]');"
       ]
     },
     {

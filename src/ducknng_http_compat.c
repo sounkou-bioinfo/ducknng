@@ -72,6 +72,13 @@ static void ducknng_http_tls_alt_names_free(char **alt_names) {
     free(alt_names);
 }
 
+static int ducknng_http_conn_remote_addr(nng_http_conn *conn, nng_sockaddr *out) {
+    size_t size = sizeof(*out);
+    if (!conn || !out) return -1;
+    memset(out, 0, sizeof(*out));
+    return nni_http_conn_getopt(conn, NNG_OPT_REMADDR, out, &size, NNI_TYPE_SOCKADDR) == 0 ? 0 : -1;
+}
+
 static char *ducknng_http_conn_verified_peer_identity(nng_http_conn *conn) {
     bool verified = false;
     char **alt_names = NULL;
@@ -858,6 +865,8 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
     nng_msg *reply_msg = NULL;
     nng_http_res *res = NULL;
     char *caller_identity = NULL;
+    nng_sockaddr remote_addr;
+    int have_remote_addr = 0;
     ducknng_frame frame;
     int rv = 0;
     int stopping = 0;
@@ -903,9 +912,11 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
         return;
     }
     caller_identity = ducknng_http_conn_verified_peer_identity(conn);
+    have_remote_addr = ducknng_http_conn_remote_addr(conn, &remote_addr) == 0;
     {
         char *admission_err = NULL;
-        if (ducknng_service_peer_admission_check(state->svc, caller_identity, &admission_err) != 0) {
+        if (ducknng_service_network_admission_check(state->svc, caller_identity,
+                have_remote_addr ? &remote_addr : NULL, &admission_err) != 0) {
             rv = ducknng_http_alloc_text_response(&res, 403,
                 admission_err ? admission_err : "ducknng: peer identity is not admitted");
             if (admission_err) duckdb_free(admission_err);

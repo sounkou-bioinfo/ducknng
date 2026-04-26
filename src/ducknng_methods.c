@@ -38,6 +38,8 @@ static int ducknng_method_manifest_handler(ducknng_service *svc,
         security.peer_identity_required = ducknng_service_requires_peer_identity(svc);
         security.peer_allowlist_active = ducknng_service_peer_allowlist_active(svc);
         security.peer_allowlist_count = (uint64_t)ducknng_service_peer_allowlist_count(svc);
+        security.ip_allowlist_active = ducknng_service_ip_allowlist_active(svc);
+        security.ip_allowlist_count = (uint64_t)ducknng_service_ip_allowlist_count(svc);
         security.sessions_bind_peer_identity_when_present = 1;
         security.session_idle_timeout_ms = svc->session_idle_ms;
         security.peer_identity_format = "tls:san:<value>|tls:cn:<common-name>";

@@ -12,6 +12,12 @@ typedef struct ducknng_runtime ducknng_runtime;
 typedef struct ducknng_service ducknng_service;
 typedef struct ducknng_rep_ctx ducknng_rep_ctx;
 
+typedef struct ducknng_ip_allow_rule {
+    int family;
+    uint8_t addr[16];
+    uint8_t prefix_bits;
+} ducknng_ip_allow_rule;
+
 struct ducknng_rep_ctx {
     ducknng_service *svc;
     nng_ctx ctx;
@@ -38,6 +44,10 @@ struct ducknng_service {
     uint64_t tls_config_id;
     char *tls_config_source;
     ducknng_tls_opts tls_opts;
+    int ip_allowlist_active;
+    ducknng_ip_allow_rule *ip_allowlist;
+    size_t ip_allowlist_count;
+    char *ip_allowlist_json;
     nng_socket rep_sock;
     nng_listener listener;
     ducknng_rep_ctx *ctxs;
@@ -82,5 +92,10 @@ int ducknng_service_requires_peer_identity(const ducknng_service *svc);
 int ducknng_service_peer_allowlist_active(const ducknng_service *svc);
 size_t ducknng_service_peer_allowlist_count(const ducknng_service *svc);
 int ducknng_service_peer_admission_check(ducknng_service *svc, const char *caller_identity, char **errmsg);
+int ducknng_service_network_admission_check(ducknng_service *svc, const char *caller_identity,
+    const nng_sockaddr *remote_addr, char **errmsg);
 int ducknng_service_set_peer_allowlist(ducknng_service *svc, const char *identities_json, char **errmsg);
+int ducknng_service_set_ip_allowlist(ducknng_service *svc, const char *cidrs_json, char **errmsg);
+int ducknng_service_ip_allowlist_active(const ducknng_service *svc);
+size_t ducknng_service_ip_allowlist_count(const ducknng_service *svc);
 const char *ducknng_service_resolved_listen(const ducknng_service *svc);

@@ -686,10 +686,11 @@ sessions (<code>query_open</code>, <code>fetch</code>,
 <li>registry auth policy controls such as
 <code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> for protecting
 discovery through verified peer identity</li>
-<li>dynamic exact peer-identity allowlists through
-<code>ducknng_set_tls_peer_allowlist(...)</code> and
-<code>ducknng_set_service_peer_allowlist(...)</code>; NNG services use
-NNG pipe notifications for new-pipe admission</li>
+<li>dynamic exact peer-identity and IP/CIDR allowlists through
+<code>ducknng_set_tls_peer_allowlist(...)</code>,
+<code>ducknng_set_service_peer_allowlist(...)</code>, and
+<code>ducknng_set_service_ip_allowlist(...)</code>; NNG services use NNG
+pipe notifications for new-pipe admission</li>
 <li>automatic synchronous helper routing over NNG or HTTP/HTTPS based on
 URL scheme</li>
 <li>TLS config handles for <code>tls+tcp://</code>, <code>wss://</code>,
@@ -841,14 +842,14 @@ Expand the full generated function catalog
 <tr class="odd">
 <td><code>ducknng_start_server</code></td>
 <td>scalar</td>
-<td><code>name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id</code></td>
+<td><code>name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id[, ip_allowlist_json]</code></td>
 <td><code>BOOLEAN</code></td>
 <td>Start a named ducknng NNG listener.</td>
 </tr>
 <tr class="even">
 <td><code>ducknng_start_http_server</code></td>
 <td>scalar</td>
-<td><code>name, listen, recv_max_bytes, session_idle_ms, tls_config_id</code></td>
+<td><code>name, listen, recv_max_bytes, session_idle_ms, tls_config_id[, ip_allowlist_json]</code></td>
 <td><code>BOOLEAN</code></td>
 <td>Start a named ducknng HTTP or HTTPS frame carrier.</td>
 </tr>
@@ -877,7 +878,7 @@ Expand the full generated function catalog
 <td><code>ducknng_list_servers</code></td>
 <td>table</td>
 <td></td>
-<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT)</code></td>
+<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
 <td>List registered ducknng services.</td>
 </tr>
 </tbody>
@@ -1096,6 +1097,14 @@ handle.</td>
 service.</td>
 </tr>
 <tr class="odd">
+<td><code>ducknng_set_service_ip_allowlist</code></td>
+<td>scalar</td>
+<td><code>name, cidrs_json</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Dynamically set the IP/CIDR remote-address allowlist for a running
+service.</td>
+</tr>
+<tr class="even">
 <td><code>ducknng_self_signed_tls_config</code></td>
 <td>scalar</td>
 <td><code>common_name, valid_days, auth_mode</code></td>
@@ -1103,14 +1112,14 @@ service.</td>
 <td>Generate a self-signed development certificate and register it as a
 TLS config handle.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>ducknng_tls_config_from_pem</code></td>
 <td>scalar</td>
 <td><code>cert_pem, key_pem, ca_pem, password, auth_mode</code></td>
 <td><code>UBIGINT</code></td>
 <td>Register a TLS config handle from in-memory PEM material.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>ducknng_tls_config_from_files</code></td>
 <td>scalar</td>
 <td><code>cert_key_file, ca_file, password, auth_mode</code></td>
@@ -2810,7 +2819,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_250b87be8bfaa.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_29c95380f1bac.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
@@ -2879,18 +2888,23 @@ a service.</p>
 present a verified client certificate;</li>
 <li>configure a private CA or otherwise narrow certificate issuance so
 the trust root is not broader than the application;</li>
-<li>set an exact peer-identity allowlist before exposure with
-<code>ducknng_set_tls_peer_allowlist(...)</code>;</li>
+<li>set exact peer-identity and/or IP/CIDR allowlists before exposure
+with <code>ducknng_set_tls_peer_allowlist(...)</code> and the optional
+<code>ip_allowlist_json</code> startup argument;</li>
 <li>optionally update a running service dynamically with
-<code>ducknng_set_service_peer_allowlist(...)</code>.</li>
+<code>ducknng_set_service_peer_allowlist(...)</code> and
+<code>ducknng_set_service_ip_allowlist(...)</code>.</li>
 </ol>
 <p>The relevant identity strings currently come from verified TLS peer
 metadata and are SAN-first, CN-fallback:
 <code>tls:san:&lt;value&gt;</code> or
-<code>tls:cn:&lt;common-name&gt;</code>. An allowlist is exact-match.
-<code>NULL</code> or an empty SQL string clears it and returns to
-default-open admission subject to TLS/method/session policy. An empty
-JSON array, <code>[]</code>, is active deny-all.</p>
+<code>tls:cn:&lt;common-name&gt;</code>. Peer identity allowlists are
+exact-match. IP allowlists are parsed once into IPv4/IPv6 literal or
+CIDR rules such as <code>127.0.0.1/32</code>, <code>10.0.0.0/8</code>,
+or <code>::1/128</code>. <code>NULL</code> or an empty SQL string clears
+an allowlist and returns to default-open admission subject to
+TLS/method/session policy. An empty JSON array, <code>[]</code>, is
+active deny-all.</p>
 <p>Example shape:</p>
 <div class="sourceCode" id="cb42"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb42-1"><a href="#cb42-1" tabindex="-1"></a><span class="co">-- Set a default allowlist on the TLS handle before starting services with it.</span></span>
 <span id="cb42-2"><a href="#cb42-2" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_set_tls_peer_allowlist(</span>
@@ -2898,11 +2912,25 @@ JSON array, <code>[]</code>, is active deny-all.</p>
 <span id="cb42-4"><a href="#cb42-4" tabindex="-1"></a>  <span class="st">&#39;[&quot;tls:san:client-a.example&quot;,&quot;tls:san:client-b.example&quot;]&#39;</span></span>
 <span id="cb42-5"><a href="#cb42-5" tabindex="-1"></a>);</span>
 <span id="cb42-6"><a href="#cb42-6" tabindex="-1"></a></span>
-<span id="cb42-7"><a href="#cb42-7" tabindex="-1"></a><span class="co">-- Later, rotate or tighten admission for a running service.</span></span>
-<span id="cb42-8"><a href="#cb42-8" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_set_service_peer_allowlist(</span>
-<span id="cb42-9"><a href="#cb42-9" tabindex="-1"></a>  <span class="st">&#39;sql_rpc&#39;</span>,</span>
-<span id="cb42-10"><a href="#cb42-10" tabindex="-1"></a>  <span class="st">&#39;[&quot;tls:san:client-b.example&quot;]&#39;</span></span>
-<span id="cb42-11"><a href="#cb42-11" tabindex="-1"></a>);</span></code></pre></div>
+<span id="cb42-7"><a href="#cb42-7" tabindex="-1"></a><span class="co">-- Start with an IP/CIDR allowlist already installed before the listener accepts traffic.</span></span>
+<span id="cb42-8"><a href="#cb42-8" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_http_server(</span>
+<span id="cb42-9"><a href="#cb42-9" tabindex="-1"></a>  <span class="st">&#39;sql_http&#39;</span>,</span>
+<span id="cb42-10"><a href="#cb42-10" tabindex="-1"></a>  <span class="st">&#39;http://127.0.0.1:18444/_ducknng&#39;</span>,</span>
+<span id="cb42-11"><a href="#cb42-11" tabindex="-1"></a>  <span class="dv">134217728</span>,</span>
+<span id="cb42-12"><a href="#cb42-12" tabindex="-1"></a>  <span class="dv">300000</span>,</span>
+<span id="cb42-13"><a href="#cb42-13" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,</span>
+<span id="cb42-14"><a href="#cb42-14" tabindex="-1"></a>  <span class="st">&#39;[&quot;127.0.0.1/32&quot;]&#39;</span></span>
+<span id="cb42-15"><a href="#cb42-15" tabindex="-1"></a>);</span>
+<span id="cb42-16"><a href="#cb42-16" tabindex="-1"></a></span>
+<span id="cb42-17"><a href="#cb42-17" tabindex="-1"></a><span class="co">-- Later, rotate or tighten admission for a running service.</span></span>
+<span id="cb42-18"><a href="#cb42-18" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_set_service_peer_allowlist(</span>
+<span id="cb42-19"><a href="#cb42-19" tabindex="-1"></a>  <span class="st">&#39;sql_rpc&#39;</span>,</span>
+<span id="cb42-20"><a href="#cb42-20" tabindex="-1"></a>  <span class="st">&#39;[&quot;tls:san:client-b.example&quot;]&#39;</span></span>
+<span id="cb42-21"><a href="#cb42-21" tabindex="-1"></a>);</span>
+<span id="cb42-22"><a href="#cb42-22" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_set_service_ip_allowlist(</span>
+<span id="cb42-23"><a href="#cb42-23" tabindex="-1"></a>  <span class="st">&#39;sql_http&#39;</span>,</span>
+<span id="cb42-24"><a href="#cb42-24" tabindex="-1"></a>  <span class="st">&#39;[&quot;127.0.0.1/32&quot;,&quot;10.0.0.0/8&quot;]&#39;</span></span>
+<span id="cb42-25"><a href="#cb42-25" tabindex="-1"></a>);</span></code></pre></div>
 <p>Transport-specific deployment notes:</p>
 <ul>
 <li><code>inproc://</code> is a same-process boundary. It is useful for
@@ -2930,35 +2958,41 @@ such as <code>403</code> can appear before RPC dispatch.</li>
 certificates are too much operational overhead, but it is not the same
 as cryptographic client identity. HTTPS itself does not standardize an
 application IP allowlist; IP admission is normally implemented by the
-listener, firewall, reverse proxy, load balancer, or service mesh. Today
-<code>ducknng</code> exposes mTLS identity allowlists, not a SQL-visible
-IP allowlist. For NNG protocol transports, NNG pipes expose
-remote-address metadata such as <code>NNG_OPT_REMADDR</code>, so a
-future SQL-visible IP/subnet admission layer can reuse the same
-pipe-admission design. For HTTP/HTTPS, the most deployable pattern today
-is to enforce IP/CIDR allowlists in Caddy, nginx, Envoy, cloud
-firewall/security groups, Kubernetes network policy, or a similar front
-door, then forward only admitted traffic to loopback
+listener, firewall, reverse proxy, load balancer, or service mesh.
+<code>ducknng</code> now includes its own service-level IP/CIDR
+allowlist for direct listeners. For NNG protocol transports, it uses
+<code>NNG_OPT_REMADDR</code> from the NNG pipe and checks parsed binary
+CIDR rules during <code>ADD_PRE</code> and again at dispatch. For
+HTTP/HTTPS, it reads the connection remote address from the NNG
+supplemental HTTP connection and returns HTTP <code>403</code> before
+RPC dispatch when the address is not admitted. A front door such as
+Caddy, nginx, Envoy, cloud firewall/security groups, Kubernetes network
+policy, or a similar proxy remains useful for public deployments because
+it can combine IP/CIDR policy with rate limits, request logging, WAF
+rules, and ordinary web authentication before forwarding to loopback
 <code>http://</code>, <code>https://</code>, <code>ipc://</code>, or an
 internal NNG service.</p>
-<p>For NNG transports, peer admission uses NNG’s own pipe notification
+<p>For NNG transports, admission uses NNG’s own pipe notification
 primitive: <code>nng_pipe_notify(..., NNG_PIPE_EV_ADD_PRE, ...)</code>
-lets <code>ducknng</code> inspect verified TLS pipe metadata and close a
-non-admitted pipe before it is added to the socket. For HTTP/HTTPS,
-NNG’s supplemental HTTP API does not expose the same public
-protocol-socket pipe admission hook, so <code>ducknng</code> checks the
-same policy before RPC dispatch and returns HTTP <code>403</code> for
-non-admitted peers.</p>
+lets <code>ducknng</code> inspect verified TLS pipe metadata and
+remote-address metadata and close a non-admitted pipe before it is added
+to the socket. For HTTP/HTTPS, NNG’s supplemental HTTP API does not
+expose the same public protocol-socket pipe admission hook, so
+<code>ducknng</code> checks the same policy before RPC dispatch and
+returns HTTP <code>403</code> for non-admitted peers or remote
+addresses.</p>
 <p>The same pipe-event family is useful beyond admission. NNG exposes
 <code>ADD_PRE</code>, <code>ADD_POST</code>, and <code>REM_POST</code>
 pipe events; nanonext surfaces related tools as
 <code>pipe_notify()</code>, <code>monitor()</code>, and
 <code>read_monitor()</code>. Those primitives are a natural foundation
-for future SQL-visible telemetry such as connection counts, connection
-churn, or per-service pipe event streams. Today <code>ducknng</code>
-uses the NNG primitive internally for admission and exposes aggregate
-service state through <code>ducknng_list_servers()</code>; a richer
-public pipe-monitoring SQL surface is intentionally separate future work
+for telemetry, connection counts, connection churn, per-service pipe
+event streams, presence/worker membership, dynamic routing,
+backpressure-aware scheduling, and other application-level event
+streams. Today <code>ducknng</code> uses the NNG primitive internally
+for admission and exposes aggregate service state through
+<code>ducknng_list_servers()</code>; a richer public
+pipe-monitoring/event SQL surface is intentionally separate future work
 rather than a new wire protocol.</p>
 <h2 id="references">References</h2>
 <ul>

@@ -72,9 +72,10 @@ Implemented now:
 - registry auth policy controls such as
   `ducknng_set_method_auth('manifest', true)` for protecting discovery
   through verified peer identity
-- dynamic exact peer-identity allowlists through
-  `ducknng_set_tls_peer_allowlist(...)` and
-  `ducknng_set_service_peer_allowlist(...)`; NNG services use NNG pipe
+- dynamic exact peer-identity and IP/CIDR allowlists through
+  `ducknng_set_tls_peer_allowlist(...)`,
+  `ducknng_set_service_peer_allowlist(...)`, and
+  `ducknng_set_service_ip_allowlist(...)`; NNG services use NNG pipe
   notifications for new-pipe admission
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on
   URL scheme
@@ -221,17 +222,17 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Service Control
 
-| name                        | kind   | arguments                                                                | returns   | description                                        |
-|-----------------------------|--------|--------------------------------------------------------------------------|-----------|----------------------------------------------------|
-| `ducknng_start_server`      | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id` | `BOOLEAN` | Start a named ducknng NNG listener.                |
-| `ducknng_start_http_server` | scalar | `name, listen, recv_max_bytes, session_idle_ms, tls_config_id`           | `BOOLEAN` | Start a named ducknng HTTP or HTTPS frame carrier. |
-| `ducknng_stop_server`       | scalar | `name`                                                                   | `BOOLEAN` | Stop a named ducknng service.                      |
+| name                        | kind   | arguments                                                                                     | returns   | description                                        |
+|-----------------------------|--------|-----------------------------------------------------------------------------------------------|-----------|----------------------------------------------------|
+| `ducknng_start_server`      | scalar | `name, listen, contexts, recv_max_bytes, session_idle_ms, tls_config_id[, ip_allowlist_json]` | `BOOLEAN` | Start a named ducknng NNG listener.                |
+| `ducknng_start_http_server` | scalar | `name, listen, recv_max_bytes, session_idle_ms, tls_config_id[, ip_allowlist_json]`           | `BOOLEAN` | Start a named ducknng HTTP or HTTPS frame carrier. |
+| `ducknng_stop_server`       | scalar | `name`                                                                                        | `BOOLEAN` | Stop a named ducknng service.                      |
 
 ## Introspection
 
-| name                   | kind  | arguments | returns                                                                                                                                                                                                                                                 | description                       |
-|------------------------|-------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
-| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT)` | List registered ducknng services. |
+| name                   | kind  | arguments | returns                                                                                                                                                                                                                                                                                                          | description                       |
+|------------------------|-------|-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services. |
 
 ## Method Registry
 
@@ -270,6 +271,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_drop_tls_config`            | scalar | `tls_config_id`                                  | `BOOLEAN`                                                                                                                                                                                                                                                                                                         | Remove a registered TLS config handle from the runtime.                                |
 | `ducknng_set_tls_peer_allowlist`     | scalar | `tls_config_id, identities_json`                 | `BOOLEAN`                                                                                                                                                                                                                                                                                                         | Set the default exact peer-identity allowlist on a TLS config handle.                  |
 | `ducknng_set_service_peer_allowlist` | scalar | `name, identities_json`                          | `BOOLEAN`                                                                                                                                                                                                                                                                                                         | Dynamically set the exact peer-identity allowlist for a running service.               |
+| `ducknng_set_service_ip_allowlist`   | scalar | `name, cidrs_json`                               | `BOOLEAN`                                                                                                                                                                                                                                                                                                         | Dynamically set the IP/CIDR remote-address allowlist for a running service.            |
 | `ducknng_self_signed_tls_config`     | scalar | `common_name, valid_days, auth_mode`             | `UBIGINT`                                                                                                                                                                                                                                                                                                         | Generate a self-signed development certificate and register it as a TLS config handle. |
 | `ducknng_tls_config_from_pem`        | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT`                                                                                                                                                                                                                                                                                                         | Register a TLS config handle from in-memory PEM material.                              |
 | `ducknng_tls_config_from_files`      | scalar | `cert_key_file, ca_file, password, auth_mode`    | `UBIGINT`                                                                                                                                                                                                                                                                                                         | Register a TLS config handle from file-backed certificate material.                    |
@@ -1812,7 +1814,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_250b87be8bfaa.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_29c95380f1bac.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
@@ -1896,16 +1898,20 @@ A strong direct-exposure baseline is:
     verified client certificate;
 3.  configure a private CA or otherwise narrow certificate issuance so
     the trust root is not broader than the application;
-4.  set an exact peer-identity allowlist before exposure with
-    `ducknng_set_tls_peer_allowlist(...)`;
+4.  set exact peer-identity and/or IP/CIDR allowlists before exposure
+    with `ducknng_set_tls_peer_allowlist(...)` and the optional
+    `ip_allowlist_json` startup argument;
 5.  optionally update a running service dynamically with
-    `ducknng_set_service_peer_allowlist(...)`.
+    `ducknng_set_service_peer_allowlist(...)` and
+    `ducknng_set_service_ip_allowlist(...)`.
 
 The relevant identity strings currently come from verified TLS peer
 metadata and are SAN-first, CN-fallback: `tls:san:<value>` or
-`tls:cn:<common-name>`. An allowlist is exact-match. `NULL` or an empty
-SQL string clears it and returns to default-open admission subject to
-TLS/method/session policy. An empty JSON array, `[]`, is active
+`tls:cn:<common-name>`. Peer identity allowlists are exact-match. IP
+allowlists are parsed once into IPv4/IPv6 literal or CIDR rules such as
+`127.0.0.1/32`, `10.0.0.0/8`, or `::1/128`. `NULL` or an empty SQL
+string clears an allowlist and returns to default-open admission subject
+to TLS/method/session policy. An empty JSON array, `[]`, is active
 deny-all.
 
 Example shape:
@@ -1917,10 +1923,24 @@ SELECT ducknng_set_tls_peer_allowlist(
   '["tls:san:client-a.example","tls:san:client-b.example"]'
 );
 
+-- Start with an IP/CIDR allowlist already installed before the listener accepts traffic.
+SELECT ducknng_start_http_server(
+  'sql_http',
+  'http://127.0.0.1:18444/_ducknng',
+  134217728,
+  300000,
+  0::UBIGINT,
+  '["127.0.0.1/32"]'
+);
+
 -- Later, rotate or tighten admission for a running service.
 SELECT ducknng_set_service_peer_allowlist(
   'sql_rpc',
   '["tls:san:client-b.example"]'
+);
+SELECT ducknng_set_service_ip_allowlist(
+  'sql_http',
+  '["127.0.0.1/32","10.0.0.0/8"]'
 );
 ```
 
@@ -1950,34 +1970,39 @@ IP allowlisting is a useful lighter-weight gate when client certificates
 are too much operational overhead, but it is not the same as
 cryptographic client identity. HTTPS itself does not standardize an
 application IP allowlist; IP admission is normally implemented by the
-listener, firewall, reverse proxy, load balancer, or service mesh. Today
-`ducknng` exposes mTLS identity allowlists, not a SQL-visible IP
-allowlist. For NNG protocol transports, NNG pipes expose remote-address
-metadata such as `NNG_OPT_REMADDR`, so a future SQL-visible IP/subnet
-admission layer can reuse the same pipe-admission design. For
-HTTP/HTTPS, the most deployable pattern today is to enforce IP/CIDR
-allowlists in Caddy, nginx, Envoy, cloud firewall/security groups,
-Kubernetes network policy, or a similar front door, then forward only
-admitted traffic to loopback `http://`, `https://`, `ipc://`, or an
-internal NNG service.
+listener, firewall, reverse proxy, load balancer, or service mesh.
+`ducknng` now includes its own service-level IP/CIDR allowlist for
+direct listeners. For NNG protocol transports, it uses `NNG_OPT_REMADDR`
+from the NNG pipe and checks parsed binary CIDR rules during `ADD_PRE`
+and again at dispatch. For HTTP/HTTPS, it reads the connection remote
+address from the NNG supplemental HTTP connection and returns HTTP `403`
+before RPC dispatch when the address is not admitted. A front door such
+as Caddy, nginx, Envoy, cloud firewall/security groups, Kubernetes
+network policy, or a similar proxy remains useful for public deployments
+because it can combine IP/CIDR policy with rate limits, request logging,
+WAF rules, and ordinary web authentication before forwarding to loopback
+`http://`, `https://`, `ipc://`, or an internal NNG service.
 
-For NNG transports, peer admission uses NNG’s own pipe notification
+For NNG transports, admission uses NNG’s own pipe notification
 primitive: `nng_pipe_notify(..., NNG_PIPE_EV_ADD_PRE, ...)` lets
-`ducknng` inspect verified TLS pipe metadata and close a non-admitted
-pipe before it is added to the socket. For HTTP/HTTPS, NNG’s
-supplemental HTTP API does not expose the same public protocol-socket
-pipe admission hook, so `ducknng` checks the same policy before RPC
-dispatch and returns HTTP `403` for non-admitted peers.
+`ducknng` inspect verified TLS pipe metadata and remote-address metadata
+and close a non-admitted pipe before it is added to the socket. For
+HTTP/HTTPS, NNG’s supplemental HTTP API does not expose the same public
+protocol-socket pipe admission hook, so `ducknng` checks the same policy
+before RPC dispatch and returns HTTP `403` for non-admitted peers or
+remote addresses.
 
 The same pipe-event family is useful beyond admission. NNG exposes
 `ADD_PRE`, `ADD_POST`, and `REM_POST` pipe events; nanonext surfaces
 related tools as `pipe_notify()`, `monitor()`, and `read_monitor()`.
-Those primitives are a natural foundation for future SQL-visible
-telemetry such as connection counts, connection churn, or per-service
-pipe event streams. Today `ducknng` uses the NNG primitive internally
-for admission and exposes aggregate service state through
-`ducknng_list_servers()`; a richer public pipe-monitoring SQL surface is
-intentionally separate future work rather than a new wire protocol.
+Those primitives are a natural foundation for telemetry, connection
+counts, connection churn, per-service pipe event streams,
+presence/worker membership, dynamic routing, backpressure-aware
+scheduling, and other application-level event streams. Today `ducknng`
+uses the NNG primitive internally for admission and exposes aggregate
+service state through `ducknng_list_servers()`; a richer public
+pipe-monitoring/event SQL surface is intentionally separate future work
+rather than a new wire protocol.
 
 ## References
 
