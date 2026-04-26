@@ -92,6 +92,13 @@ WHERE remote_ip = '127.0.0.1' AND transport_family = 'nng' AND scheme = 'tcp'
 true
 
 query I
+SELECT active_pipes > 0
+FROM ducknng_list_servers()
+WHERE name = 'monitor_rpc'
+----
+true
+
+query I
 SELECT ducknng_close_socket(1::UBIGINT)
 ----
 1

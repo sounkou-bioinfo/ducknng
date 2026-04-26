@@ -102,6 +102,7 @@ struct ducknng_service {
     uint64_t next_pipe_event_seq;
     ducknng_pipe_state *pipe_states;
     size_t pipe_state_count;
+    atomic_size_t pipe_state_count_visible;
     size_t pipe_state_cap;
     nng_socket rep_sock;
     nng_listener listener;
@@ -158,6 +159,7 @@ int ducknng_service_set_authorizer(ducknng_service *svc, const char *authorizer_
 int ducknng_service_authorizer_active(const ducknng_service *svc);
 int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions, char **errmsg);
 uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc);
+size_t ducknng_service_active_pipe_count(const ducknng_service *svc);
 int ducknng_service_pipe_events_snapshot(ducknng_service *svc, uint64_t after_seq, uint64_t max_events,
     ducknng_pipe_event **out_events, size_t *out_count, char **errmsg);
 void ducknng_service_pipe_events_free(ducknng_pipe_event *events, size_t count);

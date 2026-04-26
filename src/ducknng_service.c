@@ -85,6 +85,7 @@ static void ducknng_service_clear_pipe_states(ducknng_service *svc) {
     }
     svc->pipe_states = NULL;
     svc->pipe_state_count = 0;
+    atomic_store_explicit(&svc->pipe_state_count_visible, 0, memory_order_release);
     svc->pipe_state_cap = 0;
 }
 
@@ -435,6 +436,7 @@ static void ducknng_service_pipe_state_add_locked(ducknng_service *svc, nng_pipe
             svc->pipe_state_cap = new_cap;
         }
         state = &svc->pipe_states[svc->pipe_state_count++];
+        atomic_store_explicit(&svc->pipe_state_count_visible, svc->pipe_state_count, memory_order_release);
     }
     memset(state, 0, sizeof(*state));
     state->pipe_id = pipe_id;
@@ -453,6 +455,7 @@ static void ducknng_service_pipe_state_remove_locked(ducknng_service *svc, nng_p
     ducknng_pipe_state_reset(&svc->pipe_states[idx]);
     for (i = (size_t)idx; i + 1 < svc->pipe_state_count; i++) svc->pipe_states[i] = svc->pipe_states[i + 1];
     svc->pipe_state_count--;
+    atomic_store_explicit(&svc->pipe_state_count_visible, svc->pipe_state_count, memory_order_release);
     memset(&svc->pipe_states[svc->pipe_state_count], 0, sizeof(svc->pipe_states[svc->pipe_state_count]));
 }
 
@@ -1082,6 +1085,7 @@ ducknng_service *ducknng_service_create(ducknng_runtime *rt, const char *name, c
     if (!svc) return NULL;
     memset(svc, 0, sizeof(*svc));
     atomic_store_explicit(&svc->session_count_visible, 0, memory_order_release);
+    atomic_store_explicit(&svc->pipe_state_count_visible, 0, memory_order_release);
     ducknng_tls_opts_init(&svc->tls_opts);
     svc->rt = rt;
     svc->name = ducknng_strdup(name);
@@ -1456,6 +1460,11 @@ int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
 uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc) {
     if (!svc) return 0;
     return svc->max_open_sessions;
+}
+
+size_t ducknng_service_active_pipe_count(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return atomic_load_explicit(&svc->pipe_state_count_visible, memory_order_acquire);
 }
 
 int ducknng_service_pipe_events_snapshot(ducknng_service *svc, uint64_t after_seq, uint64_t max_events,
