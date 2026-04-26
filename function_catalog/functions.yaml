@@ -57,7 +57,7 @@
       "kind": "table",
       "category": "Introspection",
       "signature": "ducknng_list_servers()",
-      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)",
+      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, max_open_sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List registered ducknng services.",
@@ -68,7 +68,8 @@
         "peer_allowlist_count reports the number of admitted identities; an active allowlist with count 0 denies every verified peer.",
         "ip_allowlist_active reports whether service-level remote-address admission uses an IP/CIDR allowlist.",
         "ip_allowlist_count reports the number of configured IP/CIDR rules; an active allowlist with count 0 denies every remote address.",
-        "sql_authorizer_active reports whether a service-level SQL authorization callback is installed."
+        "sql_authorizer_active reports whether a service-level SQL authorization callback is installed.",
+        "max_open_sessions is 0 for unlimited; non-zero values are enforced before query_open registers a new session."
       ],
       "examples": [
         "SELECT * FROM ducknng_list_servers();"
@@ -403,6 +404,25 @@
       ],
       "examples": [
         "SELECT ducknng_set_service_ip_allowlist('svc', '[\"127.0.0.1/32\",\"10.0.0.0/8\"]');"
+      ]
+    },
+    {
+      "name": "ducknng_set_service_limits",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_set_service_limits(name, max_open_sessions)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Set basic service resource limits for a running service.",
+      "notes": [
+        "max_open_sessions limits concurrently open query sessions for the service.",
+        "A value of 0 clears the limit and means unlimited for this first limit surface.",
+        "When the limit is exceeded, query_open fails with ducknng: max open sessions exceeded.",
+        "Future service limits may include per-owner session caps, in-flight request caps, byte budgets, and rate limits."
+      ],
+      "examples": [
+        "SELECT ducknng_set_service_limits('svc', 16::UBIGINT);"
       ]
     },
     {

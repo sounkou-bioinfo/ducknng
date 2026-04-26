@@ -214,6 +214,12 @@ int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result,
         if (result) duckdb_destroy_result(result);
         return 1;
     }
+    if (svc->max_open_sessions > 0 && svc->session_count >= (size_t)svc->max_open_sessions) {
+        ducknng_mutex_unlock(&svc->mu);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: max open sessions exceeded");
+        if (result) duckdb_destroy_result(result);
+        return 1;
+    }
     if (svc->session_count == svc->session_cap) {
         new_cap = svc->session_cap ? svc->session_cap * 2 : 4;
         new_sessions = (ducknng_session **)duckdb_malloc(sizeof(*new_sessions) * new_cap);

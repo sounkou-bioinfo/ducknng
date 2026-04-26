@@ -42,6 +42,90 @@ FROM ducknng_get_rpc_manifest(getvariable('auth_rpc_url')::VARCHAR, 0::UBIGINT)
 query I
 SELECT CASE WHEN ducknng_set_service_authorizer(
   'auth_rpc',
+  'SELECT 1 AS not_allow FROM ducknng_auth_context()'
+) THEN 1 ELSE 0 END
+----
+1
+
+query II
+SELECT ok, error LIKE '%allow column%'
+FROM ducknng_get_rpc_manifest(getvariable('auth_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+0	1
+
+query I
+SELECT CASE WHEN ducknng_set_service_authorizer(
+  'auth_rpc',
+  'SELECT EXISTS(SELECT 1 FROM ducknng_get_rpc_manifest(getvariable(''auth_rpc_url'')::VARCHAR, 0::UBIGINT)) AS allow FROM ducknng_auth_context()'
+) THEN 1 ELSE 0 END
+----
+1
+
+query II
+SELECT ok, error LIKE '%cannot run inside a SQL authorizer%'
+FROM ducknng_get_rpc_manifest(getvariable('auth_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+0	1
+
+query I
+SELECT CASE WHEN ducknng_set_service_authorizer(
+  'auth_rpc',
+  'SELECT true AS allow FROM ducknng_auth_context() WHERE false'
+) THEN 1 ELSE 0 END
+----
+1
+
+query II
+SELECT ok, error LIKE '%exactly one row%'
+FROM ducknng_get_rpc_manifest(getvariable('auth_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+0	1
+
+query I
+SELECT CASE WHEN ducknng_set_service_authorizer(
+  'auth_rpc',
+  'SELECT true AS allow FROM ducknng_auth_context(), range(2)'
+) THEN 1 ELSE 0 END
+----
+1
+
+query II
+SELECT ok, error LIKE '%exactly one row%'
+FROM ducknng_get_rpc_manifest(getvariable('auth_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+0	1
+
+query I
+SELECT CASE WHEN ducknng_set_service_authorizer(
+  'auth_rpc',
+  'SELECT ''yes'' AS allow FROM ducknng_auth_context()'
+) THEN 1 ELSE 0 END
+----
+1
+
+query II
+SELECT ok, error LIKE '%allow column must be BOOLEAN%'
+FROM ducknng_get_rpc_manifest(getvariable('auth_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+0	1
+
+query I
+SELECT CASE WHEN ducknng_set_service_authorizer(
+  'auth_rpc',
+  'SELECT missing_column AS allow FROM ducknng_auth_context()'
+) THEN 1 ELSE 0 END
+----
+1
+
+query II
+SELECT ok, error LIKE '%SQL authorizer error%'
+FROM ducknng_get_rpc_manifest(getvariable('auth_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+0	1
+
+query I
+SELECT CASE WHEN ducknng_set_service_authorizer(
+  'auth_rpc',
   'SELECT transport_family = ''nng'' AND scheme = ''tcp'' AND rpc_method = ''manifest'' AND remote_ip = ''127.0.0.1'' AS allow, 403 AS status, ''unexpected auth context'' AS reason FROM ducknng_auth_context()'
 ) THEN 1 ELSE 0 END
 ----

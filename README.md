@@ -230,9 +230,9 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Introspection
 
-| name                   | kind  | arguments | returns                                                                                                                                                                                                                                                                                                                                         | description                       |
-|------------------------|-------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
-| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services. |
+| name                   | kind  | arguments | returns                                                                                                                                                                                                                                                                                                                                                                    | description                       |
+|------------------------|-------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, max_open_sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services. |
 
 ## Method Registry
 
@@ -272,6 +272,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_set_tls_peer_allowlist`     | scalar | `tls_config_id, identities_json`                 | `BOOLEAN`                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Set the default exact peer-identity allowlist on a TLS config handle.                                                           |
 | `ducknng_set_service_peer_allowlist` | scalar | `name, identities_json`                          | `BOOLEAN`                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Dynamically set the exact peer-identity allowlist for a running service.                                                        |
 | `ducknng_set_service_ip_allowlist`   | scalar | `name, cidrs_json`                               | `BOOLEAN`                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Dynamically set the IP/CIDR remote-address allowlist for a running service.                                                     |
+| `ducknng_set_service_limits`         | scalar | `name, max_open_sessions`                        | `BOOLEAN`                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Set basic service resource limits for a running service.                                                                        |
 | `ducknng_auth_context`               | table  |                                                  | `TABLE(phase VARCHAR, service_name VARCHAR, transport_family VARCHAR, scheme VARCHAR, listen VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, tls_verified BOOLEAN, peer_identity VARCHAR, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, http_method VARCHAR, http_path VARCHAR, content_type VARCHAR, body_bytes UBIGINT, rpc_method VARCHAR, rpc_type VARCHAR, payload_bytes UBIGINT)` | Expose the current request context to a SQL authorization callback.                                                             |
 | `ducknng_set_service_authorizer`     | scalar | `name, authorizer_sql`                           | `BOOLEAN`                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Install or clear a service-level SQL authorization callback evaluated uniformly for framed RPC requests before method dispatch. |
 | `ducknng_self_signed_tls_config`     | scalar | `common_name, valid_days, auth_mode`             | `UBIGINT`                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Generate a self-signed development certificate and register it as a TLS config handle.                                          |
@@ -1471,9 +1472,12 @@ without unregistering the method.
 The built-in mTLS, peer-identity allowlist, and IP/CIDR allowlist checks
 are the fast C path for common denials. They run before the flexible SQL
 callback and, for NNG transports, can reject new pipes at
-`NNG_PIPE_EV_ADD_PRE` without entering DuckDB. For policy that depends
-on tables, tenants, method names, headers, or deployment-specific rules,
-install a service-level SQL authorizer with
+`NNG_PIPE_EV_ADD_PRE` without entering DuckDB. Basic service resource
+limits also start in C:
+`ducknng_set_service_limits(name, max_open_sessions)` caps concurrently
+open query sessions for a service, and `0` clears that first limit. For
+policy that depends on tables, tenants, method names, headers, or
+deployment-specific rules, install a service-level SQL authorizer with
 `ducknng_set_service_authorizer(name, authorizer_sql)`. The callback
 sees one row from `ducknng_auth_context()` while it runs and must return
 exactly one row with a Boolean `allow` column; optional columns are
@@ -1838,7 +1842,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_3246c26572644.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_354d160ee90d1.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
@@ -1925,12 +1929,16 @@ A strong direct-exposure baseline is:
 4.  set exact peer-identity and/or IP/CIDR allowlists before exposure
     with `ducknng_set_tls_peer_allowlist(...)` and the optional
     `ip_allowlist_json` startup argument;
-5.  install a service-level SQL authorizer with
+5.  set basic service resource limits such as
+    `ducknng_set_service_limits(name, max_open_sessions)` before
+    exposing query sessions;
+6.  install a service-level SQL authorizer with
     `ducknng_set_service_authorizer(...)` when admission depends on
     deployment tables, tenants, method names, or HTTP metadata;
-6.  optionally update a running service dynamically with
+7.  optionally update a running service dynamically with
     `ducknng_set_service_peer_allowlist(...)`,
-    `ducknng_set_service_ip_allowlist(...)`, and
+    `ducknng_set_service_ip_allowlist(...)`,
+    `ducknng_set_service_limits(...)`, and
     `ducknng_set_service_authorizer(...)`.
 
 The relevant identity strings currently come from verified TLS peer
@@ -1970,6 +1978,9 @@ SELECT ducknng_set_service_ip_allowlist(
   'sql_http',
   '["127.0.0.1/32","10.0.0.0/8"]'
 );
+
+-- Set a basic service-side resource limit for query sessions.
+SELECT ducknng_set_service_limits('sql_http', 16::UBIGINT);
 
 -- Add a flexible SQL callback when policy depends on request context.
 SELECT ducknng_set_service_authorizer(

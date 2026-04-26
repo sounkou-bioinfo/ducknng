@@ -1,0 +1,71 @@
+# name: test/sql/ducknng_negative_paths.test
+# group: [ducknng]
+
+require ducknng
+
+statement error
+SELECT ducknng_stop_server('missing_service')
+----
+ducknng: service not found
+
+statement error
+SELECT ducknng_set_service_peer_allowlist('missing_service', '[]')
+----
+ducknng: service not found
+
+statement error
+SELECT ducknng_set_service_ip_allowlist('missing_service', '[]')
+----
+ducknng: service not found
+
+statement error
+SELECT ducknng_set_service_authorizer('missing_service', 'SELECT true AS allow')
+----
+ducknng: service not found
+
+statement error
+SELECT ducknng_set_service_limits('missing_service', 1::UBIGINT)
+----
+ducknng: service not found
+
+statement error
+SELECT ducknng_start_server('bad_ip_json', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT, 'not-json')
+----
+ducknng: IP allowlist must be a JSON array of strings
+
+statement error
+SELECT ducknng_start_server('bad_ip_cidr', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT, '["127.0.0.1/99"]')
+----
+ducknng: invalid IPv4 CIDR prefix in IP allowlist
+
+query I
+SELECT CASE
+  WHEN ducknng_start_server('negative_rpc', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT)
+  THEN 1 ELSE 0 END
+----
+1
+
+statement error
+SELECT ducknng_set_service_ip_allowlist('negative_rpc', '["not-an-ip"]')
+----
+ducknng: IP allowlist entries must be IPv4/IPv6 literals or CIDR blocks
+
+statement error
+SELECT ducknng_set_service_peer_allowlist('negative_rpc', '{"bad":true}')
+----
+ducknng: peer allowlist must be a JSON array of strings
+
+query I
+SELECT CASE WHEN ducknng_set_service_limits('negative_rpc', 0::UBIGINT) THEN 1 ELSE 0 END
+----
+1
+
+query I
+SELECT max_open_sessions FROM ducknng_list_servers() WHERE name = 'negative_rpc'
+----
+0
+
+query I
+SELECT CASE WHEN ducknng_stop_server('negative_rpc') THEN 1 ELSE 0 END
+----
+1

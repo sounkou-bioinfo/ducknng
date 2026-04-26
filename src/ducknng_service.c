@@ -1200,6 +1200,23 @@ int ducknng_service_authorizer_active(const ducknng_service *svc) {
     return svc->authorizer_active ? 1 : 0;
 }
 
+int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions, char **errmsg) {
+    if (errmsg) *errmsg = NULL;
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
+        return -1;
+    }
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    svc->max_open_sessions = max_open_sessions;
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    return 0;
+}
+
+uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return svc->max_open_sessions;
+}
+
 int ducknng_service_stop(ducknng_service *svc, char **errmsg) {
     int i;
     ducknng_session **sessions = NULL;

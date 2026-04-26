@@ -87,6 +87,7 @@ struct ducknng_service {
     size_t session_cap;
     uint64_t next_session_id;
     uint64_t session_idle_ms;
+    uint64_t max_open_sessions;
     size_t recv_max_bytes;
     int running;
     int shutting_down;
@@ -126,6 +127,8 @@ int ducknng_service_ip_allowlist_active(const ducknng_service *svc);
 size_t ducknng_service_ip_allowlist_count(const ducknng_service *svc);
 int ducknng_service_set_authorizer(ducknng_service *svc, const char *authorizer_sql, char **errmsg);
 int ducknng_service_authorizer_active(const ducknng_service *svc);
+int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions, char **errmsg);
+uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc);
 void ducknng_authorizer_decision_init(ducknng_authorizer_decision *decision);
 void ducknng_authorizer_decision_reset(ducknng_authorizer_decision *decision);
 int ducknng_service_authorize_request(ducknng_service *svc, const ducknng_authorizer_context *auth_ctx,

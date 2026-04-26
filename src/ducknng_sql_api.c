@@ -7,6 +7,7 @@
 #include "ducknng_runtime.h"
 #include "ducknng_transport.h"
 #include "ducknng_service.h"
+#include "ducknng_sql_shared.h"
 #include "ducknng_util.h"
 #include "ducknng_wire.h"
 #include <stdio.h>
@@ -21,11 +22,6 @@
 
 DUCKDB_EXTENSION_EXTERN
 
-typedef struct {
-    ducknng_runtime *rt;
-    int is_init_connection;
-} ducknng_sql_context;
-
 static int ducknng_lookup_tls_config_copy(ducknng_sql_context *ctx, uint64_t tls_config_id,
     uint64_t *out_id, char **out_source, ducknng_tls_opts *out_opts, char **errmsg);
 
@@ -36,6 +32,7 @@ typedef struct {
     int32_t contexts;
     bool running;
     uint64_t sessions;
+    uint64_t max_open_sessions;
     bool tls_enabled;
     int32_t tls_auth_mode;
     bool peer_identity_required;
@@ -45,30 +42,6 @@ typedef struct {
     uint64_t ip_allowlist_count;
     bool sql_authorizer_active;
 } ducknng_server_row;
-
-typedef struct {
-    idx_t row_count;
-    char *phase;
-    char *service_name;
-    char *transport_family;
-    char *scheme;
-    char *listen;
-    char *remote_addr;
-    char *remote_ip;
-    int32_t remote_port;
-    bool tls_verified;
-    char *peer_identity;
-    bool peer_allowlist_active;
-    bool ip_allowlist_active;
-    bool sql_authorizer_active;
-    char *http_method;
-    char *http_path;
-    char *content_type;
-    uint64_t body_bytes;
-    char *rpc_method;
-    char *rpc_type;
-    uint64_t payload_bytes;
-} ducknng_auth_context_bind_data;
 
 typedef struct {
     ducknng_server_row *rows;
@@ -358,6 +331,19 @@ static bool arg_bool(duckdb_vector vec, idx_t row, bool dflt) {
     bool *data = (bool *)duckdb_vector_get_data(vec);
     if (arg_is_null(vec, row)) return dflt;
     return data[row];
+}
+static int ducknng_sql_inside_authorizer(ducknng_sql_context *ctx) {
+    return ctx && ctx->rt && ducknng_runtime_current_thread_authorizer_context_get(ctx->rt) != NULL;
+}
+static int ducknng_reject_table_inside_authorizer(duckdb_bind_info info, ducknng_sql_context *ctx) {
+    if (!ducknng_sql_inside_authorizer(ctx)) return 0;
+    duckdb_bind_set_error(info, "ducknng: ducknng client and lifecycle functions cannot run inside a SQL authorizer callback");
+    return 1;
+}
+static int ducknng_reject_scalar_inside_authorizer(duckdb_function_info info, ducknng_sql_context *ctx) {
+    if (!ducknng_sql_inside_authorizer(ctx)) return 0;
+    duckdb_scalar_function_set_error(info, "ducknng: ducknng client and lifecycle functions cannot run inside a SQL authorizer callback");
+    return 1;
 }
 static void set_null(duckdb_vector vec, idx_t row) {
     uint64_t *validity;
@@ -880,25 +866,6 @@ static void destroy_single_row_init_data(void *ptr) {
     if (data) duckdb_free(data);
 }
 
-static void destroy_auth_context_bind_data(void *ptr) {
-    ducknng_auth_context_bind_data *data = (ducknng_auth_context_bind_data *)ptr;
-    if (!data) return;
-    if (data->phase) duckdb_free(data->phase);
-    if (data->service_name) duckdb_free(data->service_name);
-    if (data->transport_family) duckdb_free(data->transport_family);
-    if (data->scheme) duckdb_free(data->scheme);
-    if (data->listen) duckdb_free(data->listen);
-    if (data->remote_addr) duckdb_free(data->remote_addr);
-    if (data->remote_ip) duckdb_free(data->remote_ip);
-    if (data->peer_identity) duckdb_free(data->peer_identity);
-    if (data->http_method) duckdb_free(data->http_method);
-    if (data->http_path) duckdb_free(data->http_path);
-    if (data->content_type) duckdb_free(data->content_type);
-    if (data->rpc_method) duckdb_free(data->rpc_method);
-    if (data->rpc_type) duckdb_free(data->rpc_type);
-    duckdb_free(data);
-}
-
 static int ducknng_start_service_with_tls_opts(ducknng_sql_context *ctx, const char *name, const char *listen,
     int contexts, uint64_t recv_max, uint64_t idle_ms, uint64_t tls_config_id,
     const char *tls_config_source, const ducknng_tls_opts *tls_opts,
@@ -948,6 +915,7 @@ static void ducknng_server_start_tls_config_scalar(duckdb_function_info info, du
     idx_t ncols = duckdb_data_chunk_get_column_count(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -1008,6 +976,7 @@ static void ducknng_http_server_start_scalar(duckdb_function_info info, duckdb_d
     idx_t ncols = duckdb_data_chunk_get_column_count(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -1066,6 +1035,7 @@ static void ducknng_server_stop_scalar(duckdb_function_info info, duckdb_data_ch
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -1251,6 +1221,7 @@ static void ducknng_drop_tls_config_scalar(duckdb_function_info info, duckdb_dat
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -1275,6 +1246,7 @@ static void ducknng_set_tls_peer_allowlist_scalar(duckdb_function_info info, duc
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -1317,6 +1289,7 @@ static void ducknng_set_service_peer_allowlist_scalar(duckdb_function_info info,
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -1363,6 +1336,7 @@ static void ducknng_set_service_ip_allowlist_scalar(duckdb_function_info info, d
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -1405,20 +1379,20 @@ static void ducknng_set_service_ip_allowlist_scalar(duckdb_function_info info, d
     }
 }
 
-static void ducknng_set_service_authorizer_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+static void ducknng_set_service_limits_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
-        char *authorizer_sql = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
+        uint64_t max_open_sessions = arg_u64(duckdb_data_chunk_get_vector(input, 1), row, 0);
         ducknng_service *svc = NULL;
         char *errmsg = NULL;
         size_t i;
         if (!ctx || !ctx->rt || !name || !name[0]) {
             if (name) duckdb_free(name);
-            if (authorizer_sql) duckdb_free(authorizer_sql);
             duckdb_scalar_function_set_error(info, "ducknng: service name is required");
             return;
         }
@@ -1432,21 +1406,18 @@ static void ducknng_set_service_authorizer_scalar(duckdb_function_info info, duc
         if (!svc) {
             ducknng_mutex_unlock(&ctx->rt->mu);
             duckdb_free(name);
-            if (authorizer_sql) duckdb_free(authorizer_sql);
             duckdb_scalar_function_set_error(info, "ducknng: service not found");
             return;
         }
-        if (ducknng_service_set_authorizer(svc, authorizer_sql, &errmsg) != 0) {
+        if (ducknng_service_set_limits(svc, max_open_sessions, &errmsg) != 0) {
             ducknng_mutex_unlock(&ctx->rt->mu);
             duckdb_free(name);
-            if (authorizer_sql) duckdb_free(authorizer_sql);
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to set service SQL authorizer");
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to set service limits");
             if (errmsg) duckdb_free(errmsg);
             return;
         }
         ducknng_mutex_unlock(&ctx->rt->mu);
         duckdb_free(name);
-        if (authorizer_sql) duckdb_free(authorizer_sql);
         out[row] = true;
     }
 }
@@ -1456,6 +1427,7 @@ static void ducknng_register_exec_method_scalar(duckdb_function_info info, duckd
     idx_t ncols = duckdb_data_chunk_get_column_count(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     char *errmsg = NULL;
     if (!ctx || !ctx->rt) {
@@ -1508,6 +1480,7 @@ static void ducknng_set_method_auth_scalar(duckdb_function_info info, duckdb_dat
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -1536,6 +1509,7 @@ static void ducknng_unregister_method_scalar(duckdb_function_info info, duckdb_d
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -1584,6 +1558,7 @@ static void ducknng_unregister_family_scalar(duckdb_function_info info, duckdb_d
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *family = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -2311,6 +2286,7 @@ static void ducknng_get_rpc_manifest_raw_scalar(duckdb_function_info info, duckd
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
         uint64_t tls_config_id = arg_u64(duckdb_data_chunk_get_vector(input, 1), row, 0);
@@ -2339,6 +2315,7 @@ static void ducknng_run_rpc_raw_scalar(duckdb_function_info info, duckdb_data_ch
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
         char *sql = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 1), row);
@@ -2386,6 +2363,7 @@ static void ducknng_socket_scalar(duckdb_function_info info, duckdb_data_chunk i
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *protocol = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -2462,6 +2440,7 @@ static void ducknng_dial_scalar(duckdb_function_info info, duckdb_data_chunk inp
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -2537,6 +2516,7 @@ static void ducknng_listen_scalar(duckdb_function_info info, duckdb_data_chunk i
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -2618,6 +2598,7 @@ static void ducknng_close_scalar(duckdb_function_info info, duckdb_data_chunk in
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -2640,6 +2621,7 @@ static void ducknng_send_scalar(duckdb_function_info info, duckdb_data_chunk inp
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -2691,6 +2673,7 @@ static void ducknng_recv_scalar(duckdb_function_info info, duckdb_data_chunk inp
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
         int32_t timeout_ms = arg_int32(duckdb_data_chunk_get_vector(input, 1), row, 5000);
@@ -2726,6 +2709,7 @@ static void ducknng_subscribe_scalar(duckdb_function_info info, duckdb_data_chun
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -2763,6 +2747,7 @@ static void ducknng_unsubscribe_scalar(duckdb_function_info info, duckdb_data_ch
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -2800,6 +2785,7 @@ static void ducknng_request_raw_scalar(duckdb_function_info info, duckdb_data_ch
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
         idx_t payload_len = 0;
@@ -2833,6 +2819,7 @@ static void ducknng_request_socket_scalar(duckdb_function_info info, duckdb_data
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
         idx_t payload_len = 0;
@@ -2892,6 +2879,7 @@ static void ducknng_request_raw_aio_scalar(duckdb_function_info info, duckdb_dat
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -2930,6 +2918,7 @@ static void ducknng_get_rpc_manifest_raw_aio_scalar(duckdb_function_info info, d
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -2962,6 +2951,7 @@ static void ducknng_run_rpc_raw_aio_scalar(duckdb_function_info info, duckdb_dat
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -2998,6 +2988,7 @@ static void ducknng_ncurl_aio_scalar(duckdb_function_info info, duckdb_data_chun
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         char *url = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
@@ -3037,6 +3028,7 @@ static void ducknng_request_socket_raw_aio_scalar(duckdb_function_info info, duc
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -3079,6 +3071,7 @@ static void ducknng_send_socket_raw_aio_scalar(duckdb_function_info info, duckdb
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -3120,6 +3113,7 @@ static void ducknng_recv_socket_raw_aio_scalar(duckdb_function_info info, duckdb
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     uint64_t *out = (uint64_t *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t socket_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -3166,6 +3160,7 @@ static void ducknng_aio_cancel_scalar(duckdb_function_info info, duckdb_data_chu
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t aio_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -3186,6 +3181,7 @@ static void ducknng_aio_drop_scalar(duckdb_function_info info, duckdb_data_chunk
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t row;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
     bool *out = (bool *)duckdb_vector_get_data(output);
     for (row = 0; row < count; row++) {
         uint64_t aio_id = arg_u64(duckdb_data_chunk_get_vector(input, 0), row, 0);
@@ -4009,6 +4005,8 @@ static void ducknng_query_rpc_bind(duckdb_bind_info info) {
     idx_t col;
     uint64_t tls_config_id;
     const ducknng_tls_opts *tls_opts = NULL;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     if (duckdb_bind_get_parameter_count(info) != 3) {
         duckdb_bind_set_error(info, "ducknng: ducknng_query_rpc(url, sql, tls_config_id) requires exactly three parameters");
         return;
@@ -4028,7 +4026,7 @@ static void ducknng_query_rpc_bind(duckdb_bind_info info) {
         duckdb_bind_set_error(info, "ducknng: ducknng_query_rpc(url, sql, tls_config_id) requires non-empty url and sql");
         return;
     }
-    if (ducknng_lookup_tls_opts((ducknng_sql_context *)duckdb_bind_get_extra_info(info), tls_config_id, &tls_opts, &errmsg) != 0) {
+    if (ducknng_lookup_tls_opts(ctx, tls_config_id, &tls_opts, &errmsg) != 0) {
         duckdb_free(url);
         duckdb_free(sql);
         duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: tls config not found");
@@ -4169,6 +4167,8 @@ static void ducknng_get_rpc_manifest_bind(duckdb_bind_info info) {
     char *errmsg = NULL;
     nng_msg *resp_msg = NULL;
     ducknng_frame frame;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     bind = (ducknng_manifest_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
@@ -4184,7 +4184,7 @@ static void ducknng_get_rpc_manifest_bind(duckdb_bind_info info) {
     if (!url || !url[0]) {
         bind->ok = false;
         bind->error = ducknng_strdup("ducknng: remote manifest URL must not be NULL or empty");
-    } else if (ducknng_lookup_tls_opts((ducknng_sql_context *)duckdb_bind_get_extra_info(info), tls_config_id, &tls_opts, &errmsg) != 0) {
+    } else if (ducknng_lookup_tls_opts(ctx, tls_config_id, &tls_opts, &errmsg) != 0) {
         bind->ok = false;
         bind->error = errmsg ? errmsg : ducknng_strdup("ducknng: tls config not found");
         errmsg = NULL;
@@ -4259,6 +4259,8 @@ static void ducknng_run_rpc_bind(duckdb_bind_info info) {
     char *errmsg = NULL;
     nng_msg *resp_msg = NULL;
     ducknng_frame frame;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     bind = (ducknng_exec_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
@@ -4277,7 +4279,7 @@ static void ducknng_run_rpc_bind(duckdb_bind_info info) {
     if (!url || !url[0] || !sql || !sql[0]) {
         bind->ok = false;
         bind->error = ducknng_strdup("ducknng: remote exec URL and SQL must not be NULL or empty");
-    } else if (ducknng_lookup_tls_opts((ducknng_sql_context *)duckdb_bind_get_extra_info(info), tls_config_id, &tls_opts, &errmsg) != 0) {
+    } else if (ducknng_lookup_tls_opts(ctx, tls_config_id, &tls_opts, &errmsg) != 0) {
         bind->ok = false;
         bind->error = errmsg ? errmsg : ducknng_strdup("ducknng: tls config not found");
         errmsg = NULL;
@@ -4416,13 +4418,15 @@ static void ducknng_open_query_bind(duckdb_bind_info info) {
     duckdb_value batch_rows_val;
     duckdb_value batch_bytes_val;
     duckdb_value tls_val;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     bind = (ducknng_session_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
     }
     memset(bind, 0, sizeof(*bind));
-    bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    bind->ctx = ctx;
     url_val = duckdb_bind_get_parameter(info, 0);
     sql_val = duckdb_bind_get_parameter(info, 1);
     batch_rows_val = duckdb_bind_get_parameter(info, 2);
@@ -4456,13 +4460,15 @@ static void ducknng_close_query_bind(duckdb_bind_info info) {
     duckdb_value session_val;
     duckdb_value token_val;
     duckdb_value tls_val;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     bind = (ducknng_session_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
     }
     memset(bind, 0, sizeof(*bind));
-    bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    bind->ctx = ctx;
     url_val = duckdb_bind_get_parameter(info, 0);
     session_val = duckdb_bind_get_parameter(info, 1);
     token_val = duckdb_bind_get_parameter(info, 2);
@@ -4493,13 +4499,15 @@ static void ducknng_cancel_query_bind(duckdb_bind_info info) {
     duckdb_value session_val;
     duckdb_value token_val;
     duckdb_value tls_val;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     bind = (ducknng_session_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
     }
     memset(bind, 0, sizeof(*bind));
-    bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    bind->ctx = ctx;
     url_val = duckdb_bind_get_parameter(info, 0);
     session_val = duckdb_bind_get_parameter(info, 1);
     token_val = duckdb_bind_get_parameter(info, 2);
@@ -4533,13 +4541,15 @@ static void ducknng_fetch_query_bind(duckdb_bind_info info) {
     duckdb_value batch_rows_val;
     duckdb_value batch_bytes_val;
     duckdb_value tls_val;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     bind = (ducknng_session_result_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
     }
     memset(bind, 0, sizeof(*bind));
-    bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    bind->ctx = ctx;
     url_val = duckdb_bind_get_parameter(info, 0);
     session_val = duckdb_bind_get_parameter(info, 1);
     token_val = duckdb_bind_get_parameter(info, 2);
@@ -4774,6 +4784,7 @@ static void ducknng_request_bind(duckdb_bind_info info) {
     int32_t timeout_ms;
     uint64_t tls_config_id;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     const ducknng_tls_opts *tls_opts = NULL;
     char *errmsg = NULL;
     bind = (ducknng_request_bind_data *)duckdb_malloc(sizeof(*bind));
@@ -4817,6 +4828,7 @@ static void ducknng_request_bind(duckdb_bind_info info) {
 
 static void ducknng_request_socket_bind(duckdb_bind_info info) {
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     ducknng_request_bind_data *bind;
     duckdb_logical_type type;
     duckdb_value socket_val;
@@ -4898,6 +4910,7 @@ static void ducknng_ncurl_bind(duckdb_bind_info info) {
     uint64_t tls_config_id;
     const ducknng_tls_opts *tls_opts = NULL;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     char *errmsg = NULL;
     uint16_t status = 0;
     size_t body_len = 0;
@@ -5469,6 +5482,7 @@ static void ducknng_ncurl_table_bind(duckdb_bind_info info) {
     uint64_t tls_config_id;
     const ducknng_tls_opts *tls_opts = NULL;
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     char *errmsg = NULL;
     uint16_t status = 0;
     char *resp_headers_json = NULL;
@@ -5769,13 +5783,15 @@ static void ducknng_aio_collect_bind(duckdb_bind_info info) {
     duckdb_value aio_ids_val;
     duckdb_value wait_val;
     idx_t i;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    if (ducknng_reject_table_inside_authorizer(info, ctx)) return;
     bind = (ducknng_aio_collect_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
     }
     memset(bind, 0, sizeof(*bind));
-    bind->ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    bind->ctx = ctx;
     aio_ids_val = duckdb_bind_get_parameter(info, 0);
     wait_val = duckdb_bind_get_parameter(info, 1);
     bind->wait_ms = duckdb_get_int32(wait_val);
@@ -6209,189 +6225,6 @@ static int register_ncurl_aio_collect_macro(duckdb_connection con) {
     return 1;
 }
 
-static char *ducknng_sql_sockaddr_addr_dup(const nng_sockaddr *addr, char **out_ip, int32_t *out_port) {
-    char ipbuf[INET6_ADDRSTRLEN];
-    char addrbuf[INET6_ADDRSTRLEN + 32];
-    const char *ip = NULL;
-    int32_t port = 0;
-    if (out_ip) *out_ip = NULL;
-    if (out_port) *out_port = 0;
-    if (!addr) return NULL;
-    memset(ipbuf, 0, sizeof(ipbuf));
-    memset(addrbuf, 0, sizeof(addrbuf));
-    if (addr->s_family == NNG_AF_INET) {
-        ip = inet_ntop(AF_INET, &addr->s_in.sa_addr, ipbuf, sizeof(ipbuf));
-        port = (int32_t)ntohs(addr->s_in.sa_port);
-        if (!ip) return NULL;
-        snprintf(addrbuf, sizeof(addrbuf), "%s:%d", ipbuf, (int)port);
-        if (out_ip) *out_ip = ducknng_strdup(ipbuf);
-        if (out_port) *out_port = port;
-        return ducknng_strdup(addrbuf);
-    }
-    if (addr->s_family == NNG_AF_INET6) {
-        ip = inet_ntop(AF_INET6, addr->s_in6.sa_addr, ipbuf, sizeof(ipbuf));
-        port = (int32_t)ntohs(addr->s_in6.sa_port);
-        if (!ip) return NULL;
-        snprintf(addrbuf, sizeof(addrbuf), "[%s]:%d", ipbuf, (int)port);
-        if (out_ip) *out_ip = ducknng_strdup(ipbuf);
-        if (out_port) *out_port = port;
-        return ducknng_strdup(addrbuf);
-    }
-    if (addr->s_family == NNG_AF_IPC) return ducknng_strdup(addr->s_ipc.sa_path);
-    if (addr->s_family == NNG_AF_INPROC) return ducknng_strdup(addr->s_inproc.sa_name);
-    snprintf(addrbuf, sizeof(addrbuf), "nng-family:%u", (unsigned)addr->s_family);
-    return ducknng_strdup(addrbuf);
-}
-
-static char *ducknng_sql_frame_method_dup(const ducknng_frame *frame) {
-    if (!frame) return NULL;
-    if (frame->type == DUCKNNG_RPC_MANIFEST) return ducknng_strdup("manifest");
-    if (frame->type == DUCKNNG_RPC_CALL && frame->name && frame->name_len > 0) {
-        return ducknng_dup_bytes(frame->name, frame->name_len);
-    }
-    return NULL;
-}
-
-static char *ducknng_sql_frame_type_dup(const ducknng_frame *frame) {
-    if (!frame) return NULL;
-    switch (frame->type) {
-    case DUCKNNG_RPC_MANIFEST: return ducknng_strdup("manifest");
-    case DUCKNNG_RPC_CALL: return ducknng_strdup("call");
-    case DUCKNNG_RPC_RESULT: return ducknng_strdup("result");
-    case DUCKNNG_RPC_ERROR: return ducknng_strdup("error");
-    case DUCKNNG_RPC_EVENT: return ducknng_strdup("event");
-    default: return ducknng_strdup("unknown");
-    }
-}
-
-static void ducknng_auth_context_bind(duckdb_bind_info info) {
-    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
-    const ducknng_authorizer_context *auth_ctx = NULL;
-    ducknng_auth_context_bind_data *bind;
-    duckdb_logical_type type;
-    if (!ctx || !ctx->rt) {
-        duckdb_bind_set_error(info, "ducknng: missing runtime");
-        return;
-    }
-    bind = (ducknng_auth_context_bind_data *)duckdb_malloc(sizeof(*bind));
-    if (!bind) {
-        duckdb_bind_set_error(info, "ducknng: out of memory");
-        return;
-    }
-    memset(bind, 0, sizeof(*bind));
-    auth_ctx = ducknng_runtime_current_thread_authorizer_context_get(ctx->rt);
-    if (auth_ctx && auth_ctx->svc) {
-        ducknng_transport_url parsed;
-        char *parse_err = NULL;
-        ducknng_transport_family family = auth_ctx->transport_family;
-        ducknng_transport_scheme scheme = auth_ctx->scheme;
-        ducknng_transport_url_init(&parsed);
-        if ((family == DUCKNNG_TRANSPORT_FAMILY_UNKNOWN || scheme == DUCKNNG_TRANSPORT_SCHEME_UNKNOWN) &&
-            auth_ctx->svc->listen_url && ducknng_transport_url_parse(auth_ctx->svc->listen_url, &parsed, &parse_err) == 0) {
-            if (family == DUCKNNG_TRANSPORT_FAMILY_UNKNOWN) family = parsed.family;
-            if (scheme == DUCKNNG_TRANSPORT_SCHEME_UNKNOWN) scheme = parsed.scheme;
-        }
-        if (parse_err) duckdb_free(parse_err);
-        bind->row_count = 1;
-        bind->phase = ducknng_strdup(auth_ctx->phase ? auth_ctx->phase : "rpc_request");
-        bind->service_name = auth_ctx->svc->name ? ducknng_strdup(auth_ctx->svc->name) : NULL;
-        bind->transport_family = ducknng_strdup(ducknng_transport_family_name(family));
-        bind->scheme = ducknng_strdup(ducknng_transport_scheme_name(scheme));
-        bind->listen = ducknng_service_resolved_listen(auth_ctx->svc) ? ducknng_strdup(ducknng_service_resolved_listen(auth_ctx->svc)) : NULL;
-        bind->remote_addr = ducknng_sql_sockaddr_addr_dup(auth_ctx->remote_addr, &bind->remote_ip, &bind->remote_port);
-        bind->tls_verified = auth_ctx->caller_identity && auth_ctx->caller_identity[0];
-        bind->peer_identity = auth_ctx->caller_identity ? ducknng_strdup(auth_ctx->caller_identity) : NULL;
-        bind->peer_allowlist_active = ducknng_service_peer_allowlist_active(auth_ctx->svc) ? true : false;
-        bind->ip_allowlist_active = ducknng_service_ip_allowlist_active(auth_ctx->svc) ? true : false;
-        bind->sql_authorizer_active = ducknng_service_authorizer_active(auth_ctx->svc) ? true : false;
-        bind->http_method = auth_ctx->http_method ? ducknng_strdup(auth_ctx->http_method) : NULL;
-        bind->http_path = auth_ctx->http_path ? ducknng_strdup(auth_ctx->http_path) : NULL;
-        bind->content_type = auth_ctx->content_type ? ducknng_strdup(auth_ctx->content_type) : NULL;
-        bind->body_bytes = auth_ctx->body_bytes;
-        bind->rpc_method = ducknng_sql_frame_method_dup(auth_ctx->frame);
-        bind->rpc_type = ducknng_sql_frame_type_dup(auth_ctx->frame);
-        bind->payload_bytes = auth_ctx->frame ? auth_ctx->frame->payload_len : 0;
-    }
-
-    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
-    duckdb_bind_add_result_column(info, "phase", type);
-    duckdb_bind_add_result_column(info, "service_name", type);
-    duckdb_bind_add_result_column(info, "transport_family", type);
-    duckdb_bind_add_result_column(info, "scheme", type);
-    duckdb_bind_add_result_column(info, "listen", type);
-    duckdb_bind_add_result_column(info, "remote_addr", type);
-    duckdb_bind_add_result_column(info, "remote_ip", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_INTEGER);
-    duckdb_bind_add_result_column(info, "remote_port", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
-    duckdb_bind_add_result_column(info, "tls_verified", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
-    duckdb_bind_add_result_column(info, "peer_identity", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
-    duckdb_bind_add_result_column(info, "peer_allowlist_active", type);
-    duckdb_bind_add_result_column(info, "ip_allowlist_active", type);
-    duckdb_bind_add_result_column(info, "sql_authorizer_active", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
-    duckdb_bind_add_result_column(info, "http_method", type);
-    duckdb_bind_add_result_column(info, "http_path", type);
-    duckdb_bind_add_result_column(info, "content_type", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
-    duckdb_bind_add_result_column(info, "body_bytes", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
-    duckdb_bind_add_result_column(info, "rpc_method", type);
-    duckdb_bind_add_result_column(info, "rpc_type", type);
-    duckdb_destroy_logical_type(&type);
-    type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
-    duckdb_bind_add_result_column(info, "payload_bytes", type);
-    duckdb_destroy_logical_type(&type);
-
-    duckdb_bind_set_bind_data(info, bind, destroy_auth_context_bind_data);
-    duckdb_bind_set_cardinality(info, bind->row_count, true);
-}
-
-static void ducknng_auth_context_scan(duckdb_function_info info, duckdb_data_chunk output) {
-    ducknng_single_row_init_data *init = (ducknng_single_row_init_data *)duckdb_function_get_init_data(info);
-    ducknng_auth_context_bind_data *bind = (ducknng_auth_context_bind_data *)duckdb_function_get_bind_data(info);
-    if (!init || !bind || init->emitted || bind->row_count == 0) {
-        duckdb_data_chunk_set_size(output, 0);
-        return;
-    }
-#define ASSIGN_AUTH_STRING(IDX, VALUE) do { \
-        if ((VALUE)) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, (IDX)), 0, (VALUE)); \
-        else set_null(duckdb_data_chunk_get_vector(output, (IDX)), 0); \
-    } while (0)
-    ASSIGN_AUTH_STRING(0, bind->phase);
-    ASSIGN_AUTH_STRING(1, bind->service_name);
-    ASSIGN_AUTH_STRING(2, bind->transport_family);
-    ASSIGN_AUTH_STRING(3, bind->scheme);
-    ASSIGN_AUTH_STRING(4, bind->listen);
-    ASSIGN_AUTH_STRING(5, bind->remote_addr);
-    ASSIGN_AUTH_STRING(6, bind->remote_ip);
-    ((int32_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 7)))[0] = bind->remote_port;
-    ((bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 8)))[0] = bind->tls_verified;
-    ASSIGN_AUTH_STRING(9, bind->peer_identity);
-    ((bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 10)))[0] = bind->peer_allowlist_active;
-    ((bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 11)))[0] = bind->ip_allowlist_active;
-    ((bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 12)))[0] = bind->sql_authorizer_active;
-    ASSIGN_AUTH_STRING(13, bind->http_method);
-    ASSIGN_AUTH_STRING(14, bind->http_path);
-    ASSIGN_AUTH_STRING(15, bind->content_type);
-    ((uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 16)))[0] = bind->body_bytes;
-    ASSIGN_AUTH_STRING(17, bind->rpc_method);
-    ASSIGN_AUTH_STRING(18, bind->rpc_type);
-    ((uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 19)))[0] = bind->payload_bytes;
-#undef ASSIGN_AUTH_STRING
-    init->emitted = 1;
-    duckdb_data_chunk_set_size(output, 1);
-}
-
 static void ducknng_servers_bind(duckdb_bind_info info) {
     ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
     ducknng_servers_bind_data *bind;
@@ -6427,6 +6260,7 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
             bind->rows[i].contexts = svc ? svc->ncontexts : 0;
             bind->rows[i].running = svc ? (bool)svc->running : false;
             bind->rows[i].sessions = svc ? (uint64_t)atomic_load_explicit(&svc->session_count_visible, memory_order_acquire) : 0;
+            bind->rows[i].max_open_sessions = svc ? ducknng_service_max_open_sessions(svc) : 0;
             bind->rows[i].tls_enabled = svc ? (bool)svc->tls_enabled : false;
             bind->rows[i].tls_auth_mode = svc ? svc->tls_opts.auth_mode : 0;
             bind->rows[i].peer_identity_required = svc ? (bool)ducknng_service_requires_peer_identity(svc) : false;
@@ -6454,6 +6288,7 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
     duckdb_destroy_logical_type(&type);
     type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
     duckdb_bind_add_result_column(info, "sessions", type);
+    duckdb_bind_add_result_column(info, "max_open_sessions", type);
     duckdb_destroy_logical_type(&type);
     type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
     duckdb_bind_add_result_column(info, "tls_enabled", type);
@@ -6501,6 +6336,7 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     duckdb_vector vec_contexts;
     duckdb_vector vec_running;
     duckdb_vector vec_sessions;
+    duckdb_vector vec_max_open_sessions;
     duckdb_vector vec_tls_enabled;
     duckdb_vector vec_tls_auth_mode;
     duckdb_vector vec_peer_identity_required;
@@ -6513,6 +6349,7 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     int32_t *contexts;
     bool *running;
     uint64_t *sessions;
+    uint64_t *max_open_sessions;
     bool *tls_enabled;
     int32_t *tls_auth_mode;
     bool *peer_identity_required;
@@ -6535,19 +6372,21 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     vec_contexts = duckdb_data_chunk_get_vector(output, 3);
     vec_running = duckdb_data_chunk_get_vector(output, 4);
     vec_sessions = duckdb_data_chunk_get_vector(output, 5);
-    vec_tls_enabled = duckdb_data_chunk_get_vector(output, 6);
-    vec_tls_auth_mode = duckdb_data_chunk_get_vector(output, 7);
-    vec_peer_identity_required = duckdb_data_chunk_get_vector(output, 8);
-    vec_peer_allowlist_active = duckdb_data_chunk_get_vector(output, 9);
-    vec_ip_allowlist_active = duckdb_data_chunk_get_vector(output, 10);
-    vec_sql_authorizer_active = duckdb_data_chunk_get_vector(output, 11);
-    vec_peer_allowlist_count = duckdb_data_chunk_get_vector(output, 12);
-    vec_ip_allowlist_count = duckdb_data_chunk_get_vector(output, 13);
+    vec_max_open_sessions = duckdb_data_chunk_get_vector(output, 6);
+    vec_tls_enabled = duckdb_data_chunk_get_vector(output, 7);
+    vec_tls_auth_mode = duckdb_data_chunk_get_vector(output, 8);
+    vec_peer_identity_required = duckdb_data_chunk_get_vector(output, 9);
+    vec_peer_allowlist_active = duckdb_data_chunk_get_vector(output, 10);
+    vec_ip_allowlist_active = duckdb_data_chunk_get_vector(output, 11);
+    vec_sql_authorizer_active = duckdb_data_chunk_get_vector(output, 12);
+    vec_peer_allowlist_count = duckdb_data_chunk_get_vector(output, 13);
+    vec_ip_allowlist_count = duckdb_data_chunk_get_vector(output, 14);
 
     service_ids = (uint64_t *)duckdb_vector_get_data(vec_service_id);
     contexts = (int32_t *)duckdb_vector_get_data(vec_contexts);
     running = (bool *)duckdb_vector_get_data(vec_running);
     sessions = (uint64_t *)duckdb_vector_get_data(vec_sessions);
+    max_open_sessions = (uint64_t *)duckdb_vector_get_data(vec_max_open_sessions);
     tls_enabled = (bool *)duckdb_vector_get_data(vec_tls_enabled);
     tls_auth_mode = (int32_t *)duckdb_vector_get_data(vec_tls_auth_mode);
     peer_identity_required = (bool *)duckdb_vector_get_data(vec_peer_identity_required);
@@ -6563,6 +6402,7 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
         contexts[i] = row->contexts;
         running[i] = row->running;
         sessions[i] = row->sessions;
+        max_open_sessions[i] = row->max_open_sessions;
         tls_enabled[i] = row->tls_enabled;
         tls_auth_mode[i] = row->tls_auth_mode;
         peer_identity_required[i] = row->peer_identity_required;
@@ -7037,24 +6877,6 @@ static int register_named_methods_table(duckdb_connection con, ducknng_sql_conte
     return 1;
 }
 
-static int register_auth_context_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
-    duckdb_table_function tf;
-    if (!ctx || !ctx->rt) return 0;
-    tf = duckdb_create_table_function();
-    if (!tf) return 0;
-    duckdb_table_function_set_name(tf, name);
-    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
-    duckdb_table_function_set_bind(tf, ducknng_auth_context_bind);
-    duckdb_table_function_set_init(tf, ducknng_single_row_init);
-    duckdb_table_function_set_function(tf, ducknng_auth_context_scan);
-    if (duckdb_register_table_function(con, tf) == DuckDBError) {
-        duckdb_destroy_table_function(&tf);
-        return 0;
-    }
-    duckdb_destroy_table_function(&tf);
-    return 1;
-}
-
 static int register_remote_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     duckdb_logical_type type;
@@ -7482,6 +7304,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type tls_id_types[1] = {DUCKDB_TYPE_UBIGINT};
     duckdb_type tls_allowlist_types[2] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR};
     duckdb_type service_allowlist_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR};
+    duckdb_type service_limits_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT};
     duckdb_type method_name_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type method_auth_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_BOOLEAN};
     duckdb_type method_family_types[1] = {DUCKDB_TYPE_VARCHAR};
@@ -7500,7 +7323,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_set_tls_peer_allowlist", 2, ducknng_set_tls_peer_allowlist_scalar, &ctx, tls_allowlist_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_set_service_peer_allowlist", 2, ducknng_set_service_peer_allowlist_scalar, &ctx, service_allowlist_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_set_service_ip_allowlist", 2, ducknng_set_service_ip_allowlist_scalar, &ctx, service_allowlist_types, DUCKDB_TYPE_BOOLEAN)) return 0;
-    if (!register_scalar(connection, "ducknng_set_service_authorizer", 2, ducknng_set_service_authorizer_scalar, &ctx, service_allowlist_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(connection, "ducknng_set_service_limits", 2, ducknng_set_service_limits_scalar, &ctx, service_limits_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_register_exec_method", 0, ducknng_register_exec_method_scalar, &ctx, NULL, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_register_exec_method", 1, ducknng_register_exec_method_scalar, &ctx, register_exec_auth_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_set_method_auth", 2, ducknng_set_method_auth_scalar, &ctx, method_auth_types, DUCKDB_TYPE_BOOLEAN)) return 0;
@@ -7539,7 +7362,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_named_sockets_table(connection, &ctx, "ducknng_list_sockets")) return 0;
     if (!register_named_tls_configs_table(connection, &ctx, "ducknng_list_tls_configs")) return 0;
     if (!register_named_methods_table(connection, &ctx, "ducknng_list_methods")) return 0;
-    if (!register_auth_context_table_named(connection, &ctx, "ducknng_auth_context")) return 0;
+    if (!ducknng_register_sql_auth(connection, &ctx)) return 0;
     if (!register_remote_table_named(connection, &ctx, "ducknng_query_rpc")) return 0;
     if (!register_manifest_result_table_named(connection, &ctx, "ducknng_get_rpc_manifest")) return 0;
     if (!register_exec_result_table_named(connection, &ctx, "ducknng_run_rpc")) return 0;

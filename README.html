@@ -879,7 +879,7 @@ Expand the full generated function catalog
 <td><code>ducknng_list_servers</code></td>
 <td>table</td>
 <td></td>
-<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
+<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, max_open_sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
 <td>List registered ducknng services.</td>
 </tr>
 </tbody>
@@ -1106,6 +1106,13 @@ service.</td>
 service.</td>
 </tr>
 <tr class="even">
+<td><code>ducknng_set_service_limits</code></td>
+<td>scalar</td>
+<td><code>name, max_open_sessions</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Set basic service resource limits for a running service.</td>
+</tr>
+<tr class="odd">
 <td><code>ducknng_auth_context</code></td>
 <td>table</td>
 <td></td>
@@ -1113,7 +1120,7 @@ service.</td>
 <td>Expose the current request context to a SQL authorization
 callback.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>ducknng_set_service_authorizer</code></td>
 <td>scalar</td>
 <td><code>name, authorizer_sql</code></td>
@@ -1121,7 +1128,7 @@ callback.</td>
 <td>Install or clear a service-level SQL authorization callback
 evaluated uniformly for framed RPC requests before method dispatch.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>ducknng_self_signed_tls_config</code></td>
 <td>scalar</td>
 <td><code>common_name, valid_days, auth_mode</code></td>
@@ -1129,14 +1136,14 @@ evaluated uniformly for framed RPC requests before method dispatch.</td>
 <td>Generate a self-signed development certificate and register it as a
 TLS config handle.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>ducknng_tls_config_from_pem</code></td>
 <td>scalar</td>
 <td><code>cert_pem, key_pem, ca_pem, password, auth_mode</code></td>
 <td><code>UBIGINT</code></td>
 <td>Register a TLS config handle from in-memory PEM material.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>ducknng_tls_config_from_files</code></td>
 <td>scalar</td>
 <td><code>cert_key_file, ca_file, password, auth_mode</code></td>
@@ -2508,9 +2515,13 @@ discovery without unregistering the method.</p>
 <p>The built-in mTLS, peer-identity allowlist, and IP/CIDR allowlist
 checks are the fast C path for common denials. They run before the
 flexible SQL callback and, for NNG transports, can reject new pipes at
-<code>NNG_PIPE_EV_ADD_PRE</code> without entering DuckDB. For policy
-that depends on tables, tenants, method names, headers, or
-deployment-specific rules, install a service-level SQL authorizer with
+<code>NNG_PIPE_EV_ADD_PRE</code> without entering DuckDB. Basic service
+resource limits also start in C:
+<code>ducknng_set_service_limits(name, max_open_sessions)</code> caps
+concurrently open query sessions for a service, and <code>0</code>
+clears that first limit. For policy that depends on tables, tenants,
+method names, headers, or deployment-specific rules, install a
+service-level SQL authorizer with
 <code>ducknng_set_service_authorizer(name, authorizer_sql)</code>. The
 callback sees one row from <code>ducknng_auth_context()</code> while it
 runs and must return exactly one row with a Boolean <code>allow</code>
@@ -2859,7 +2870,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_3246c26572644.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_354d160ee90d1.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
@@ -2931,12 +2942,16 @@ the trust root is not broader than the application;</li>
 <li>set exact peer-identity and/or IP/CIDR allowlists before exposure
 with <code>ducknng_set_tls_peer_allowlist(...)</code> and the optional
 <code>ip_allowlist_json</code> startup argument;</li>
+<li>set basic service resource limits such as
+<code>ducknng_set_service_limits(name, max_open_sessions)</code> before
+exposing query sessions;</li>
 <li>install a service-level SQL authorizer with
 <code>ducknng_set_service_authorizer(...)</code> when admission depends
 on deployment tables, tenants, method names, or HTTP metadata;</li>
 <li>optionally update a running service dynamically with
 <code>ducknng_set_service_peer_allowlist(...)</code>,
-<code>ducknng_set_service_ip_allowlist(...)</code>, and
+<code>ducknng_set_service_ip_allowlist(...)</code>,
+<code>ducknng_set_service_limits(...)</code>, and
 <code>ducknng_set_service_authorizer(...)</code>.</li>
 </ol>
 <p>The relevant identity strings currently come from verified TLS peer
@@ -2976,14 +2991,17 @@ active deny-all.</p>
 <span id="cb42-24"><a href="#cb42-24" tabindex="-1"></a>  <span class="st">&#39;[&quot;127.0.0.1/32&quot;,&quot;10.0.0.0/8&quot;]&#39;</span></span>
 <span id="cb42-25"><a href="#cb42-25" tabindex="-1"></a>);</span>
 <span id="cb42-26"><a href="#cb42-26" tabindex="-1"></a></span>
-<span id="cb42-27"><a href="#cb42-27" tabindex="-1"></a><span class="co">-- Add a flexible SQL callback when policy depends on request context.</span></span>
-<span id="cb42-28"><a href="#cb42-28" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_set_service_authorizer(</span>
-<span id="cb42-29"><a href="#cb42-29" tabindex="-1"></a>  <span class="st">&#39;sql_http&#39;</span>,</span>
-<span id="cb42-30"><a href="#cb42-30" tabindex="-1"></a>  <span class="st">&#39;SELECT remote_ip = </span><span class="ch">&#39;&#39;</span><span class="st">127.0.0.1</span><span class="ch">&#39;&#39;</span><span class="st"> AND rpc_method = </span><span class="ch">&#39;&#39;</span><span class="st">manifest</span><span class="ch">&#39;&#39;</span><span class="st"> AS allow,</span></span>
-<span id="cb42-31"><a href="#cb42-31" tabindex="-1"></a><span class="st">          403 AS status,</span></span>
-<span id="cb42-32"><a href="#cb42-32" tabindex="-1"></a><span class="st">          </span><span class="ch">&#39;&#39;</span><span class="st">not authorized</span><span class="ch">&#39;&#39;</span><span class="st"> AS reason</span></span>
-<span id="cb42-33"><a href="#cb42-33" tabindex="-1"></a><span class="st">   FROM ducknng_auth_context()&#39;</span></span>
-<span id="cb42-34"><a href="#cb42-34" tabindex="-1"></a>);</span></code></pre></div>
+<span id="cb42-27"><a href="#cb42-27" tabindex="-1"></a><span class="co">-- Set a basic service-side resource limit for query sessions.</span></span>
+<span id="cb42-28"><a href="#cb42-28" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_set_service_limits(<span class="st">&#39;sql_http&#39;</span>, <span class="dv">16</span>:<span class="ch">:UBIGINT</span>);</span>
+<span id="cb42-29"><a href="#cb42-29" tabindex="-1"></a></span>
+<span id="cb42-30"><a href="#cb42-30" tabindex="-1"></a><span class="co">-- Add a flexible SQL callback when policy depends on request context.</span></span>
+<span id="cb42-31"><a href="#cb42-31" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_set_service_authorizer(</span>
+<span id="cb42-32"><a href="#cb42-32" tabindex="-1"></a>  <span class="st">&#39;sql_http&#39;</span>,</span>
+<span id="cb42-33"><a href="#cb42-33" tabindex="-1"></a>  <span class="st">&#39;SELECT remote_ip = </span><span class="ch">&#39;&#39;</span><span class="st">127.0.0.1</span><span class="ch">&#39;&#39;</span><span class="st"> AND rpc_method = </span><span class="ch">&#39;&#39;</span><span class="st">manifest</span><span class="ch">&#39;&#39;</span><span class="st"> AS allow,</span></span>
+<span id="cb42-34"><a href="#cb42-34" tabindex="-1"></a><span class="st">          403 AS status,</span></span>
+<span id="cb42-35"><a href="#cb42-35" tabindex="-1"></a><span class="st">          </span><span class="ch">&#39;&#39;</span><span class="st">not authorized</span><span class="ch">&#39;&#39;</span><span class="st"> AS reason</span></span>
+<span id="cb42-36"><a href="#cb42-36" tabindex="-1"></a><span class="st">   FROM ducknng_auth_context()&#39;</span></span>
+<span id="cb42-37"><a href="#cb42-37" tabindex="-1"></a>);</span></code></pre></div>
 <p>Transport-specific deployment notes:</p>
 <ul>
 <li><code>inproc://</code> is a same-process boundary. It is useful for

@@ -340,7 +340,7 @@ char *ducknng_method_registry_manifest_json(const ducknng_method_registry *regis
     size_t len = 0;
     size_t cap = 0;
     size_t i;
-    char numbuf[128];
+    char numbuf[512];
     if (!registry) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: missing method registry");
         return NULL;
@@ -378,8 +378,9 @@ char *ducknng_method_registry_manifest_json(const ducknng_method_registry *regis
         if (!append_text(&buf, &len, &cap,
                 security->sessions_bind_peer_identity_when_present ? "true" : "false")) goto oom;
         if (!append_text(&buf, &len, &cap, "}")) goto oom;
-        snprintf(numbuf, sizeof(numbuf), ",\"session_policy\":{\"idle_timeout_ms\":%llu,\"idle_timeout_owner\":\"server\"}",
-            (unsigned long long)security->session_idle_timeout_ms);
+        snprintf(numbuf, sizeof(numbuf), ",\"session_policy\":{\"idle_timeout_ms\":%llu,\"idle_timeout_owner\":\"server\",\"max_open_sessions\":%llu,\"max_open_sessions_owner\":\"server\"}",
+            (unsigned long long)security->session_idle_timeout_ms,
+            (unsigned long long)security->max_open_sessions);
         if (!append_text(&buf, &len, &cap, numbuf)) goto oom;
     }
     if (!append_text(&buf, &len, &cap, "},\"methods\":[")) goto oom;

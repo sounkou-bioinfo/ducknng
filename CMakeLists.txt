@@ -59,6 +59,7 @@ add_subdirectory(third_party/nng EXCLUDE_FROM_ALL)
 set(EXTENSION_SOURCES
     src/ducknng_extension.c
     src/ducknng_sql_api.c
+    src/ducknng_sql_auth.c
     src/ducknng_runtime.c
     src/ducknng_service.c
     src/ducknng_session.c

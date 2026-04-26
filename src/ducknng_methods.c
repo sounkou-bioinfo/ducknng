@@ -43,6 +43,7 @@ static int ducknng_method_manifest_handler(ducknng_service *svc,
         security.sql_authorizer_active = ducknng_service_authorizer_active(svc);
         security.sessions_bind_peer_identity_when_present = 1;
         security.session_idle_timeout_ms = svc->session_idle_ms;
+        security.max_open_sessions = ducknng_service_max_open_sessions(svc);
         security.peer_identity_format = "tls:san:<value>|tls:cn:<common-name>";
         ducknng_mutex_lock(&svc->rt->mu);
         json = ducknng_method_registry_manifest_json(&svc->rt->registry, "ducknng", "0.1.0",
