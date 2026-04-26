@@ -14,3 +14,4 @@ int ducknng_register_sql_tls(duckdb_connection con, ducknng_sql_context *ctx);
 int ducknng_register_sql_socket(duckdb_connection con, ducknng_sql_context *ctx);
 int ducknng_register_sql_aio(duckdb_connection con, ducknng_sql_context *ctx);
 int ducknng_register_sql_registry(duckdb_connection con, ducknng_sql_context *ctx);
+int ducknng_register_sql_session(duckdb_connection con, ducknng_sql_context *ctx);
