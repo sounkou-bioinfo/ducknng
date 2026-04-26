@@ -7363,6 +7363,7 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_named_tls_configs_table(connection, &ctx, "ducknng_list_tls_configs")) return 0;
     if (!register_named_methods_table(connection, &ctx, "ducknng_list_methods")) return 0;
     if (!ducknng_register_sql_auth(connection, &ctx)) return 0;
+    if (!ducknng_register_sql_monitor(connection, &ctx)) return 0;
     if (!register_remote_table_named(connection, &ctx, "ducknng_query_rpc")) return 0;
     if (!register_manifest_result_table_named(connection, &ctx, "ducknng_get_rpc_manifest")) return 0;
     if (!register_exec_result_table_named(connection, &ctx, "ducknng_run_rpc")) return 0;

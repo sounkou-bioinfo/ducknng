@@ -882,6 +882,13 @@ Expand the full generated function catalog
 <td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, max_open_sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
 <td>List registered ducknng services.</td>
 </tr>
+<tr class="even">
+<td><code>ducknng_read_monitor</code></td>
+<td>table</td>
+<td><code>name, after_seq, max_events</code></td>
+<td><code>TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)</code></td>
+<td>Read the bounded per-service NNG pipe monitor event stream.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="method-registry">Method Registry</h2>
@@ -2870,7 +2877,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_354d160ee90d1.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_369e15d10ff6f.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
@@ -3056,15 +3063,20 @@ addresses.</p>
 <code>ADD_PRE</code>, <code>ADD_POST</code>, and <code>REM_POST</code>
 pipe events; nanonext surfaces related tools as
 <code>pipe_notify()</code>, <code>monitor()</code>, and
-<code>read_monitor()</code>. Those primitives are a natural foundation
+<code>read_monitor()</code>. <code>ducknng</code> now records a bounded
+per-service NNG pipe event stream and exposes it with
+<code>ducknng_read_monitor(name, after_seq, max_events)</code>. That
+stream includes event sequence, timestamp, service, transport, pipe id,
+admission result for <code>ADD_PRE</code>, remote address, and verified
+peer identity when present. These primitives are a natural foundation
 for telemetry, connection counts, connection churn, per-service pipe
 event streams, presence/worker membership, dynamic routing,
-backpressure-aware scheduling, and other application-level event
-streams. Today <code>ducknng</code> uses the NNG primitive internally
-for admission and exposes aggregate service state through
-<code>ducknng_list_servers()</code>; a richer public
-pipe-monitoring/event SQL surface is intentionally separate future work
-rather than a new wire protocol.</p>
+backpressure-aware scheduling, mesh-style DuckDB service discovery,
+routing/forwarding demos, and other application-level event streams.
+HTTP/HTTPS framed RPC currently uses the same admission policy but does
+not expose NNG protocol-socket pipe events; a broader HTTP server
+framework can reuse the same request context and monitor concepts
+without changing the framed RPC wire protocol.</p>
 <h2 id="references">References</h2>
 <ul>
 <li><a href="https://nng.nanomsg.org/">NNG</a> for the underlying

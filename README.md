@@ -230,9 +230,10 @@ This file is generated from `function_catalog/functions.yaml`.
 
 ## Introspection
 
-| name                   | kind  | arguments | returns                                                                                                                                                                                                                                                                                                                                                                    | description                       |
-|------------------------|-------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
-| `ducknng_list_servers` | table |           | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, max_open_sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services. |
+| name                   | kind  | arguments                     | returns                                                                                                                                                                                                                                                                                                                                                                    | description                                                 |
+|------------------------|-------|-------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
+| `ducknng_list_servers` | table |                               | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, max_open_sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services.                           |
+| `ducknng_read_monitor` | table | `name, after_seq, max_events` | `TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)`                                                                                                                  | Read the bounded per-service NNG pipe monitor event stream. |
 
 ## Method Registry
 
@@ -1842,7 +1843,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_354d160ee90d1.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_369e15d10ff6f.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
@@ -2043,14 +2044,19 @@ remote addresses.
 The same pipe-event family is useful beyond admission. NNG exposes
 `ADD_PRE`, `ADD_POST`, and `REM_POST` pipe events; nanonext surfaces
 related tools as `pipe_notify()`, `monitor()`, and `read_monitor()`.
-Those primitives are a natural foundation for telemetry, connection
-counts, connection churn, per-service pipe event streams,
-presence/worker membership, dynamic routing, backpressure-aware
-scheduling, and other application-level event streams. Today `ducknng`
-uses the NNG primitive internally for admission and exposes aggregate
-service state through `ducknng_list_servers()`; a richer public
-pipe-monitoring/event SQL surface is intentionally separate future work
-rather than a new wire protocol.
+`ducknng` now records a bounded per-service NNG pipe event stream and
+exposes it with `ducknng_read_monitor(name, after_seq, max_events)`.
+That stream includes event sequence, timestamp, service, transport, pipe
+id, admission result for `ADD_PRE`, remote address, and verified peer
+identity when present. These primitives are a natural foundation for
+telemetry, connection counts, connection churn, per-service pipe event
+streams, presence/worker membership, dynamic routing, backpressure-aware
+scheduling, mesh-style DuckDB service discovery, routing/forwarding
+demos, and other application-level event streams. HTTP/HTTPS framed RPC
+currently uses the same admission policy but does not expose NNG
+protocol-socket pipe events; a broader HTTP server framework can reuse
+the same request context and monitor concepts without changing the
+framed RPC wire protocol.
 
 ## References
 

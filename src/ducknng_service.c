@@ -32,6 +32,35 @@ static void ducknng_service_clear_authorizer(ducknng_service *svc) {
     svc->authorizer_active = 0;
 }
 
+static void ducknng_pipe_event_reset(ducknng_pipe_event *event) {
+    if (!event) return;
+    if (event->event) duckdb_free(event->event);
+    if (event->remote_addr) duckdb_free(event->remote_addr);
+    if (event->remote_ip) duckdb_free(event->remote_ip);
+    if (event->peer_identity) duckdb_free(event->peer_identity);
+    memset(event, 0, sizeof(*event));
+}
+
+void ducknng_service_pipe_events_free(ducknng_pipe_event *events, size_t count) {
+    size_t i;
+    if (!events) return;
+    for (i = 0; i < count; i++) ducknng_pipe_event_reset(&events[i]);
+    duckdb_free(events);
+}
+
+static void ducknng_service_clear_pipe_events(ducknng_service *svc) {
+    size_t i;
+    if (!svc) return;
+    if (svc->pipe_events) {
+        for (i = 0; i < svc->pipe_event_cap; i++) ducknng_pipe_event_reset(&svc->pipe_events[i]);
+        duckdb_free(svc->pipe_events);
+    }
+    svc->pipe_events = NULL;
+    svc->pipe_event_start = 0;
+    svc->pipe_event_count = 0;
+    svc->pipe_event_cap = 0;
+}
+
 static void ducknng_json_skip_ws(const char **p) {
     while (p && *p && (**p == ' ' || **p == '\t' || **p == '\r' || **p == '\n')) (*p)++;
 }
@@ -279,6 +308,97 @@ static int ducknng_pipe_remote_addr(nng_pipe pipe, nng_sockaddr *out) {
     if (!out || pipe.id <= 0) return -1;
     memset(out, 0, sizeof(*out));
     return nng_pipe_get_addr(pipe, NNG_OPT_REMADDR, out) == 0 ? 0 : -1;
+}
+
+static char *ducknng_sockaddr_addr_dup(const nng_sockaddr *addr, char **out_ip, int32_t *out_port) {
+    char ipbuf[INET6_ADDRSTRLEN];
+    char addrbuf[INET6_ADDRSTRLEN + 32];
+    const char *ip = NULL;
+    int32_t port = 0;
+    if (out_ip) *out_ip = NULL;
+    if (out_port) *out_port = 0;
+    if (!addr) return NULL;
+    memset(ipbuf, 0, sizeof(ipbuf));
+    memset(addrbuf, 0, sizeof(addrbuf));
+    if (addr->s_family == NNG_AF_INET) {
+        ip = inet_ntop(AF_INET, &addr->s_in.sa_addr, ipbuf, sizeof(ipbuf));
+        port = (int32_t)ntohs(addr->s_in.sa_port);
+        if (!ip) return NULL;
+        snprintf(addrbuf, sizeof(addrbuf), "%s:%d", ipbuf, (int)port);
+        if (out_ip) *out_ip = ducknng_strdup(ipbuf);
+        if (out_port) *out_port = port;
+        return ducknng_strdup(addrbuf);
+    }
+    if (addr->s_family == NNG_AF_INET6) {
+        ip = inet_ntop(AF_INET6, addr->s_in6.sa_addr, ipbuf, sizeof(ipbuf));
+        port = (int32_t)ntohs(addr->s_in6.sa_port);
+        if (!ip) return NULL;
+        snprintf(addrbuf, sizeof(addrbuf), "[%s]:%d", ipbuf, (int)port);
+        if (out_ip) *out_ip = ducknng_strdup(ipbuf);
+        if (out_port) *out_port = port;
+        return ducknng_strdup(addrbuf);
+    }
+    if (addr->s_family == NNG_AF_IPC) return ducknng_strdup(addr->s_ipc.sa_path);
+    if (addr->s_family == NNG_AF_INPROC) return ducknng_strdup(addr->s_inproc.sa_name);
+    snprintf(addrbuf, sizeof(addrbuf), "nng-family:%u", (unsigned)addr->s_family);
+    return ducknng_strdup(addrbuf);
+}
+
+static int ducknng_pipe_event_copy(ducknng_pipe_event *dst, const ducknng_pipe_event *src) {
+    if (!dst || !src) return -1;
+    memset(dst, 0, sizeof(*dst));
+    *dst = *src;
+    dst->event = src->event ? ducknng_strdup(src->event) : NULL;
+    dst->remote_addr = src->remote_addr ? ducknng_strdup(src->remote_addr) : NULL;
+    dst->remote_ip = src->remote_ip ? ducknng_strdup(src->remote_ip) : NULL;
+    dst->peer_identity = src->peer_identity ? ducknng_strdup(src->peer_identity) : NULL;
+    if ((src->event && !dst->event) || (src->remote_addr && !dst->remote_addr) ||
+        (src->remote_ip && !dst->remote_ip) || (src->peer_identity && !dst->peer_identity)) {
+        ducknng_pipe_event_reset(dst);
+        return -1;
+    }
+    return 0;
+}
+
+static void ducknng_service_pipe_event_append(ducknng_service *svc, nng_pipe pipe,
+    const char *event_name, const nng_sockaddr *remote_addr, const char *identity, int admitted) {
+    ducknng_pipe_event event;
+    size_t idx;
+    if (!svc || !event_name) return;
+    memset(&event, 0, sizeof(event));
+    event.ts_ms = ducknng_now_ms();
+    event.pipe_id = pipe.id > 0 ? (uint64_t)pipe.id : 0;
+    event.event = ducknng_strdup(event_name);
+    event.admitted = admitted;
+    event.remote_addr = ducknng_sockaddr_addr_dup(remote_addr, &event.remote_ip, &event.remote_port);
+    event.peer_identity = identity && identity[0] ? ducknng_strdup(identity) : NULL;
+    if (!event.event || (identity && identity[0] && !event.peer_identity)) {
+        ducknng_pipe_event_reset(&event);
+        return;
+    }
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    if (!svc->pipe_events) {
+        svc->pipe_event_cap = 1024;
+        svc->pipe_events = (ducknng_pipe_event *)duckdb_malloc(sizeof(*svc->pipe_events) * svc->pipe_event_cap);
+        if (!svc->pipe_events) {
+            svc->pipe_event_cap = 0;
+            if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+            ducknng_pipe_event_reset(&event);
+            return;
+        }
+        memset(svc->pipe_events, 0, sizeof(*svc->pipe_events) * svc->pipe_event_cap);
+    }
+    if (svc->pipe_event_count < svc->pipe_event_cap) {
+        idx = (svc->pipe_event_start + svc->pipe_event_count) % svc->pipe_event_cap;
+        svc->pipe_event_count++;
+    } else {
+        idx = svc->pipe_event_start;
+        ducknng_pipe_event_reset(&svc->pipe_events[idx]);
+        svc->pipe_event_start = (svc->pipe_event_start + 1) % svc->pipe_event_cap;
+    }
+    event.seq = ++svc->next_pipe_event_seq;
+    svc->pipe_events[idx] = event;
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
 }
 
 void ducknng_authorizer_decision_init(ducknng_authorizer_decision *decision) {
@@ -898,6 +1018,7 @@ void ducknng_service_destroy(ducknng_service *svc) {
     ducknng_tls_opts_reset(&svc->tls_opts);
     ducknng_service_clear_ip_allowlist(svc);
     ducknng_service_clear_authorizer(svc);
+    ducknng_service_clear_pipe_events(svc);
     for (i = 0; i < session_count; i++) {
         if (sessions && sessions[i]) ducknng_session_destroy(sessions[i]);
     }
@@ -910,19 +1031,32 @@ void ducknng_service_destroy(ducknng_service *svc) {
     duckdb_free(svc);
 }
 
-static void ducknng_service_pipe_add_pre_cb(nng_pipe pipe, nng_pipe_ev ev, void *arg) {
+static const char *ducknng_pipe_event_name(nng_pipe_ev ev) {
+    switch (ev) {
+    case NNG_PIPE_EV_ADD_PRE: return "add_pre";
+    case NNG_PIPE_EV_ADD_POST: return "add_post";
+    case NNG_PIPE_EV_REM_POST: return "rem_post";
+    default: return "unknown";
+    }
+}
+
+static void ducknng_service_pipe_event_cb(nng_pipe pipe, nng_pipe_ev ev, void *arg) {
     ducknng_service *svc = (ducknng_service *)arg;
     char *identity = NULL;
     nng_sockaddr remote_addr;
     int have_remote_addr = 0;
-    int allowed = 1;
-    if (ev != NNG_PIPE_EV_ADD_PRE || !svc) return;
+    int allowed = ev == NNG_PIPE_EV_ADD_PRE ? 1 : -1;
+    if (!svc) return;
     identity = ducknng_pipe_verified_peer_identity(pipe);
     have_remote_addr = ducknng_pipe_remote_addr(pipe, &remote_addr) == 0;
-    allowed = ducknng_service_network_admission_check(svc, identity,
-        have_remote_addr ? &remote_addr : NULL, NULL) == 0;
+    if (ev == NNG_PIPE_EV_ADD_PRE) {
+        allowed = ducknng_service_network_admission_check(svc, identity,
+            have_remote_addr ? &remote_addr : NULL, NULL) == 0;
+    }
+    ducknng_service_pipe_event_append(svc, pipe, ducknng_pipe_event_name(ev),
+        have_remote_addr ? &remote_addr : NULL, identity, allowed);
     if (identity) duckdb_free(identity);
-    if (!allowed) (void)nng_pipe_close(pipe);
+    if (ev == NNG_PIPE_EV_ADD_PRE && !allowed) (void)nng_pipe_close(pipe);
 }
 
 int ducknng_service_start(ducknng_service *svc, char **errmsg) {
@@ -984,7 +1118,11 @@ int ducknng_service_start(ducknng_service *svc, char **errmsg) {
 
     rv = ducknng_rep_socket_open(&svc->rep_sock);
     if (rv != 0) goto fail;
-    rv = nng_pipe_notify(svc->rep_sock, NNG_PIPE_EV_ADD_PRE, ducknng_service_pipe_add_pre_cb, svc);
+    rv = nng_pipe_notify(svc->rep_sock, NNG_PIPE_EV_ADD_PRE, ducknng_service_pipe_event_cb, svc);
+    if (rv != 0) goto fail;
+    rv = nng_pipe_notify(svc->rep_sock, NNG_PIPE_EV_ADD_POST, ducknng_service_pipe_event_cb, svc);
+    if (rv != 0) goto fail;
+    rv = nng_pipe_notify(svc->rep_sock, NNG_PIPE_EV_REM_POST, ducknng_service_pipe_event_cb, svc);
     if (rv != 0) goto fail;
     rv = ducknng_listener_create(&svc->listener, svc->rep_sock, svc->listen_url);
     if (rv != 0) goto fail;
@@ -1215,6 +1353,57 @@ int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
 uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc) {
     if (!svc) return 0;
     return svc->max_open_sessions;
+}
+
+int ducknng_service_pipe_events_snapshot(ducknng_service *svc, uint64_t after_seq, uint64_t max_events,
+    ducknng_pipe_event **out_events, size_t *out_count, char **errmsg) {
+    ducknng_pipe_event *rows = NULL;
+    size_t i;
+    size_t n = 0;
+    size_t cap = 0;
+    if (out_events) *out_events = NULL;
+    if (out_count) *out_count = 0;
+    if (errmsg) *errmsg = NULL;
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
+        return -1;
+    }
+    if (!out_events || !out_count) return -1;
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    for (i = 0; i < svc->pipe_event_count; i++) {
+        size_t idx = (svc->pipe_event_start + i) % svc->pipe_event_cap;
+        ducknng_pipe_event *src = &svc->pipe_events[idx];
+        ducknng_pipe_event *next;
+        if (src->seq <= after_seq) continue;
+        if (max_events > 0 && n >= (size_t)max_events) break;
+        if (n == cap) {
+            size_t new_cap = cap ? cap * 2 : 16;
+            while (new_cap <= n) new_cap *= 2;
+            next = (ducknng_pipe_event *)duckdb_malloc(sizeof(*next) * new_cap);
+            if (!next) {
+                if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+                ducknng_service_pipe_events_free(rows, n);
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying pipe monitor events");
+                return -1;
+            }
+            memset(next, 0, sizeof(*next) * new_cap);
+            if (rows && n) memcpy(next, rows, sizeof(*rows) * n);
+            if (rows) duckdb_free(rows);
+            rows = next;
+            cap = new_cap;
+        }
+        if (ducknng_pipe_event_copy(&rows[n], src) != 0) {
+            if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+            ducknng_service_pipe_events_free(rows, n);
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying pipe monitor event");
+            return -1;
+        }
+        n++;
+    }
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    *out_events = rows;
+    *out_count = n;
+    return 0;
 }
 
 int ducknng_service_stop(ducknng_service *svc, char **errmsg) {

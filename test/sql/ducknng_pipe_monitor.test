@@ -1,0 +1,70 @@
+# name: test/sql/ducknng_pipe_monitor.test
+# group: [ducknng]
+
+require ducknng
+
+statement error
+SELECT count(*) FROM ducknng_read_monitor('missing_monitor_service', 0::UBIGINT, 10::UBIGINT)
+----
+ducknng: service not found
+
+query I
+SELECT CASE
+  WHEN ducknng_start_server('monitor_rpc', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT)
+  THEN 1 ELSE 0 END
+----
+1
+
+statement ok
+SET VARIABLE monitor_rpc_url = (
+  SELECT listen FROM ducknng_list_servers() WHERE name = 'monitor_rpc'
+)
+
+query I
+SELECT ok
+FROM ducknng_get_rpc_manifest(getvariable('monitor_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+1
+
+query I
+SELECT count(*) > 0
+FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
+----
+true
+
+query IIII
+SELECT count(*) FILTER (WHERE event = 'add_pre') > 0,
+       count(*) FILTER (WHERE transport_family = 'nng') > 0,
+       count(*) FILTER (WHERE scheme = 'tcp') > 0,
+       count(*) FILTER (WHERE remote_ip = '127.0.0.1') > 0
+FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
+----
+true	true	true	true
+
+statement ok
+SET VARIABLE monitor_last_seq = (
+  SELECT max(seq) FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
+)
+
+query I
+SELECT count(*)
+FROM ducknng_read_monitor('monitor_rpc', getvariable('monitor_last_seq')::UBIGINT, 100::UBIGINT)
+----
+0
+
+query I
+SELECT ok
+FROM ducknng_get_rpc_manifest(getvariable('monitor_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+1
+
+query I
+SELECT count(*) > 0
+FROM ducknng_read_monitor('monitor_rpc', getvariable('monitor_last_seq')::UBIGINT, 100::UBIGINT)
+----
+true
+
+query I
+SELECT CASE WHEN ducknng_stop_server('monitor_rpc') THEN 1 ELSE 0 END
+----
+1
