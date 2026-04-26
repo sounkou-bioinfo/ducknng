@@ -844,10 +844,12 @@ protocol and transport reference details, see
 <code>docs/protocol.md</code>, <code>docs/manifest.md</code>,
 <code>docs/security.md</code>, <code>docs/registry.md</code>,
 <code>docs/transports.md</code>, <code>docs/http.md</code>,
-<code>docs/codecs.md</code>, and <code>docs/types.md</code>.
-<code>NEWS.md</code> summarizes notable landed changes. TLS already
-supports both file-backed and in-memory PEM material through helpers
-such as <code>ducknng_tls_config_from_files(...)</code>,
+<code>docs/codecs.md</code>, and <code>docs/types.md</code>; for the
+non-sealed routing demo sketch, see
+<code>docs/mesh_routing_demo.md</code>. <code>NEWS.md</code> summarizes
+notable landed changes. TLS already supports both file-backed and
+in-memory PEM material through helpers such as
+<code>ducknng_tls_config_from_files(...)</code>,
 <code>ducknng_tls_config_from_pem(...)</code>, and
 <code>ducknng_self_signed_tls_config(...)</code>; TLS authentication
 mode <code>2</code> enables mTLS peer verification for
@@ -2931,8 +2933,8 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_7df054150a97.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                            TRUE</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_7fedc507a4a8c.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
 <span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>

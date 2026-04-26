@@ -204,6 +204,24 @@ FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, 
 ----
 0	ducknng: session owner token mismatch
 
+query IT
+SELECT ok, error
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 999::UBIGINT, '00000000000000000000000000000000', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+0	ducknng: session not found
+
+query IT
+SELECT ok, error
+FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 999::UBIGINT, '00000000000000000000000000000000', 0::UBIGINT)
+----
+0	ducknng: session not found
+
+query IT
+SELECT ok, error
+FROM ducknng_cancel_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 999::UBIGINT, '00000000000000000000000000000000', 0::UBIGINT)
+----
+0	ducknng: session not found
+
 query IIIII
 SELECT ok, session_id, state IS NULL, octet_length(payload) > 0, end_of_stream
 FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
@@ -221,6 +239,24 @@ SELECT ok, session_id, state
 FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT)
 ----
 1	1	closed
+
+query IT
+SELECT ok, error
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+0	ducknng: session not found
+
+query IT
+SELECT ok, error
+FROM ducknng_close_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT)
+----
+0	ducknng: session not found
+
+query IT
+SELECT ok, error
+FROM ducknng_cancel_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT)
+----
+0	ducknng: session not found
 
 statement ok
 DROP TABLE rpc_open
