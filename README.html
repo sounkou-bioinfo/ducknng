@@ -635,8 +635,9 @@ operation as a future-like SQL handle. This family uses NNG URL schemes:
 <code>http://</code> and <code>https://</code> are supported by the
 HTTP/HTTPS carrier layer below. NNG services also expose pipe/membership
 telemetry through
-<code>ducknng_read_monitor(name, after_seq, max_events)</code> and the
-active-pipe snapshot <code>ducknng_list_pipes(name)</code>.</p></li>
+<code>ducknng_read_monitor(name, after_seq, max_events)</code>,
+<code>ducknng_monitor_status(name)</code>, and the active-pipe snapshot
+<code>ducknng_list_pipes(name)</code>.</p></li>
 <li><p><strong>HTTP/HTTPS as a framed RPC carrier and raw HTTP client
 surface.</strong> <code>ducknng_start_http_server(...)</code> mounts the
 same framed RPC protocol at an <code>http://</code> or
@@ -673,7 +674,8 @@ identity are additionally bound to that identity. Server-owned session
 policy, including <code>idle_timeout_ms</code> and
 <code>max_open_sessions</code>, is exposed in service/manifest metadata,
 and live service introspection also reports current
-<code>active_pipes</code> for NNG services.</p></li>
+<code>active_pipes</code> and configured <code>max_active_pipes</code>
+for NNG services.</p></li>
 <li><p><strong>Payload and body codecs.</strong> RPC row payloads use
 Arrow IPC. RPC control metadata and the manifest are JSON text inside
 framed payloads; SQL helper columns such as <code>manifest</code> keep
@@ -701,8 +703,9 @@ schemes above</li>
 <li>first-class raw AIO handles for one pending operation: socket
 send/recv, HTTP/HTTPS ncurl requests, req-style request/reply futures,
 and raw unary RPC futures</li>
-<li>bounded NNG pipe event telemetry and active-pipe membership
-snapshots: <code>ducknng_read_monitor(...)</code> and
+<li>bounded NNG pipe event telemetry, monitor status, and active-pipe
+membership snapshots: <code>ducknng_read_monitor(...)</code>,
+<code>ducknng_monitor_status(...)</code>, and
 <code>ducknng_list_pipes(...)</code></li>
 <li>manifest-driven RPC helpers, opt-in <code>exec</code>, and query
 sessions (<code>query_open</code>, <code>fetch</code>,
@@ -725,7 +728,8 @@ to verified mTLS peer identity when present; service/manifest metadata
 exposes server-owned effective session policy including
 <code>idle_timeout_ms</code> and <code>max_open_sessions</code>;
 <code>ducknng_list_servers()</code> also exposes current
-<code>active_pipes</code> for NNG services</li>
+<code>active_pipes</code> and configured <code>max_active_pipes</code>
+for NNG services</li>
 </ul>
 <p>Still intentionally deferred or not sealed:</p>
 <ul>
@@ -907,7 +911,7 @@ Expand the full generated function catalog
 <td><code>ducknng_list_servers</code></td>
 <td>table</td>
 <td></td>
-<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, active_pipes UBIGINT, max_open_sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
+<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, active_pipes UBIGINT, max_open_sessions UBIGINT, max_active_pipes UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
 <td>List registered ducknng services.</td>
 </tr>
 <tr class="even">
@@ -918,6 +922,14 @@ Expand the full generated function catalog
 <td>Read the bounded per-service NNG pipe monitor event stream.</td>
 </tr>
 <tr class="odd">
+<td><code>ducknng_monitor_status</code></td>
+<td>table</td>
+<td><code>name</code></td>
+<td><code>TABLE(service_name VARCHAR, event_capacity UBIGINT, event_count UBIGINT, oldest_seq UBIGINT, newest_seq UBIGINT, dropped_events UBIGINT, active_pipes UBIGINT, max_active_pipes UBIGINT)</code></td>
+<td>Return pipe monitor ring status and active-pipe counters for a
+running service.</td>
+</tr>
+<tr class="even">
 <td><code>ducknng_list_pipes</code></td>
 <td>table</td>
 <td><code>name</code></td>
@@ -1150,9 +1162,9 @@ service.</td>
 <tr class="even">
 <td><code>ducknng_set_service_limits</code></td>
 <td>scalar</td>
-<td><code>name, max_open_sessions</code></td>
+<td><code>name, max_open_sessions[, max_active_pipes]</code></td>
 <td><code>BOOLEAN</code></td>
-<td>Set basic service resource limits for a running service.</td>
+<td>Set service resource limits.</td>
 </tr>
 <tr class="odd">
 <td><code>ducknng_auth_context</code></td>
@@ -2545,14 +2557,14 @@ allowlist dynamically for a running service. NNG listeners use NNG’s
 new pipes before they are added to the socket; HTTP/HTTPS returns HTTP
 <code>403</code> before RPC dispatch.
 <code>ducknng_list_servers()</code> exposes <code>active_pipes</code>,
-<code>tls_enabled</code>, <code>tls_auth_mode</code>,
-<code>peer_identity_required</code>, <code>peer_allowlist_active</code>,
-<code>ip_allowlist_active</code>, <code>sql_authorizer_active</code>,
-and the corresponding counts so deployments can distinguish current NNG
-membership, TLS without client verification, mTLS, allowlisted mTLS,
-IP-gated services, and services with SQL authorization callbacks.
-Individual registry-backed methods can also require verified peer
-identity; for example,
+<code>max_active_pipes</code>, <code>tls_enabled</code>,
+<code>tls_auth_mode</code>, <code>peer_identity_required</code>,
+<code>peer_allowlist_active</code>, <code>ip_allowlist_active</code>,
+<code>sql_authorizer_active</code>, and the corresponding counts so
+deployments can distinguish current NNG membership, TLS without client
+verification, mTLS, allowlisted mTLS, IP-gated services, and services
+with SQL authorization callbacks. Individual registry-backed methods can
+also require verified peer identity; for example,
 <code>ducknng_set_method_auth(&#39;manifest&#39;, true)</code> protects manifest
 discovery without unregistering the method.</p>
 <p>The built-in mTLS, peer-identity allowlist, and IP/CIDR allowlist
@@ -2561,10 +2573,12 @@ flexible SQL callback and, for NNG transports, can reject new pipes at
 <code>NNG_PIPE_EV_ADD_PRE</code> without entering DuckDB. Basic service
 resource limits also start in C:
 <code>ducknng_set_service_limits(name, max_open_sessions)</code> caps
-concurrently open query sessions for a service, and <code>0</code>
-clears that first limit. For policy that depends on tables, tenants,
-method names, headers, or deployment-specific rules, install a
-service-level SQL authorizer with
+concurrently open query sessions for a service, and the extended form
+<code>ducknng_set_service_limits(name, max_open_sessions, max_active_pipes)</code>
+also caps simultaneously active NNG protocol-socket pipes at
+<code>ADD_PRE</code>; <code>0</code> means unlimited for either cap. For
+policy that depends on tables, tenants, method names, headers, or
+deployment-specific rules, install a service-level SQL authorizer with
 <code>ducknng_set_service_authorizer(name, authorizer_sql)</code>. The
 callback sees one row from <code>ducknng_auth_context()</code> while it
 runs and must return exactly one row with a Boolean <code>allow</code>
@@ -2913,7 +2927,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_40a8123bb07dd.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_47faa60568b92.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
@@ -2986,8 +3000,8 @@ the trust root is not broader than the application;</li>
 with <code>ducknng_set_tls_peer_allowlist(...)</code> and the optional
 <code>ip_allowlist_json</code> startup argument;</li>
 <li>set basic service resource limits such as
-<code>ducknng_set_service_limits(name, max_open_sessions)</code> before
-exposing query sessions;</li>
+<code>ducknng_set_service_limits(name, max_open_sessions[, max_active_pipes])</code>
+before exposing query sessions;</li>
 <li>install a service-level SQL authorizer with
 <code>ducknng_set_service_authorizer(...)</code> when admission depends
 on deployment tables, tenants, method names, or HTTP metadata;</li>
@@ -3101,21 +3115,22 @@ pipe events; nanonext surfaces related tools as
 <code>pipe_notify()</code>, <code>monitor()</code>, and
 <code>read_monitor()</code>. <code>ducknng</code> now records a bounded
 per-service NNG pipe event stream and exposes it with
-<code>ducknng_read_monitor(name, after_seq, max_events)</code>. It also
-exposes current active NNG pipes with
-<code>ducknng_list_pipes(name)</code>. The event stream includes event
-sequence, timestamp, service, transport, pipe id, admission result for
-<code>ADD_PRE</code>, remote address, and verified peer identity when
-present; the active-pipe table gives the current pipe set for routing
-and membership decisions. These primitives are a natural foundation for
-telemetry, connection counts, connection churn, per-service pipe event
-streams, presence/worker membership, dynamic routing, backpressure-aware
-scheduling, mesh-style DuckDB service discovery, routing/forwarding
-demos, and other application-level event streams. HTTP/HTTPS framed RPC
-currently uses the same admission policy but does not expose NNG
-protocol-socket pipe events; a broader HTTP server framework can reuse
-the same request context and monitor concepts without changing the
-framed RPC wire protocol.</p>
+<code>ducknng_read_monitor(name, after_seq, max_events)</code>. It
+exposes ring/counter metadata with
+<code>ducknng_monitor_status(name)</code> and current active NNG pipes
+with <code>ducknng_list_pipes(name)</code>. The event stream includes
+event sequence, timestamp, service, transport, pipe id, admission result
+for <code>ADD_PRE</code>, remote address, and verified peer identity
+when present; the active-pipe table gives the current pipe set for
+routing and membership decisions. These primitives are a natural
+foundation for telemetry, connection counts, connection churn,
+per-service pipe event streams, presence/worker membership, dynamic
+routing, backpressure-aware scheduling, mesh-style DuckDB service
+discovery, routing/forwarding demos, and other application-level event
+streams. HTTP/HTTPS framed RPC currently uses the same admission policy
+but does not expose NNG protocol-socket pipe events; a broader HTTP
+server framework can reuse the same request context and monitor concepts
+without changing the framed RPC wire protocol.</p>
 <h2 id="references">References</h2>
 <ul>
 <li><a href="https://nng.nanomsg.org/">NNG</a> for the underlying

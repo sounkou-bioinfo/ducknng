@@ -74,6 +74,7 @@ static void ducknng_service_clear_pipe_events(ducknng_service *svc) {
     svc->pipe_event_start = 0;
     svc->pipe_event_count = 0;
     svc->pipe_event_cap = 0;
+    svc->pipe_event_dropped = 0;
 }
 
 static void ducknng_service_clear_pipe_states(ducknng_service *svc) {
@@ -498,6 +499,7 @@ static void ducknng_service_pipe_event_append(ducknng_service *svc, nng_pipe pip
         idx = svc->pipe_event_start;
         ducknng_pipe_event_reset(&svc->pipe_events[idx]);
         svc->pipe_event_start = (svc->pipe_event_start + 1) % svc->pipe_event_cap;
+        svc->pipe_event_dropped++;
     }
     if (is_add_post) ducknng_service_pipe_state_add_locked(svc, pipe, remote_addr, identity);
     if (is_rem_post) ducknng_service_pipe_state_remove_locked(svc, pipe);
@@ -1159,6 +1161,13 @@ static void ducknng_service_pipe_event_cb(nng_pipe pipe, nng_pipe_ev ev, void *a
     if (ev == NNG_PIPE_EV_ADD_PRE) {
         allowed = ducknng_service_network_admission_check(svc, identity,
             have_remote_addr ? &remote_addr : NULL, NULL) == 0;
+        if (allowed && svc->mu_initialized) {
+            ducknng_mutex_lock(&svc->mu);
+            if (svc->max_active_pipes > 0 && svc->pipe_state_count >= (size_t)svc->max_active_pipes) {
+                allowed = 0;
+            }
+            ducknng_mutex_unlock(&svc->mu);
+        }
     }
     ducknng_service_pipe_event_append(svc, pipe, ducknng_pipe_event_name(ev),
         have_remote_addr ? &remote_addr : NULL, identity, allowed);
@@ -1445,7 +1454,8 @@ int ducknng_service_authorizer_active(const ducknng_service *svc) {
     return svc->authorizer_active ? 1 : 0;
 }
 
-int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions, char **errmsg) {
+int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
+    uint64_t max_active_pipes, char **errmsg) {
     if (errmsg) *errmsg = NULL;
     if (!svc) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
@@ -1453,6 +1463,7 @@ int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
     }
     if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
     svc->max_open_sessions = max_open_sessions;
+    svc->max_active_pipes = max_active_pipes;
     if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
     return 0;
 }
@@ -1462,9 +1473,38 @@ uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc) {
     return svc->max_open_sessions;
 }
 
+uint64_t ducknng_service_max_active_pipes(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return svc->max_active_pipes;
+}
+
 size_t ducknng_service_active_pipe_count(const ducknng_service *svc) {
     if (!svc) return 0;
     return atomic_load_explicit(&svc->pipe_state_count_visible, memory_order_acquire);
+}
+
+int ducknng_service_pipe_monitor_stats(ducknng_service *svc,
+    ducknng_pipe_monitor_stats *out_stats, char **errmsg) {
+    if (errmsg) *errmsg = NULL;
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
+        return -1;
+    }
+    if (!out_stats) return -1;
+    memset(out_stats, 0, sizeof(*out_stats));
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    out_stats->event_capacity = (uint64_t)svc->pipe_event_cap;
+    out_stats->event_count = (uint64_t)svc->pipe_event_count;
+    out_stats->dropped_events = svc->pipe_event_dropped;
+    out_stats->active_pipes = (uint64_t)svc->pipe_state_count;
+    out_stats->max_active_pipes = svc->max_active_pipes;
+    if (svc->pipe_event_count > 0 && svc->pipe_events && svc->pipe_event_cap > 0) {
+        size_t newest_idx = (svc->pipe_event_start + svc->pipe_event_count - 1) % svc->pipe_event_cap;
+        out_stats->oldest_seq = svc->pipe_events[svc->pipe_event_start].seq;
+        out_stats->newest_seq = svc->pipe_events[newest_idx].seq;
+    }
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    return 0;
 }
 
 int ducknng_service_pipe_events_snapshot(ducknng_service *svc, uint64_t after_seq, uint64_t max_events,

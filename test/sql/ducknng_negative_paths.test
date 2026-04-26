@@ -29,6 +29,42 @@ SELECT ducknng_set_service_limits('missing_service', 1::UBIGINT)
 ducknng: service not found
 
 statement error
+SELECT ducknng_set_service_limits('missing_service', 1::UBIGINT, 1::UBIGINT)
+----
+ducknng: service not found
+
+statement error
+SELECT ducknng_open_socket('not-a-protocol')
+----
+ducknng: protocol must be one of bus, pair, pair0, pair1, poly, push, pull, pub, sub, req, rep, surveyor, respondent
+
+statement error
+SELECT ducknng_close_socket(999::UBIGINT)
+----
+ducknng: client socket not found
+
+statement error
+SELECT ducknng_send_socket_raw(999::UBIGINT, from_hex('00'), 10)
+----
+ducknng: active client socket not found
+
+statement error
+SELECT ducknng_recv_socket_raw(999::UBIGINT, 10)
+----
+ducknng: active client socket not found
+
+query I
+SELECT ducknng_request_socket_raw(999::UBIGINT, from_hex('00'), 10) IS NULL
+----
+true
+
+query IT
+SELECT ok, error
+FROM ducknng_decode_frame(from_hex('00'))
+----
+0	ducknng: invalid frame envelope
+
+statement error
 SELECT ducknng_start_server('bad_ip_json', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT, 'not-json')
 ----
 ducknng: IP allowlist must be a JSON array of strings
@@ -60,10 +96,15 @@ SELECT CASE WHEN ducknng_set_service_limits('negative_rpc', 0::UBIGINT) THEN 1 E
 ----
 1
 
-query I
-SELECT max_open_sessions FROM ducknng_list_servers() WHERE name = 'negative_rpc'
+query II
+SELECT max_open_sessions, max_active_pipes FROM ducknng_list_servers() WHERE name = 'negative_rpc'
 ----
-0
+0	0
+
+statement error
+SELECT ducknng_start_server('negative_rpc', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT)
+----
+service already exists
 
 query I
 SELECT CASE WHEN ducknng_stop_server('negative_rpc') THEN 1 ELSE 0 END

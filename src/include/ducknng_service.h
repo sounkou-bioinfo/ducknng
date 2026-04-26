@@ -63,6 +63,16 @@ typedef struct ducknng_pipe_state {
     char *peer_identity;
 } ducknng_pipe_state;
 
+typedef struct ducknng_pipe_monitor_stats {
+    uint64_t event_capacity;
+    uint64_t event_count;
+    uint64_t oldest_seq;
+    uint64_t newest_seq;
+    uint64_t dropped_events;
+    uint64_t active_pipes;
+    uint64_t max_active_pipes;
+} ducknng_pipe_monitor_stats;
+
 struct ducknng_rep_ctx {
     ducknng_service *svc;
     nng_ctx ctx;
@@ -100,6 +110,7 @@ struct ducknng_service {
     size_t pipe_event_count;
     size_t pipe_event_cap;
     uint64_t next_pipe_event_seq;
+    uint64_t pipe_event_dropped;
     ducknng_pipe_state *pipe_states;
     size_t pipe_state_count;
     atomic_size_t pipe_state_count_visible;
@@ -118,6 +129,7 @@ struct ducknng_service {
     uint64_t next_session_id;
     uint64_t session_idle_ms;
     uint64_t max_open_sessions;
+    uint64_t max_active_pipes;
     size_t recv_max_bytes;
     int running;
     int shutting_down;
@@ -157,9 +169,13 @@ int ducknng_service_ip_allowlist_active(const ducknng_service *svc);
 size_t ducknng_service_ip_allowlist_count(const ducknng_service *svc);
 int ducknng_service_set_authorizer(ducknng_service *svc, const char *authorizer_sql, char **errmsg);
 int ducknng_service_authorizer_active(const ducknng_service *svc);
-int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions, char **errmsg);
+int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
+    uint64_t max_active_pipes, char **errmsg);
 uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc);
+uint64_t ducknng_service_max_active_pipes(const ducknng_service *svc);
 size_t ducknng_service_active_pipe_count(const ducknng_service *svc);
+int ducknng_service_pipe_monitor_stats(ducknng_service *svc,
+    ducknng_pipe_monitor_stats *out_stats, char **errmsg);
 int ducknng_service_pipe_events_snapshot(ducknng_service *svc, uint64_t after_seq, uint64_t max_events,
     ducknng_pipe_event **out_events, size_t *out_count, char **errmsg);
 void ducknng_service_pipe_events_free(ducknng_pipe_event *events, size_t count);

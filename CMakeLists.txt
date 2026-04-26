@@ -61,6 +61,7 @@ set(EXTENSION_SOURCES
     src/ducknng_sql_api.c
     src/ducknng_sql_auth.c
     src/ducknng_sql_monitor.c
+    src/ducknng_sql_service.c
     src/ducknng_runtime.c
     src/ducknng_service.c
     src/ducknng_session.c

@@ -49,6 +49,11 @@ typedef struct {
     idx_t row_count;
 } ducknng_pipes_bind_data;
 
+typedef struct {
+    char *service_name;
+    ducknng_pipe_monitor_stats stats;
+} ducknng_monitor_status_bind_data;
+
 static void set_null(duckdb_vector vec, idx_t row) {
     uint64_t *validity;
     duckdb_vector_ensure_validity_writable(vec);
@@ -116,6 +121,13 @@ static void destroy_pipes_bind_data(void *ptr) {
     if (!data) return;
     for (i = 0; i < data->row_count; i++) ducknng_pipe_row_reset(&data->rows[i]);
     if (data->rows) duckdb_free(data->rows);
+    duckdb_free(data);
+}
+
+static void destroy_monitor_status_bind_data(void *ptr) {
+    ducknng_monitor_status_bind_data *data = (ducknng_monitor_status_bind_data *)ptr;
+    if (!data) return;
+    if (data->service_name) duckdb_free(data->service_name);
     duckdb_free(data);
 }
 
@@ -449,6 +461,73 @@ static void ducknng_list_pipes_scan(duckdb_function_info info, duckdb_data_chunk
     duckdb_data_chunk_set_size(output, chunk_size);
 }
 
+static void ducknng_monitor_status_bind(duckdb_bind_info info) {
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
+    ducknng_monitor_status_bind_data *bind = NULL;
+    ducknng_service *svc = NULL;
+    char *name = NULL;
+    char *errmsg = NULL;
+    ducknng_pipe_monitor_stats stats;
+    duckdb_logical_type type;
+
+    if (duckdb_bind_get_parameter_count(info) != 1) {
+        duckdb_bind_set_error(info, "ducknng: ducknng_monitor_status(name) requires exactly one parameter");
+        return;
+    }
+    if (ducknng_monitor_parse_service(info, ctx, 0, &name, &svc, NULL, NULL) != 0) return;
+    if (ducknng_service_pipe_monitor_stats(svc, &stats, &errmsg) != 0) {
+        duckdb_free(name);
+        duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: failed to snapshot pipe monitor status");
+        if (errmsg) duckdb_free(errmsg);
+        return;
+    }
+    bind = (ducknng_monitor_status_bind_data *)duckdb_malloc(sizeof(*bind));
+    if (!bind) {
+        duckdb_free(name);
+        duckdb_bind_set_error(info, "ducknng: out of memory");
+        return;
+    }
+    memset(bind, 0, sizeof(*bind));
+    bind->service_name = name;
+    bind->stats = stats;
+
+    type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "service_name", type);
+    duckdb_destroy_logical_type(&type);
+    type = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
+    duckdb_bind_add_result_column(info, "event_capacity", type);
+    duckdb_bind_add_result_column(info, "event_count", type);
+    duckdb_bind_add_result_column(info, "oldest_seq", type);
+    duckdb_bind_add_result_column(info, "newest_seq", type);
+    duckdb_bind_add_result_column(info, "dropped_events", type);
+    duckdb_bind_add_result_column(info, "active_pipes", type);
+    duckdb_bind_add_result_column(info, "max_active_pipes", type);
+    duckdb_destroy_logical_type(&type);
+    duckdb_bind_set_bind_data(info, bind, destroy_monitor_status_bind_data);
+    duckdb_bind_set_cardinality(info, 1, true);
+}
+
+static void ducknng_monitor_status_scan(duckdb_function_info info, duckdb_data_chunk output) {
+    ducknng_monitor_init_data *init = (ducknng_monitor_init_data *)duckdb_function_get_init_data(info);
+    ducknng_monitor_status_bind_data *bind = (ducknng_monitor_status_bind_data *)duckdb_function_get_bind_data(info);
+    uint64_t *col;
+    if (!init || !bind || init->offset > 0) {
+        duckdb_data_chunk_set_size(output, 0);
+        return;
+    }
+    if (bind->service_name) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 0), 0, bind->service_name);
+    else set_null(duckdb_data_chunk_get_vector(output, 0), 0);
+    col = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 1)); col[0] = bind->stats.event_capacity;
+    col = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 2)); col[0] = bind->stats.event_count;
+    col = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 3)); col[0] = bind->stats.oldest_seq;
+    col = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 4)); col[0] = bind->stats.newest_seq;
+    col = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 5)); col[0] = bind->stats.dropped_events;
+    col = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 6)); col[0] = bind->stats.active_pipes;
+    col = (uint64_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 7)); col[0] = bind->stats.max_active_pipes;
+    init->offset = 1;
+    duckdb_data_chunk_set_size(output, 1);
+}
+
 static int register_monitor_table(duckdb_connection con, ducknng_sql_context *ctx) {
     duckdb_table_function tf;
     duckdb_logical_type type_varchar;
@@ -468,6 +547,28 @@ static int register_monitor_table(duckdb_connection con, ducknng_sql_context *ct
     duckdb_table_function_set_bind(tf, ducknng_read_monitor_bind);
     duckdb_table_function_set_init(tf, ducknng_read_monitor_init);
     duckdb_table_function_set_function(tf, ducknng_read_monitor_scan);
+    if (duckdb_register_table_function(con, tf) == DuckDBError) {
+        duckdb_destroy_table_function(&tf);
+        return 0;
+    }
+    duckdb_destroy_table_function(&tf);
+    return 1;
+}
+
+static int register_monitor_status_table(duckdb_connection con, ducknng_sql_context *ctx) {
+    duckdb_table_function tf;
+    duckdb_logical_type type_varchar;
+    if (!ctx || !ctx->rt) return 0;
+    tf = duckdb_create_table_function();
+    if (!tf) return 0;
+    duckdb_table_function_set_name(tf, "ducknng_monitor_status");
+    type_varchar = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_table_function_add_parameter(tf, type_varchar);
+    duckdb_destroy_logical_type(&type_varchar);
+    if (!ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
+    duckdb_table_function_set_bind(tf, ducknng_monitor_status_bind);
+    duckdb_table_function_set_init(tf, ducknng_read_monitor_init);
+    duckdb_table_function_set_function(tf, ducknng_monitor_status_scan);
     if (duckdb_register_table_function(con, tf) == DuckDBError) {
         duckdb_destroy_table_function(&tf);
         return 0;
@@ -500,6 +601,7 @@ static int register_pipes_table(duckdb_connection con, ducknng_sql_context *ctx)
 
 int ducknng_register_sql_monitor(duckdb_connection con, ducknng_sql_context *ctx) {
     if (!register_monitor_table(con, ctx)) return 0;
+    if (!register_monitor_status_table(con, ctx)) return 0;
     if (!register_pipes_table(con, ctx)) return 0;
     return 1;
 }

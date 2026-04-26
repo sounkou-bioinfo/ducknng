@@ -13,6 +13,11 @@ SELECT count(*) FROM ducknng_list_pipes('missing_monitor_service')
 ----
 ducknng: service not found
 
+statement error
+SELECT count(*) FROM ducknng_monitor_status('missing_monitor_service')
+----
+ducknng: service not found
+
 query I
 SELECT CASE
   WHEN ducknng_start_server('monitor_rpc', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT)
@@ -46,6 +51,16 @@ FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
 ----
 true	true	true	true
 
+query IIIII
+SELECT event_capacity = 1024,
+       event_count > 0,
+       oldest_seq > 0,
+       newest_seq >= oldest_seq,
+       dropped_events = 0
+FROM ducknng_monitor_status('monitor_rpc')
+----
+true	true	true	true	true
+
 statement ok
 SET VARIABLE monitor_last_seq = (
   SELECT max(seq) FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
@@ -68,6 +83,18 @@ SELECT count(*) > 0
 FROM ducknng_read_monitor('monitor_rpc', getvariable('monitor_last_seq')::UBIGINT, 100::UBIGINT)
 ----
 true
+
+query I
+SELECT CASE WHEN ducknng_set_service_limits('monitor_rpc', 0::UBIGINT, 1::UBIGINT) THEN 1 ELSE 0 END
+----
+1
+
+query II
+SELECT max_open_sessions, max_active_pipes
+FROM ducknng_list_servers()
+WHERE name = 'monitor_rpc'
+----
+0	1
 
 query I
 SELECT ducknng_open_socket('req')
@@ -95,6 +122,23 @@ query I
 SELECT active_pipes > 0
 FROM ducknng_list_servers()
 WHERE name = 'monitor_rpc'
+----
+true
+
+query II
+SELECT active_pipes > 0, max_active_pipes = 1
+FROM ducknng_monitor_status('monitor_rpc')
+----
+true	true
+
+query I
+SELECT ducknng_request_raw(getvariable('monitor_rpc_url')::VARCHAR, from_hex('01000000000000000000000000000000000000000000'), 100, 0::UBIGINT) IS NULL
+----
+true
+
+query I
+SELECT count(*) FILTER (WHERE event = 'add_pre' AND admitted = false) > 0
+FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
 ----
 true
 
