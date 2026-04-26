@@ -40,6 +40,7 @@ int ducknng_rep_socket_open(nng_socket *out);
 int ducknng_req_socket_open(nng_socket *out);
 int ducknng_socket_open_protocol(const char *protocol, nng_socket *out, char **errmsg);
 int ducknng_validate_nng_url(const char *url, char **errmsg);
+int ducknng_socket_validate_client_url(const char *url, const ducknng_tls_opts *opts, char **errmsg);
 int ducknng_socket_set_timeout_ms(nng_socket sock, int send_timeout_ms, int recv_timeout_ms);
 int ducknng_socket_dial(nng_socket sock, const char *url);
 int ducknng_socket_send(nng_socket sock, nng_msg *msg);

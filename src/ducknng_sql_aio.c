@@ -335,7 +335,7 @@ static int ducknng_client_open_req_socket_tls(const char *url, int timeout_ms, c
         if (errmsg) *errmsg = ducknng_strdup("ducknng: client URL is required");
         return -1;
     }
-    if (ducknng_validate_nng_url(url, errmsg) != 0) return -1;
+    if (ducknng_socket_validate_client_url(url, tls_opts, errmsg) != 0) return -1;
     rv = ducknng_req_socket_open(out);
     if (rv != 0) {
         if (errmsg) *errmsg = ducknng_strdup(ducknng_nng_strerror(rv));

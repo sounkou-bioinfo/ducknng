@@ -454,6 +454,19 @@ int ducknng_validate_nng_url(const char *url, char **errmsg) {
     }
     return 0;
 }
+int ducknng_socket_validate_client_url(const char *url, const ducknng_tls_opts *opts, char **errmsg) {
+    ducknng_transport_url parsed;
+    int tls_requested = ducknng_tls_requested(opts);
+    if (errmsg) *errmsg = NULL;
+    if (ducknng_validate_nng_url(url, errmsg) != 0) return -1;
+    if (ducknng_transport_url_parse(url, &parsed, errmsg) != 0) return -1;
+    if (tls_requested && parsed.scheme != DUCKNNG_TRANSPORT_SCHEME_TLS_TCP && parsed.scheme != DUCKNNG_TRANSPORT_SCHEME_WSS) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: TLS configuration requires a tls+tcp:// or wss:// URL");
+        return -1;
+    }
+    return 0;
+}
+
 int ducknng_socket_open_protocol(const char *protocol, nng_socket *out, char **errmsg) {
     int rv = NNG_EINVAL;
     if (errmsg) *errmsg = NULL;

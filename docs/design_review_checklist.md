@@ -74,6 +74,18 @@ This checklist tracks the implementation status of the main architecture, transp
   - NNG-specific socket/listener/TLS behavior remains isolated in `src/ducknng_nng_compat.c`.
   - HTTP-specific client/server behavior remains isolated in `src/ducknng_http_compat.c`.
   - `http://` and `https://` route through the HTTP adapter for synchronous request/RPC/session helpers, while generic NNG socket/listener paths reject those schemes instead of treating them as malformed NNG endpoints.
+- [x] Add HTTP/HTTPS aio client helpers without changing the framed RPC carrier contract.
+  - `ducknng_ncurl_aio(...)` launches one asynchronous HTTP/HTTPS request.
+  - `ducknng_ncurl_aio_collect(...)` returns HTTP-shaped terminal results instead of raw frame rows.
+- [x] Surface NNG pipe events and live pipe snapshots.
+  - `ducknng_read_monitor(...)` exposes bounded pipe monitor events with sequence cursors and denial reasons.
+  - `ducknng_monitor_status(...)` exposes monitor ring counters and drop counts.
+  - `ducknng_list_pipes(...)` exposes active pipe snapshots.
+- [x] Split SQL registration into focused modules.
+  - `src/ducknng_sql_api.c` is now the small top-level registration orchestrator.
+  - Focused modules cover service, auth, monitor, TLS, socket, AIO, registry, session, body/codec, and RPC/client bindings.
+- [x] Add lifecycle and URL-policy regression coverage.
+  - Tests now cover stopping services with live sessions, rejecting same-service stop while a service-owned authorizer request is active, unsupported URL schemes across major helpers, and TLS configuration on non-TLS URL schemes.
 
 ## Partial / clarified but not fully solved
 
@@ -82,7 +94,7 @@ This checklist tracks the implementation status of the main architecture, transp
   - Remaining work: decide whether to delete the raw or structured twins entirely.
 - [~] Prepare HTTP / HTTPS transport adapters without inventing a second RPC surface.
   - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, `ducknng_start_http_server(...)` is implemented, `ducknng_ncurl(...)` and `ducknng_ncurl_aio(...)` provide low-level synchronous/asynchronous HTTP/HTTPS client slices, and the synchronous request/RPC/session helpers now route by URL scheme.
-  - Remaining work: decide whether a broader nanonext-style HTTP route framework belongs beside the framed RPC carrier.
+  - Remaining work: decide whether a broader nanonext-style HTTP route framework belongs beside the framed RPC carrier. This route framework is explicitly separate from the sealed framed RPC endpoint.
 
 ## Blocked by larger architectural replacement work
 
@@ -114,10 +126,6 @@ This checklist tracks the implementation status of the main architecture, transp
     - research a scalarfs-style in-memory filesystem/provider path for CSV/TSV/Parquet body parsing, including whether community-extension designs such as `duckdb_scalarfs` can be copied or adapted without pulling core `ducknng` onto unstable or C++ DuckDB APIs
     - keep the generic `body BLOB` fallback as the safe default whenever a media type is recognized but no parsing provider is enabled
     - keep user-defined Arrow extension serde blocked until ownership, security, and the future DuckDB Arrow seam are clear enough not to freeze an unsafe callback ABI
-- [ ] Surface pipe events / readiness notifications.
-  - Blocker: depends on the async/aio/runtime event model and broader session cleanup strategy.
-- [ ] Split `src/ducknng_sql_api.c` into smaller modules.
-  - Blocker: still worth doing, but much safer after the Arrow/session/aio shape stabilizes so files are not split and then immediately re-merged during deeper rewrites.
 
 ## Validation for this checklist pass
 
@@ -128,6 +136,6 @@ This checklist tracks the implementation status of the main architecture, transp
 
 1. **Current DuckDB-facing Arrow work stays on manual nanoarrow mappings.** The implementation no longer compiles unstable or deprecated DuckDB Arrow entrypoints, so any future Arrow re-plumb must wait for a non-deprecated seam or be abandoned in favor of maintaining the explicit mappings.
 2. **Session-family work is only partially complete.** Query sessions now have an explicit `session_token` bearer capability and optional mTLS owner-identity binding, so the bare-`session_id` ownership hole is closed. Remaining work is deciding whether that model is the sealed identity contract, isolating DuckDB execution state per session/request if required, and adding better SQL-side decoding for fetched Arrow payloads.
-3. **HTTP / HTTPS transport adapters are landed synchronously but the async scope is still open.** The transport-family boundary is explicit in docs and code, `ducknng_start_http_server(...)` is implemented, and the synchronous request/RPC/session helpers route over HTTP and HTTPS, but any HTTP aio helpers still need an explicit scope decision.
+3. **HTTP / HTTPS transport adapters are landed, including the raw async client slice.** The transport-family boundary is explicit in docs and code, `ducknng_start_http_server(...)` is implemented, synchronous request/RPC/session helpers route over HTTP and HTTPS, and `ducknng_ncurl_aio(...)` / `ducknng_ncurl_aio_collect(...)` cover the raw asynchronous HTTP client contract. Remaining HTTP work is about any future web-route framework, not the framed RPC carrier.
 4. **Codec work should not be built on undocumented mapping behavior.** If the project continues using the current manual nanoarrow route, codec decisions should sit on top of explicit tested mappings rather than implicit assumptions about a future Arrow helper path.
-5. **Generic client socket TLS dialing is implemented, but the supported transport matrix still needs durable documentation.** Listener-side TLS, one-shot req/rep TLS, and socket-handle dialing now share the same TLS-config handle model, including `wss://`, but the final sealed examples/docs set should stay explicit about what is supported where.
+5. **Generic client socket TLS dialing is implemented, but the supported transport matrix still needs durable documentation.** Listener-side TLS, one-shot req/rep TLS, and socket-handle dialing now share the same TLS-config handle model, including `wss://`, and non-TLS URL schemes reject supplied TLS configuration, but the final sealed examples/docs set should stay explicit about what is supported where.

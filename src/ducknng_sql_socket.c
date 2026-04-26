@@ -322,7 +322,7 @@ static void ducknng_dial_scalar(duckdb_function_info info, duckdb_data_chunk inp
             if (errmsg) duckdb_free(errmsg);
             return;
         }
-        if (ducknng_validate_nng_url(url, &errmsg) != 0) {
+        if (ducknng_socket_validate_client_url(url, tls_opts, &errmsg) != 0) {
             duckdb_free(url);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: invalid transport URL");
             if (errmsg) duckdb_free(errmsg);

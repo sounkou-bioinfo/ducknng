@@ -128,6 +128,65 @@ SELECT ducknng_self_signed_tls_config('bad name!', 1, 0)
 ----
 ducknng: common name must use only letters, digits, dot, colon, dash, or underscore
 
+query I
+SELECT ducknng_self_signed_tls_config('127.0.0.1', 1, 0) > 0
+----
+1
+
+statement ok
+SET VARIABLE negative_tls_id = (
+  SELECT max(tls_config_id) FROM ducknng_list_tls_configs()
+)
+
+query IT
+SELECT ok, error
+FROM ducknng_get_rpc_manifest('tcp://127.0.0.1:1', getvariable('negative_tls_id')::UBIGINT)
+----
+0	ducknng: TLS configuration requires a tls+tcp:// or wss:// URL
+
+query IT
+SELECT ok, error
+FROM ducknng_open_query('tcp://127.0.0.1:1', 'SELECT 1', 0::UBIGINT, 0::UBIGINT, getvariable('negative_tls_id')::UBIGINT)
+----
+0	ducknng: TLS configuration requires a tls+tcp:// or wss:// URL
+
+statement error
+SELECT ducknng_get_rpc_manifest_raw_aio('tcp://127.0.0.1:1', 100, getvariable('negative_tls_id')::UBIGINT)
+----
+ducknng: TLS configuration requires a tls+tcp:// or wss:// URL
+
+statement ok
+SET VARIABLE negative_req_socket = (
+  SELECT ducknng_open_socket('req')
+)
+
+statement error
+SELECT ducknng_dial_socket(getvariable('negative_req_socket')::UBIGINT, 'tcp://127.0.0.1:1', 100, getvariable('negative_tls_id')::UBIGINT)
+----
+ducknng: TLS configuration requires a tls+tcp:// or wss:// URL
+
+query I
+SELECT CASE WHEN ducknng_close_socket(getvariable('negative_req_socket')::UBIGINT) THEN 1 ELSE 0 END
+----
+1
+
+query IT
+SELECT ok, error
+FROM ducknng_ncurl('http://127.0.0.1:1/', 'GET', NULL, NULL, 100, getvariable('negative_tls_id')::UBIGINT)
+----
+0	ducknng: TLS configuration requires an https:// URL
+
+statement error
+SELECT *
+FROM ducknng_ncurl_table('http://127.0.0.1:1/', 'GET', NULL, NULL, 100, getvariable('negative_tls_id')::UBIGINT)
+----
+ducknng: TLS configuration requires an https:// URL
+
+query I
+SELECT CASE WHEN ducknng_drop_tls_config(getvariable('negative_tls_id')::UBIGINT) THEN 1 ELSE 0 END
+----
+1
+
 statement error
 SELECT ducknng_start_server('bad_ip_json', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT, 'not-json')
 ----

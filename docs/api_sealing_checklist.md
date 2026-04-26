@@ -95,13 +95,15 @@ These items were worth resolving before the API hardens further and should stay 
 - `ducknng_set_method_auth(name, requires_auth)` can protect registry-backed methods such as `manifest` using the same descriptor-level auth path
 - unregistration now refuses to remove sessionful methods or families while any service has open sessions
 - `ducknng_ncurl_aio(...)` now provides the nanonext-style async HTTP client slice and collects through `ducknng_ncurl_aio_collect(...)`
+- `ducknng_read_monitor(...)`, `ducknng_monitor_status(...)`, and `ducknng_list_pipes(...)` provide NNG pipe event and active-pipe telemetry
+- `src/ducknng_sql_api.c` has been split into focused SQL registration modules and is now only the top-level registration orchestrator
+- lifecycle tests cover stopping services with live sessions and rejecting same-service stop while a service-owned SQL authorizer request is active
+- unsupported URL schemes and supplied TLS configuration on non-TLS schemes have regression coverage across the major client/helper families
 
 ## Not sealing blockers by themselves
 
 These are still important, but they do not need to be finished before the API can be considered sealed if the above items are settled:
 
-- splitting `src/ducknng_sql_api.c`
 - user-defined codec registration hooks beyond the current built-in body codec providers
 - scalarfs-style in-memory filesystem/provider research for CSV/TSV/Parquet body parsing, because the generic `body BLOB` fallback is an acceptable stable behavior until a clean provider exists
-- pipe event notification work
 - a future DuckDB-native Arrow re-plumb, if one ever becomes viable without unstable or deprecated APIs
