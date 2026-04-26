@@ -65,6 +65,7 @@ set(EXTENSION_SOURCES
     src/ducknng_sql_tls.c
     src/ducknng_sql_socket.c
     src/ducknng_sql_aio.c
+    src/ducknng_sql_registry.c
     src/ducknng_runtime.c
     src/ducknng_service.c
     src/ducknng_session.c
