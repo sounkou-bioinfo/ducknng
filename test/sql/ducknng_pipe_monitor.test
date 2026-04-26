@@ -61,6 +61,23 @@ FROM ducknng_monitor_status('monitor_rpc')
 ----
 true	true	true	true	true
 
+query I
+SELECT count(*)
+FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 1::UBIGINT)
+----
+1
+
+statement ok
+SET VARIABLE monitor_after_newest_seq = (
+  SELECT newest_seq + 100::UBIGINT FROM ducknng_monitor_status('monitor_rpc')
+)
+
+query I
+SELECT count(*)
+FROM ducknng_read_monitor('monitor_rpc', getvariable('monitor_after_newest_seq')::UBIGINT, 100::UBIGINT)
+----
+0
+
 statement ok
 SET VARIABLE monitor_last_seq = (
   SELECT max(seq) FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
