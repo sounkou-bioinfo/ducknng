@@ -1986,6 +1986,34 @@ A strong direct-exposure baseline is:
     `ducknng_set_service_limits(...)`, and
     `ducknng_set_service_authorizer(...)`.
 
+Free-form SQL execution is intentionally a deployment-owned capability.
+`ducknng` keeps its own generated SQL injection-safe, but it does not
+make arbitrary user SQL safe: `exec` and query sessions run DuckDB SQL
+as the service process on the configured DuckDB connection. Do not
+expose `exec` or unrestricted query sessions to callers who are not
+already authorized to run that SQL. Use these profiles as a starting
+point:
+
+- **Local development / single-user IPC**: `inproc://`, loopback, or
+  `ipc://` under a private directory; `exec` may be enabled for
+  convenience inside that local boundary.
+- **Trusted service mesh**: `tls+tcp://`, `wss://`, or `https://` with
+  mTLS, exact peer allowlists, IP/CIDR allowlists where useful, and
+  service limits; register `exec` with
+  `ducknng_register_exec_method(true)` or leave it disabled.
+- **Shared or semi-trusted clients**: prefer query sessions plus a short
+  SQL authorizer; use deployment-level DuckDB/process controls for
+  filesystem, extension loading, outbound network, and attachments.
+- **Public/untrusted internet**: do not expose raw DuckDB SQL directly.
+  Put `ducknng` behind a gateway that authenticates, rate-limits, and
+  maps users to fixed application operations, or build a separate route
+  layer that does not forward arbitrary SQL text.
+
+When writing SQL authorizers, read request fields from
+`ducknng_auth_context()` and avoid string-concatenating untrusted HTTP
+headers, method names, or payload text into new SQL. Keep the callback
+short and side-effect-light.
+
 The relevant identity strings currently come from verified TLS peer
 metadata and are SAN-first, CN-fallback: `tls:san:<value>` or
 `tls:cn:<common-name>`. Peer identity allowlists are exact-match. IP

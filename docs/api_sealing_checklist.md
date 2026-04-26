@@ -27,7 +27,7 @@ That is enough for serious use and interop work, but it is not yet enough to cal
 
 The previous bare-`session_id` ownership blocker is addressed by the current query-family bearer token model: `query_open` returns `session_token`, and `fetch`, `close`, and `cancel` must present it with the session id. Transport-derived mTLS identity has also landed for TLS-authenticated services, sessions opened with a verified peer identity are bound to that identity in addition to the token, and services can now enforce exact verified-peer allowlists, IP/CIDR allowlists, and service-level SQL authorizer callbacks. Before sealing, the remaining ownership question is whether this bearer-token plus optional mTLS owner-identity model is the stable public owner contract or whether an envelope-level RPC authentication layer is still required.
 
-The current service execution model is a single serialized DuckDB execution lane backed by the runtime init connection. That is no longer treated as an automatic sealing blocker: deployments can scale or isolate work by using multiple DuckDB contexts, multiple `ducknng` services or instances, or an upstream router. The remaining decision is how strongly the stable API must expose and document that lane model, and which filesystem, extension-loading, external-access, and attachment capabilities are allowed when deployments expose SQL over RPC. Per-session or per-request DuckDB connections remain a possible hard-isolation mode, not the only acceptable sealed posture.
+The current service execution model is a single serialized DuckDB execution lane backed by the runtime init connection. That is no longer treated as an automatic sealing blocker: deployments can scale or isolate work by using multiple DuckDB contexts, multiple `ducknng` services or instances, or an upstream router. Free-form `exec` and query-session SQL are intentionally deployment-owned capabilities rather than an automatic sandbox; the remaining sealing work is to keep `ducknng`'s own generated SQL injection-safe and document clear deployment profiles for local, trusted-mesh, shared-client, and public/untrusted settings. Per-session or per-request DuckDB connections remain a possible hard-isolation mode for deployments that need it, not the only acceptable sealed posture.
 
 ### 2. Resource quotas for multi-client services
 
@@ -99,6 +99,7 @@ These items were worth resolving before the API hardens further and should stay 
 - `src/ducknng_sql_api.c` has been split into focused SQL registration modules and is now only the top-level registration orchestrator
 - lifecycle tests cover stopping services with live sessions and rejecting same-service stop while a service-owned SQL authorizer request is active
 - unsupported URL schemes and supplied TLS configuration on non-TLS schemes have regression coverage across the major client/helper families
+- `docs/security.md` now states that arbitrary SQL execution is a deployment-owned capability, not an automatic sandbox, and names recommended exposure profiles plus the internal SQL-injection boundary
 
 ## Not sealing blockers by themselves
 

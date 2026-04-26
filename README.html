@@ -3023,6 +3023,39 @@ on deployment tables, tenants, method names, or HTTP metadata;</li>
 <code>ducknng_set_service_limits(...)</code>, and
 <code>ducknng_set_service_authorizer(...)</code>.</li>
 </ol>
+<p>Free-form SQL execution is intentionally a deployment-owned
+capability. <code>ducknng</code> keeps its own generated SQL
+injection-safe, but it does not make arbitrary user SQL safe:
+<code>exec</code> and query sessions run DuckDB SQL as the service
+process on the configured DuckDB connection. Do not expose
+<code>exec</code> or unrestricted query sessions to callers who are not
+already authorized to run that SQL. Use these profiles as a starting
+point:</p>
+<ul>
+<li><strong>Local development / single-user IPC</strong>:
+<code>inproc://</code>, loopback, or <code>ipc://</code> under a private
+directory; <code>exec</code> may be enabled for convenience inside that
+local boundary.</li>
+<li><strong>Trusted service mesh</strong>: <code>tls+tcp://</code>,
+<code>wss://</code>, or <code>https://</code> with mTLS, exact peer
+allowlists, IP/CIDR allowlists where useful, and service limits;
+register <code>exec</code> with
+<code>ducknng_register_exec_method(true)</code> or leave it
+disabled.</li>
+<li><strong>Shared or semi-trusted clients</strong>: prefer query
+sessions plus a short SQL authorizer; use deployment-level
+DuckDB/process controls for filesystem, extension loading, outbound
+network, and attachments.</li>
+<li><strong>Public/untrusted internet</strong>: do not expose raw DuckDB
+SQL directly. Put <code>ducknng</code> behind a gateway that
+authenticates, rate-limits, and maps users to fixed application
+operations, or build a separate route layer that does not forward
+arbitrary SQL text.</li>
+</ul>
+<p>When writing SQL authorizers, read request fields from
+<code>ducknng_auth_context()</code> and avoid string-concatenating
+untrusted HTTP headers, method names, or payload text into new SQL. Keep
+the callback short and side-effect-light.</p>
 <p>The relevant identity strings currently come from verified TLS peer
 metadata and are SAN-first, CN-fallback:
 <code>tls:san:&lt;value&gt;</code> or
