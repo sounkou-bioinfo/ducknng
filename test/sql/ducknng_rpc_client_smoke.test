@@ -401,6 +401,18 @@ FROM ducknng_aio_collect((SELECT list_value(aio1, aio2) FROM aio_launch), 0)
 ----
 0
 
+query T
+SELECT state
+FROM aio_launch, ducknng_aio_status(aio1)
+----
+collected
+
+query I
+SELECT ducknng_aio_cancel(aio1)
+FROM aio_launch
+----
+0
+
 query I
 SELECT ducknng_aio_drop(aio1) AND ducknng_aio_drop(aio2)
 FROM aio_launch

@@ -47,24 +47,13 @@ The HTTP transport direction is now in place:
 
 The remaining HTTP question is the broader server framework: the current server is a non-blocking NNG HTTP server that mounts one framed RPC handler; a later web-toolkit layer may add explicit route handlers, static responses, or SQL-backed handlers, but it must not create path-specific copies of existing RPC methods. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules unless a separate web-framework surface is designed and documented.
 
-### 5. Final generic socket transport coverage story
+### 5. Transport matrix stance
 
-The generic socket dial surface now accepts an explicit `tls_config_id`, which makes `tls+tcp://` and `wss://` usable through the existing handle model. Before sealing, the remaining question is not whether TLS dialing exists, but whether the repo's examples and docs cover the intended supported transport matrix clearly enough across the broader protocol family.
+The generic socket dial surface accepts an explicit `tls_config_id`, which makes `tls+tcp://` and `wss://` usable through the existing handle model. The stable scheme matrix is documented in `docs/transports.md` and summarized in the README: NNG service/socket surfaces accept NNG schemes, HTTP helper surfaces accept HTTP/HTTPS schemes, synchronous RPC/session helpers route across both families, raw RPC AIO remains NNG-scheme-only, and non-zero TLS handles are accepted only on TLS-capable schemes.
 
 ### 6. Final async surface scope
 
-The project now has:
-
-- raw transport aio helpers
-- raw HTTP/HTTPS ncurl aio helpers
-- the first raw unary RPC aio wrappers
-
-Before sealing, it should decide whether the stable async contract is:
-
-- raw-frame-first only
-- or raw plus additional structured async wrappers
-
-What matters is not maximizing surface area, but freezing a clear model: aio launch timeout bounds the pending operation, `ducknng_aio_collect(..., wait_ms)` is later polling/collection, and async helpers do not silently become a second background-job protocol.
+The stable async contract is raw-result-first. NNG/RPC aio helpers collect raw frames through `ducknng_aio_collect(...)`, HTTP aio helpers collect raw HTTP status/header/body rows through `ducknng_ncurl_aio_collect(...)`, and callers explicitly decode frames or bodies afterward. AIO launch timeout bounds one pending operation; `ducknng_aio_collect(..., wait_ms)` and `ducknng_ncurl_aio_collect(..., wait_ms)` only control how long a later collection call waits. Additional structured async wrappers may be added later as convenience APIs, but they are additive and must not become a second background-job or streaming protocol.
 
 ### 7. Final type contract stance
 
@@ -103,6 +92,8 @@ These items were worth resolving before the API hardens further and should stay 
 - unsupported URL schemes and supplied TLS configuration on non-TLS schemes have regression coverage across the major client/helper families
 - fetched Arrow IPC session payloads are decoded through `ducknng_parse_body(payload, 'application/vnd.apache.arrow.stream')`, with regression coverage in the session smoke test
 - `docs/security.md` now states that arbitrary SQL execution is a deployment-owned capability, not an automatic sandbox, and names recommended exposure profiles plus the internal SQL-injection boundary
+- the transport matrix is documented in `docs/transports.md` and summarized in the README, including which schemes accept TLS handles and which surfaces reject the other family
+- the async contract is raw-result-first: NNG/RPC aio returns frames, HTTP aio returns HTTP-shaped rows, and structured async wrappers are optional future conveniences
 
 ## Not sealing blockers by themselves
 

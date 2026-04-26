@@ -2212,6 +2212,14 @@ one survey and one response through <code>surveyor</code> /
 +---------------+------+--------------+</code></pre>
 <h3 id="launch-raw-requests-asynchronously-and-collect-the-reply-frames-later">Launch
 raw requests asynchronously and collect the reply frames later</h3>
+<p>The stable async contract is raw-result-first. NNG/RPC aio helpers
+collect raw frames through <code>ducknng_aio_collect(...)</code>, HTTP
+aio helpers collect HTTP-shaped rows through
+<code>ducknng_ncurl_aio_collect(...)</code>, and callers explicitly
+decode frames or bodies afterward. Structured async wrappers may be
+added later as conveniences, but they remain additive; aio handles
+represent one pending operation, not a background job or streaming
+protocol.</p>
 <div class="sourceCode" id="cb23"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a>LOAD <span class="st">&#39;build/release/ducknng.duckdb_extension&#39;</span>;</span>
 <span id="cb23-2"><a href="#cb23-2" tabindex="-1"></a><span class="co">-- Start a local listener that the aio requests will target.</span></span>
 <span id="cb23-3"><a href="#cb23-3" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_start_server(</span>
@@ -3134,6 +3142,44 @@ active deny-all.</p>
 <span id="cb42-36"><a href="#cb42-36" tabindex="-1"></a><span class="st">   FROM ducknng_auth_context()&#39;</span></span>
 <span id="cb42-37"><a href="#cb42-37" tabindex="-1"></a>);</span></code></pre></div>
 <p>Transport-specific deployment notes:</p>
+<table>
+<thead>
+<tr class="header">
+<th>Surface</th>
+<th>Accepted schemes</th>
+<th>TLS handle accepted on</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>ducknng_start_server(...)</code> and generic socket APIs</td>
+<td><code>inproc://</code>, <code>ipc://</code>, <code>tcp://</code>,
+<code>tls+tcp://</code>, <code>ws://</code>, <code>wss://</code></td>
+<td><code>tls+tcp://</code>, <code>wss://</code></td>
+</tr>
+<tr class="even">
+<td>synchronous RPC/session helpers</td>
+<td>NNG schemes plus <code>http://</code>, <code>https://</code></td>
+<td><code>tls+tcp://</code>, <code>wss://</code>,
+<code>https://</code></td>
+</tr>
+<tr class="odd">
+<td>raw RPC AIO helpers</td>
+<td>NNG schemes only</td>
+<td><code>tls+tcp://</code>, <code>wss://</code></td>
+</tr>
+<tr class="even">
+<td><code>ducknng_start_http_server(...)</code>,
+<code>ducknng_ncurl(...)</code>, <code>ducknng_ncurl_aio(...)</code>,
+<code>ducknng_ncurl_table(...)</code></td>
+<td><code>http://</code>, <code>https://</code></td>
+<td><code>https://</code></td>
+</tr>
+</tbody>
+</table>
+<p>Supplying a non-zero TLS handle on a non-TLS URL is rejected rather
+than silently ignored. HTTP/HTTPS URLs are rejected by the generic NNG
+socket layer, and NNG URLs are rejected by HTTP-only helpers.</p>
 <ul>
 <li><code>inproc://</code> is a same-process boundary. It is useful for
 embedded testing/composition, but it is not network authentication.</li>

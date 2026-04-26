@@ -1130,6 +1130,14 @@ SET VARIABLE respondent_close = ducknng_close_socket(getvariable('respondent_soc
 
 ### Launch raw requests asynchronously and collect the reply frames later
 
+The stable async contract is raw-result-first. NNG/RPC aio helpers
+collect raw frames through `ducknng_aio_collect(...)`, HTTP aio helpers
+collect HTTP-shaped rows through `ducknng_ncurl_aio_collect(...)`, and
+callers explicitly decode frames or bodies afterward. Structured async
+wrappers may be added later as conveniences, but they remain additive;
+aio handles represent one pending operation, not a background job or
+streaming protocol.
+
 ``` sql
 LOAD 'build/release/ducknng.duckdb_extension';
 -- Start a local listener that the aio requests will target.
@@ -2093,6 +2101,17 @@ SELECT ducknng_set_service_authorizer(
 ```
 
 Transport-specific deployment notes:
+
+| Surface                                                                                                      | Accepted schemes                                                 | TLS handle accepted on             |
+|--------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------|------------------------------------|
+| `ducknng_start_server(...)` and generic socket APIs                                                          | `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, `wss://` | `tls+tcp://`, `wss://`             |
+| synchronous RPC/session helpers                                                                              | NNG schemes plus `http://`, `https://`                           | `tls+tcp://`, `wss://`, `https://` |
+| raw RPC AIO helpers                                                                                          | NNG schemes only                                                 | `tls+tcp://`, `wss://`             |
+| `ducknng_start_http_server(...)`, `ducknng_ncurl(...)`, `ducknng_ncurl_aio(...)`, `ducknng_ncurl_table(...)` | `http://`, `https://`                                            | `https://`                         |
+
+Supplying a non-zero TLS handle on a non-TLS URL is rejected rather than
+silently ignored. HTTP/HTTPS URLs are rejected by the generic NNG socket
+layer, and NNG URLs are rejected by HTTP-only helpers.
 
 - `inproc://` is a same-process boundary. It is useful for embedded
   testing/composition, but it is not network authentication.

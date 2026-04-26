@@ -747,8 +747,9 @@
       "implemented": true,
       "description": "Launch one raw req/rep roundtrip asynchronously and return a future-like aio handle id.",
       "notes": [
-        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp://.",
+        "Pass tls_config_id = 0::UBIGINT for plaintext or a registered TLS handle for tls+tcp:// or wss://.",
         "The returned handle represents one pending request operation backed by NNG aio state.",
+        "The stable async contract is raw-frame-first: collect with ducknng_aio_collect() and decode the reply frame explicitly.",
         "timeout_ms bounds the lifetime of that pending operation; it is separate from the later wait_ms argument passed to ducknng_aio_collect().",
         "Use ducknng_aio_status() to inspect whether the send phase has completed successfully.",
         "Use ducknng_aio_collect() to retrieve the full reply frame later."
@@ -768,7 +769,7 @@
       "description": "Launch one asynchronous manifest RPC request and return an aio handle id for the raw reply frame.",
       "notes": [
         "This is a raw unary RPC aio wrapper layered on top of the ordinary request/reply aio substrate rather than a separate job system.",
-        "Collect the aio later and decode the returned frame with ducknng_decode_frame().",
+        "The stable async contract is raw-frame-first: collect the aio later and decode the returned frame with ducknng_decode_frame().",
         "timeout_ms bounds the launched request operation itself; it does not control how long a later ducknng_aio_collect() call waits."
       ],
       "examples": [
@@ -786,7 +787,7 @@
       "description": "Launch one asynchronous metadata-only exec RPC request and return an aio handle id for the raw reply frame.",
       "notes": [
         "This is the raw async companion to ducknng_run_rpc_raw().",
-        "Collect the aio later and decode the returned frame with ducknng_decode_frame().",
+        "The stable async contract is raw-frame-first: collect the aio later and decode the returned frame with ducknng_decode_frame().",
         "timeout_ms bounds the launched request operation itself; it does not control how long a later ducknng_aio_collect() call waits."
       ],
       "examples": [

@@ -6,6 +6,19 @@ The core rule is simple. Transport adapters may change how bytes move, but they 
 
 Today `ducknng` has two implemented transport families. The NNG family covers `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`, all of which resolve into the NNG adapter layer isolated in `src/ducknng_nng_compat.c`. The HTTP family covers `http://` and `https://` through the separate adapter in `src/ducknng_http_compat.c`, built on NNG's supplemental HTTP APIs rather than on NNG protocol sockets. The transport-family parser that classifies URL schemes lives separately in `src/ducknng_transport.c` so the SQL layer can pick one family cleanly before handing control to the appropriate adapter.
 
+The stable scheme matrix is:
+
+| Surface | Accepted schemes | TLS handle accepted on | Explicitly rejected |
+| --- | --- | --- | --- |
+| `ducknng_start_server(...)` | `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, `wss://` | `tls+tcp://`, `wss://` | `http://`, `https://` |
+| generic socket API (`ducknng_dial_socket`, `ducknng_listen_socket`) | `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, `wss://` | `tls+tcp://`, `wss://` | `http://`, `https://` |
+| synchronous RPC/session helpers (`ducknng_request`, `ducknng_get_rpc_manifest`, `ducknng_run_rpc`, `ducknng_query_rpc`, `ducknng_open_query`, `ducknng_fetch_query`, `ducknng_close_query`, `ducknng_cancel_query`) | NNG schemes plus `http://`, `https://` | `tls+tcp://`, `wss://`, `https://` | unknown schemes; TLS handles on non-TLS schemes |
+| raw RPC AIO helpers (`ducknng_request_raw_aio`, `ducknng_get_rpc_manifest_raw_aio`, `ducknng_run_rpc_raw_aio`) | NNG schemes only | `tls+tcp://`, `wss://` | `http://`, `https://`, unknown schemes, TLS handles on non-TLS schemes |
+| `ducknng_start_http_server(...)` | `http://`, `https://` | `https://` | NNG schemes |
+| HTTP client helpers (`ducknng_ncurl`, `ducknng_ncurl_aio`, `ducknng_ncurl_table`) | `http://`, `https://` | `https://` | NNG schemes, unknown schemes, TLS handles on `http://` |
+
+`tls_config_id = 0` means no TLS handle. Supplying a non-zero TLS handle on a non-TLS URL is rejected rather than silently ignored. This is part of the security contract: if an operator supplied TLS material, the connection must either use a TLS-capable scheme or fail before dialing/listening.
+
 HTTP is not just a spelling of NNG `tcp://`, and HTTPS is not just a spelling of NNG `tls+tcp://`. They share lower network layers, but their application framing is different. NNG `tcp://` and `tls+tcp://` carry NNG scalability-protocol frames directly over streams. HTTP/HTTPS carries HTTP requests and responses with methods, paths, headers, status codes, and bodies; `ducknng` places exactly one framed RPC envelope in that HTTP body. Likewise, NNG `ws://` and `wss://` use an HTTP/WebSocket handshake but then carry the NNG WebSocket mapping for scalability protocols, so they remain in the NNG family rather than becoming HTTP carrier routes.
 
 The HTTP and HTTPS family surfaces through local SQL helpers such as `ducknng_start_http_server(...)`, `ducknng_ncurl(...)`, and `ducknng_ncurl_aio(...)`, but those helpers are transport-local entry points, not new manifest methods. The manifest does not gain `http_exec`, `http_query_open`, `http_fetch`, or similar duplicates. It continues to describe `manifest`, `exec`, `query_open`, `fetch`, `close`, and `cancel` once, independent of whether the current carrier is NNG or HTTP. The concrete first-pass HTTP contract, including the frame-over-HTTP carrier rule, is pinned in `docs/http.md`.
