@@ -20,10 +20,11 @@ SELECT CASE WHEN ducknng_set_service_limits('limit_rpc', 1::UBIGINT) THEN 1 ELSE
 ----
 1
 
-query I
-SELECT max_open_sessions FROM ducknng_list_servers() WHERE name = 'limit_rpc'
+query IIII
+SELECT max_open_sessions, max_active_pipes, inflight_requests, max_inflight_requests
+FROM ducknng_list_servers() WHERE name = 'limit_rpc'
 ----
-1
+1	0	0	0
 
 statement ok
 CREATE TEMP TABLE limit_open AS
@@ -67,5 +68,56 @@ FROM ducknng_open_query(getvariable('limit_rpc_url')::VARCHAR, 'SELECT 13 AS x',
 
 query I
 SELECT CASE WHEN ducknng_stop_server('limit_rpc') THEN 1 ELSE 0 END
+----
+1
+
+query I
+SELECT CASE
+  WHEN ducknng_start_server('inflight_rpc', 'tcp://127.0.0.1:0', 2, 134217728, 300000, 0::UBIGINT)
+  THEN 1 ELSE 0 END
+----
+1
+
+statement ok
+SET VARIABLE inflight_rpc_url = (
+  SELECT listen FROM ducknng_list_servers() WHERE name = 'inflight_rpc'
+)
+
+query I
+SELECT CASE WHEN ducknng_set_service_limits('inflight_rpc', 0::UBIGINT, 0::UBIGINT, 1::UBIGINT) THEN 1 ELSE 0 END
+----
+1
+
+query I
+SELECT max_inflight_requests FROM ducknng_list_servers() WHERE name = 'inflight_rpc'
+----
+1
+
+query I
+SELECT CASE WHEN ducknng_set_service_authorizer('inflight_rpc', 'SELECT true AS allow, sleep_ms(500) AS slept') THEN 1 ELSE 0 END
+----
+1
+
+statement ok
+CREATE TEMP TABLE inflight_aio AS
+SELECT ducknng_get_rpc_manifest_raw_aio(getvariable('inflight_rpc_url')::VARCHAR, 2000, 0::UBIGINT) AS aio
+
+query IT
+SELECT ok, error
+FROM ducknng_get_rpc_manifest(getvariable('inflight_rpc_url')::VARCHAR, 0::UBIGINT)
+----
+0	ducknng: max inflight requests exceeded
+
+query III
+SELECT aio_id = (SELECT aio FROM inflight_aio), ok, octet_length(frame) > 0
+FROM ducknng_aio_collect((SELECT list_value(aio) FROM inflight_aio), 2000)
+----
+1	1	1
+
+statement ok
+DROP TABLE inflight_aio
+
+query I
+SELECT CASE WHEN ducknng_stop_server('inflight_rpc') THEN 1 ELSE 0 END
 ----
 1

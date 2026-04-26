@@ -674,8 +674,10 @@ identity are additionally bound to that identity. Server-owned session
 policy, including <code>idle_timeout_ms</code> and
 <code>max_open_sessions</code>, is exposed in service/manifest metadata,
 and live service introspection also reports current
-<code>active_pipes</code> and configured <code>max_active_pipes</code>
-for NNG services.</p></li>
+<code>active_pipes</code>, <code>inflight_requests</code>, and
+configured
+<code>max_active_pipes</code>/<code>max_inflight_requests</code> for
+services.</p></li>
 <li><p><strong>Payload and body codecs.</strong> RPC row payloads use
 Arrow IPC. RPC control metadata and the manifest are JSON text inside
 framed payloads; SQL helper columns such as <code>manifest</code> keep
@@ -728,8 +730,10 @@ to verified mTLS peer identity when present; service/manifest metadata
 exposes server-owned effective session policy including
 <code>idle_timeout_ms</code> and <code>max_open_sessions</code>;
 <code>ducknng_list_servers()</code> also exposes current
-<code>active_pipes</code> and configured <code>max_active_pipes</code>
-for NNG services</li>
+<code>active_pipes</code>, <code>inflight_requests</code>, and
+configured
+<code>max_active_pipes</code>/<code>max_inflight_requests</code> for
+services</li>
 </ul>
 <p>Still intentionally deferred or not sealed:</p>
 <ul>
@@ -911,7 +915,7 @@ Expand the full generated function catalog
 <td><code>ducknng_list_servers</code></td>
 <td>table</td>
 <td></td>
-<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, active_pipes UBIGINT, max_open_sessions UBIGINT, max_active_pipes UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
+<td><code>TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, active_pipes UBIGINT, max_open_sessions UBIGINT, max_active_pipes UBIGINT, inflight_requests UBIGINT, max_inflight_requests UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)</code></td>
 <td>List registered ducknng services.</td>
 </tr>
 <tr class="even">
@@ -1162,7 +1166,7 @@ service.</td>
 <tr class="even">
 <td><code>ducknng_set_service_limits</code></td>
 <td>scalar</td>
-<td><code>name, max_open_sessions[, max_active_pipes]</code></td>
+<td><code>name, max_open_sessions[, max_active_pipes[, max_inflight_requests]]</code></td>
 <td><code>BOOLEAN</code></td>
 <td>Set service resource limits.</td>
 </tr>
@@ -2557,7 +2561,8 @@ allowlist dynamically for a running service. NNG listeners use NNG’s
 new pipes before they are added to the socket; HTTP/HTTPS returns HTTP
 <code>403</code> before RPC dispatch.
 <code>ducknng_list_servers()</code> exposes <code>active_pipes</code>,
-<code>max_active_pipes</code>, <code>tls_enabled</code>,
+<code>max_active_pipes</code>, <code>inflight_requests</code>,
+<code>max_inflight_requests</code>, <code>tls_enabled</code>,
 <code>tls_auth_mode</code>, <code>peer_identity_required</code>,
 <code>peer_allowlist_active</code>, <code>ip_allowlist_active</code>,
 <code>sql_authorizer_active</code>, and the corresponding counts so
@@ -2573,12 +2578,13 @@ flexible SQL callback and, for NNG transports, can reject new pipes at
 <code>NNG_PIPE_EV_ADD_PRE</code> without entering DuckDB. Basic service
 resource limits also start in C:
 <code>ducknng_set_service_limits(name, max_open_sessions)</code> caps
-concurrently open query sessions for a service, and the extended form
-<code>ducknng_set_service_limits(name, max_open_sessions, max_active_pipes)</code>
+concurrently open query sessions for a service, the three-argument form
 also caps simultaneously active NNG protocol-socket pipes at
-<code>ADD_PRE</code>; <code>0</code> means unlimited for either cap. For
-policy that depends on tables, tenants, method names, headers, or
-deployment-specific rules, install a service-level SQL authorizer with
+<code>ADD_PRE</code>, and the four-argument form also caps concurrent
+in-flight requests before SQL authorizers and RPC dispatch;
+<code>0</code> means unlimited for any cap. For policy that depends on
+tables, tenants, method names, headers, or deployment-specific rules,
+install a service-level SQL authorizer with
 <code>ducknng_set_service_authorizer(name, authorizer_sql)</code>. The
 callback sees one row from <code>ducknng_auth_context()</code> while it
 runs and must return exactly one row with a Boolean <code>allow</code>
@@ -2927,7 +2933,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_4ada7308efb2d.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_7b8fb48a9a3c2.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
@@ -3000,7 +3006,7 @@ the trust root is not broader than the application;</li>
 with <code>ducknng_set_tls_peer_allowlist(...)</code> and the optional
 <code>ip_allowlist_json</code> startup argument;</li>
 <li>set basic service resource limits such as
-<code>ducknng_set_service_limits(name, max_open_sessions[, max_active_pipes])</code>
+<code>ducknng_set_service_limits(name, max_open_sessions[, max_active_pipes[, max_inflight_requests]])</code>
 before exposing query sessions;</li>
 <li>install a service-level SQL authorizer with
 <code>ducknng_set_service_authorizer(...)</code> when admission depends

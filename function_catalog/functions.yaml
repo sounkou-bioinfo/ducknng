@@ -57,7 +57,7 @@
       "kind": "table",
       "category": "Introspection",
       "signature": "ducknng_list_servers()",
-      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, active_pipes UBIGINT, max_open_sessions UBIGINT, max_active_pipes UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)",
+      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, active_pipes UBIGINT, max_open_sessions UBIGINT, max_active_pipes UBIGINT, inflight_requests UBIGINT, max_inflight_requests UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List registered ducknng services.",
@@ -71,7 +71,9 @@
         "sql_authorizer_active reports whether a service-level SQL authorization callback is installed.",
         "max_open_sessions is 0 for unlimited; non-zero values are enforced before query_open registers a new session.",
         "active_pipes counts currently active NNG protocol-socket pipes for the service; HTTP/HTTPS carrier connections are not NNG pipes.",
-        "max_active_pipes is 0 for unlimited; non-zero values are enforced at NNG ADD_PRE pipe admission."
+        "max_active_pipes is 0 for unlimited; non-zero values are enforced at NNG ADD_PRE pipe admission.",
+        "inflight_requests counts requests currently inside the service request boundary.",
+        "max_inflight_requests is 0 for unlimited; non-zero values are enforced before SQL authorizers and RPC dispatch."
       ],
       "examples": [
         "SELECT * FROM ducknng_list_servers();"
@@ -468,7 +470,7 @@
       "name": "ducknng_set_service_limits",
       "kind": "scalar",
       "category": "Transport Security",
-      "signature": "ducknng_set_service_limits(name, max_open_sessions[, max_active_pipes])",
+      "signature": "ducknng_set_service_limits(name, max_open_sessions[, max_active_pipes[, max_inflight_requests]])",
       "returns": "BOOLEAN",
       "since": "0.1.0",
       "implemented": true,
@@ -479,12 +481,16 @@
         "When the limit is exceeded, query_open fails with ducknng: max open sessions exceeded.",
         "Future service limits may include per-owner session caps, in-flight request caps, byte budgets, and rate limits.",
         "max_active_pipes limits simultaneously active NNG protocol-socket pipes for the service; 0 means unlimited.",
-        "The two-argument form preserves the current max_active_pipes value."
+        "The two-argument form preserves the current max_active_pipes value.",
+        "max_inflight_requests limits concurrent requests inside the service request boundary; 0 means unlimited.",
+        "The three-argument form preserves the current max_inflight_requests value."
       ],
       "examples": [
         "SELECT ducknng_set_service_limits('svc', 16::UBIGINT);",
-        "SELECT ducknng_set_service_limits('svc', 16::UBIGINT, 128::UBIGINT);"
-      ]
+        "SELECT ducknng_set_service_limits('svc', 16::UBIGINT, 128::UBIGINT);",
+        "SELECT ducknng_set_service_limits('svc', 16::UBIGINT, 128::UBIGINT, 8::UBIGINT);"
+      ],
+      "parameters": "name, max_open_sessions[, max_active_pipes[, max_inflight_requests]]"
     },
     {
       "name": "ducknng_auth_context",

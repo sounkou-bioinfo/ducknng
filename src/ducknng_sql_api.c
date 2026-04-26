@@ -1334,52 +1334,6 @@ static void ducknng_set_service_ip_allowlist_scalar(duckdb_function_info info, d
     }
 }
 
-static void ducknng_set_service_limits_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
-    idx_t count = duckdb_data_chunk_get_size(input);
-    idx_t row;
-    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
-    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
-    bool *out = (bool *)duckdb_vector_get_data(output);
-    for (row = 0; row < count; row++) {
-        char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
-        idx_t ncols = duckdb_data_chunk_get_column_count(input);
-        uint64_t max_open_sessions = arg_u64(duckdb_data_chunk_get_vector(input, 1), row, 0);
-        uint64_t max_active_pipes = 0;
-        ducknng_service *svc = NULL;
-        char *errmsg = NULL;
-        size_t i;
-        if (!ctx || !ctx->rt || !name || !name[0]) {
-            if (name) duckdb_free(name);
-            duckdb_scalar_function_set_error(info, "ducknng: service name is required");
-            return;
-        }
-        ducknng_mutex_lock(&ctx->rt->mu);
-        for (i = 0; i < ctx->rt->service_count; i++) {
-            if (ctx->rt->services[i] && ctx->rt->services[i]->name && strcmp(ctx->rt->services[i]->name, name) == 0) {
-                svc = ctx->rt->services[i];
-                break;
-            }
-        }
-        if (!svc) {
-            ducknng_mutex_unlock(&ctx->rt->mu);
-            duckdb_free(name);
-            duckdb_scalar_function_set_error(info, "ducknng: service not found");
-            return;
-        }
-        max_active_pipes = ncols > 2 ? arg_u64(duckdb_data_chunk_get_vector(input, 2), row, 0) : ducknng_service_max_active_pipes(svc);
-        if (ducknng_service_set_limits(svc, max_open_sessions, max_active_pipes, &errmsg) != 0) {
-            ducknng_mutex_unlock(&ctx->rt->mu);
-            duckdb_free(name);
-            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to set service limits");
-            if (errmsg) duckdb_free(errmsg);
-            return;
-        }
-        ducknng_mutex_unlock(&ctx->rt->mu);
-        duckdb_free(name);
-        out[row] = true;
-    }
-}
-
 static void ducknng_register_exec_method_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
     idx_t count = duckdb_data_chunk_get_size(input);
     idx_t ncols = duckdb_data_chunk_get_column_count(input);
@@ -7049,8 +7003,6 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     duckdb_type tls_id_types[1] = {DUCKDB_TYPE_UBIGINT};
     duckdb_type tls_allowlist_types[2] = {DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_VARCHAR};
     duckdb_type service_allowlist_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_VARCHAR};
-    duckdb_type service_limits_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT};
-    duckdb_type service_limits_extended_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
     duckdb_type method_name_types[1] = {DUCKDB_TYPE_VARCHAR};
     duckdb_type method_auth_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_BOOLEAN};
     duckdb_type method_family_types[1] = {DUCKDB_TYPE_VARCHAR};
@@ -7069,8 +7021,6 @@ int ducknng_register_sql_api(duckdb_connection connection, ducknng_runtime *rt) 
     if (!register_scalar(connection, "ducknng_set_tls_peer_allowlist", 2, ducknng_set_tls_peer_allowlist_scalar, &ctx, tls_allowlist_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_set_service_peer_allowlist", 2, ducknng_set_service_peer_allowlist_scalar, &ctx, service_allowlist_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_set_service_ip_allowlist", 2, ducknng_set_service_ip_allowlist_scalar, &ctx, service_allowlist_types, DUCKDB_TYPE_BOOLEAN)) return 0;
-    if (!register_scalar(connection, "ducknng_set_service_limits", 2, ducknng_set_service_limits_scalar, &ctx, service_limits_types, DUCKDB_TYPE_BOOLEAN)) return 0;
-    if (!register_scalar(connection, "ducknng_set_service_limits", 3, ducknng_set_service_limits_scalar, &ctx, service_limits_extended_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_register_exec_method", 0, ducknng_register_exec_method_scalar, &ctx, NULL, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_register_exec_method", 1, ducknng_register_exec_method_scalar, &ctx, register_exec_auth_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(connection, "ducknng_set_method_auth", 2, ducknng_set_method_auth_scalar, &ctx, method_auth_types, DUCKDB_TYPE_BOOLEAN)) return 0;

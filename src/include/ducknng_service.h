@@ -116,6 +116,8 @@ struct ducknng_service {
     size_t pipe_state_count;
     atomic_size_t pipe_state_count_visible;
     size_t pipe_state_cap;
+    size_t inflight_request_count;
+    atomic_size_t inflight_request_count_visible;
     nng_socket rep_sock;
     nng_listener listener;
     ducknng_rep_ctx *ctxs;
@@ -131,6 +133,7 @@ struct ducknng_service {
     uint64_t session_idle_ms;
     uint64_t max_open_sessions;
     uint64_t max_active_pipes;
+    uint64_t max_inflight_requests;
     size_t recv_max_bytes;
     int running;
     int shutting_down;
@@ -171,10 +174,14 @@ size_t ducknng_service_ip_allowlist_count(const ducknng_service *svc);
 int ducknng_service_set_authorizer(ducknng_service *svc, const char *authorizer_sql, char **errmsg);
 int ducknng_service_authorizer_active(const ducknng_service *svc);
 int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
-    uint64_t max_active_pipes, char **errmsg);
+    uint64_t max_active_pipes, uint64_t max_inflight_requests, char **errmsg);
 uint64_t ducknng_service_max_open_sessions(const ducknng_service *svc);
 uint64_t ducknng_service_max_active_pipes(const ducknng_service *svc);
+uint64_t ducknng_service_max_inflight_requests(const ducknng_service *svc);
 size_t ducknng_service_active_pipe_count(const ducknng_service *svc);
+size_t ducknng_service_inflight_request_count(const ducknng_service *svc);
+int ducknng_service_begin_request(ducknng_service *svc, char **errmsg);
+void ducknng_service_end_request(ducknng_service *svc);
 int ducknng_service_pipe_monitor_stats(ducknng_service *svc,
     ducknng_pipe_monitor_stats *out_stats, char **errmsg);
 int ducknng_service_pipe_events_snapshot(ducknng_service *svc, uint64_t after_seq, uint64_t max_events,

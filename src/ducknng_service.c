@@ -976,6 +976,8 @@ nng_msg *ducknng_handle_request_with_identity(ducknng_service *svc, nng_msg *req
     ducknng_authorizer_context auth_ctx;
     ducknng_authorizer_decision decision;
     nng_msg *reply;
+    char *admission_err = NULL;
+    char *limit_err = NULL;
     if (ducknng_decode_request(req, &frame) != 0) {
         return ducknng_error_msg(NULL, DUCKNNG_STATUS_INVALID, "invalid RPC envelope");
     }
@@ -986,14 +988,30 @@ nng_msg *ducknng_handle_request_with_identity(ducknng_service *svc, nng_msg *req
     auth_ctx.transport_family = DUCKNNG_TRANSPORT_FAMILY_NNG;
     auth_ctx.caller_identity = caller_identity;
     ducknng_authorizer_decision_init(&decision);
+    if (ducknng_service_network_admission_check(svc, caller_identity, NULL, &admission_err) != 0) {
+        reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
+            admission_err ? admission_err : "ducknng: peer is not admitted");
+        if (admission_err) duckdb_free(admission_err);
+        ducknng_authorizer_decision_reset(&decision);
+        return reply;
+    }
+    if (ducknng_service_begin_request(svc, &limit_err) != 0) {
+        reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_BUSY,
+            limit_err ? limit_err : "ducknng: max inflight requests exceeded");
+        if (limit_err) duckdb_free(limit_err);
+        ducknng_authorizer_decision_reset(&decision);
+        return reply;
+    }
     if (ducknng_service_authorize_request(svc, &auth_ctx, &decision, NULL) != 0) {
         reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
             decision.reason ? decision.reason : "ducknng: request is not authorized");
         ducknng_authorizer_decision_reset(&decision);
+        ducknng_service_end_request(svc);
         return reply;
     }
     reply = ducknng_dispatch_request(svc, &frame, caller_identity, &decision);
     ducknng_authorizer_decision_reset(&decision);
+    ducknng_service_end_request(svc);
     return reply;
 }
 
@@ -1005,6 +1023,8 @@ nng_msg *ducknng_handle_request(ducknng_service *svc, nng_msg *req) {
     ducknng_authorizer_decision decision;
     int have_remote_addr;
     char *caller_identity;
+    char *admission_err = NULL;
+    char *limit_err = NULL;
     nng_msg *reply;
     memset(&pipe, 0, sizeof(pipe));
     memset(&auth_ctx, 0, sizeof(auth_ctx));
@@ -1022,15 +1042,34 @@ nng_msg *ducknng_handle_request(ducknng_service *svc, nng_msg *req) {
     auth_ctx.remote_addr = have_remote_addr ? &remote_addr : NULL;
     auth_ctx.caller_identity = caller_identity;
     ducknng_authorizer_decision_init(&decision);
+    if (ducknng_service_network_admission_check(svc, caller_identity,
+            have_remote_addr ? &remote_addr : NULL, &admission_err) != 0) {
+        reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
+            admission_err ? admission_err : "ducknng: peer is not admitted");
+        if (admission_err) duckdb_free(admission_err);
+        ducknng_authorizer_decision_reset(&decision);
+        if (caller_identity) duckdb_free(caller_identity);
+        return reply;
+    }
+    if (ducknng_service_begin_request(svc, &limit_err) != 0) {
+        reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_BUSY,
+            limit_err ? limit_err : "ducknng: max inflight requests exceeded");
+        if (limit_err) duckdb_free(limit_err);
+        ducknng_authorizer_decision_reset(&decision);
+        if (caller_identity) duckdb_free(caller_identity);
+        return reply;
+    }
     if (ducknng_service_authorize_request(svc, &auth_ctx, &decision, NULL) != 0) {
         reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
             decision.reason ? decision.reason : "ducknng: request is not authorized");
         ducknng_authorizer_decision_reset(&decision);
+        ducknng_service_end_request(svc);
         if (caller_identity) duckdb_free(caller_identity);
         return reply;
     }
     reply = ducknng_dispatch_request(svc, &frame, caller_identity, &decision);
     ducknng_authorizer_decision_reset(&decision);
+    ducknng_service_end_request(svc);
     if (caller_identity) duckdb_free(caller_identity);
     return reply;
 }
@@ -1094,6 +1133,7 @@ ducknng_service *ducknng_service_create(ducknng_runtime *rt, const char *name, c
     memset(svc, 0, sizeof(*svc));
     atomic_store_explicit(&svc->session_count_visible, 0, memory_order_release);
     atomic_store_explicit(&svc->pipe_state_count_visible, 0, memory_order_release);
+    atomic_store_explicit(&svc->inflight_request_count_visible, 0, memory_order_release);
     ducknng_tls_opts_init(&svc->tls_opts);
     svc->rt = rt;
     svc->name = ducknng_strdup(name);
@@ -1464,7 +1504,7 @@ int ducknng_service_authorizer_active(const ducknng_service *svc) {
 }
 
 int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
-    uint64_t max_active_pipes, char **errmsg) {
+    uint64_t max_active_pipes, uint64_t max_inflight_requests, char **errmsg) {
     if (errmsg) *errmsg = NULL;
     if (!svc) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
@@ -1473,6 +1513,7 @@ int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
     if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
     svc->max_open_sessions = max_open_sessions;
     svc->max_active_pipes = max_active_pipes;
+    svc->max_inflight_requests = max_inflight_requests;
     if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
     return 0;
 }
@@ -1487,9 +1528,45 @@ uint64_t ducknng_service_max_active_pipes(const ducknng_service *svc) {
     return svc->max_active_pipes;
 }
 
+uint64_t ducknng_service_max_inflight_requests(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return svc->max_inflight_requests;
+}
+
 size_t ducknng_service_active_pipe_count(const ducknng_service *svc) {
     if (!svc) return 0;
     return atomic_load_explicit(&svc->pipe_state_count_visible, memory_order_acquire);
+}
+
+size_t ducknng_service_inflight_request_count(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return atomic_load_explicit(&svc->inflight_request_count_visible, memory_order_acquire);
+}
+
+int ducknng_service_begin_request(ducknng_service *svc, char **errmsg) {
+    if (errmsg) *errmsg = NULL;
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
+        return -1;
+    }
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    if (svc->max_inflight_requests > 0 && svc->inflight_request_count >= (size_t)svc->max_inflight_requests) {
+        if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: max inflight requests exceeded");
+        return -1;
+    }
+    svc->inflight_request_count++;
+    atomic_store_explicit(&svc->inflight_request_count_visible, svc->inflight_request_count, memory_order_release);
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    return 0;
+}
+
+void ducknng_service_end_request(ducknng_service *svc) {
+    if (!svc) return;
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    if (svc->inflight_request_count > 0) svc->inflight_request_count--;
+    atomic_store_explicit(&svc->inflight_request_count_visible, svc->inflight_request_count, memory_order_release);
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
 }
 
 int ducknng_service_pipe_monitor_stats(ducknng_service *svc,

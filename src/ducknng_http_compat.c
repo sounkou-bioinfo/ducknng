@@ -916,6 +916,8 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
     {
         ducknng_authorizer_context auth_ctx;
         ducknng_authorizer_decision decision;
+        char *admission_err = NULL;
+        char *limit_err = NULL;
         memset(&auth_ctx, 0, sizeof(auth_ctx));
         auth_ctx.svc = state->svc;
         auth_ctx.frame = &frame;
@@ -929,18 +931,39 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
         auth_ctx.content_type = content_type;
         auth_ctx.body_bytes = (uint64_t)body_len;
         ducknng_authorizer_decision_init(&decision);
+        if (ducknng_service_network_admission_check(state->svc, caller_identity,
+                have_remote_addr ? &remote_addr : NULL, &admission_err) != 0) {
+            rv = ducknng_http_alloc_text_response(&res, 403,
+                admission_err ? admission_err : "ducknng: peer is not admitted");
+            if (admission_err) duckdb_free(admission_err);
+            ducknng_authorizer_decision_reset(&decision);
+            if (caller_identity) duckdb_free(caller_identity);
+            ducknng_http_finish_response(aio, res, rv);
+            return;
+        }
+        if (ducknng_service_begin_request(state->svc, &limit_err) != 0) {
+            rv = ducknng_http_alloc_text_response(&res, 503,
+                limit_err ? limit_err : "ducknng: max inflight requests exceeded");
+            if (limit_err) duckdb_free(limit_err);
+            ducknng_authorizer_decision_reset(&decision);
+            if (caller_identity) duckdb_free(caller_identity);
+            ducknng_http_finish_response(aio, res, rv);
+            return;
+        }
         if (ducknng_service_authorize_request(state->svc, &auth_ctx, &decision, NULL) != 0) {
             uint16_t status = (decision.http_status >= 100 && decision.http_status <= 599) ?
                 (uint16_t)decision.http_status : 403;
             rv = ducknng_http_alloc_text_response(&res, status,
                 decision.reason ? decision.reason : "ducknng: request is not authorized");
             ducknng_authorizer_decision_reset(&decision);
+            ducknng_service_end_request(state->svc);
             if (caller_identity) duckdb_free(caller_identity);
             ducknng_http_finish_response(aio, res, rv);
             return;
         }
         reply_msg = ducknng_handle_decoded_request(state->svc, &frame, caller_identity, &decision);
         ducknng_authorizer_decision_reset(&decision);
+        ducknng_service_end_request(state->svc);
     }
     if (caller_identity) duckdb_free(caller_identity);
     if (!reply_msg) {

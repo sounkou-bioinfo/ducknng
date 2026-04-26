@@ -16,6 +16,8 @@ typedef struct {
     uint64_t active_pipes;
     uint64_t max_open_sessions;
     uint64_t max_active_pipes;
+    uint64_t inflight_requests;
+    uint64_t max_inflight_requests;
     bool tls_enabled;
     int32_t tls_auth_mode;
     bool peer_identity_required;
@@ -35,6 +37,32 @@ typedef struct {
     ducknng_servers_bind_data *bind;
     idx_t offset;
 } ducknng_servers_init_data;
+
+static int arg_is_null(duckdb_vector vec, idx_t row) {
+    uint64_t *validity = duckdb_vector_get_validity(vec);
+    return validity && !duckdb_validity_row_is_valid(validity, row);
+}
+
+static char *arg_varchar_dup(duckdb_vector vec, idx_t row) {
+    duckdb_string_t *data = (duckdb_string_t *)duckdb_vector_get_data(vec);
+    const char *src;
+    uint32_t len;
+    char *out;
+    if (arg_is_null(vec, row)) return NULL;
+    src = duckdb_string_t_data(&data[row]);
+    len = duckdb_string_t_length(data[row]);
+    out = (char *)duckdb_malloc((size_t)len + 1);
+    if (!out) return NULL;
+    memcpy(out, src, len);
+    out[len] = '\0';
+    return out;
+}
+
+static uint64_t arg_u64(duckdb_vector vec, idx_t row, uint64_t dflt) {
+    uint64_t *data = (uint64_t *)duckdb_vector_get_data(vec);
+    if (arg_is_null(vec, row)) return dflt;
+    return data[row];
+}
 
 static void set_null(duckdb_vector vec, idx_t row) {
     uint64_t *validity;
@@ -63,6 +91,51 @@ static int ducknng_set_table_sql_context(duckdb_table_function tf, const ducknng
     return 1;
 }
 
+static int ducknng_set_scalar_sql_context(duckdb_scalar_function fn, const ducknng_sql_context *ctx) {
+    ducknng_sql_context *copy = ducknng_dup_sql_context(ctx);
+    if (!copy) return 0;
+    duckdb_scalar_function_set_extra_info(fn, copy, destroy_sql_context_extra);
+    return 1;
+}
+
+static int ducknng_sql_inside_authorizer(ducknng_sql_context *ctx) {
+    return ctx && ctx->rt && ducknng_runtime_current_thread_authorizer_context_get(ctx->rt) != NULL;
+}
+
+static int ducknng_reject_scalar_inside_authorizer(duckdb_function_info info, ducknng_sql_context *ctx) {
+    if (!ducknng_sql_inside_authorizer(ctx)) return 0;
+    duckdb_scalar_function_set_error(info, "ducknng: ducknng client and lifecycle functions cannot run inside a SQL authorizer callback");
+    return 1;
+}
+
+static int register_scalar(duckdb_connection con, const char *name, idx_t nparams,
+    duckdb_scalar_function_t fn, ducknng_sql_context *ctx, duckdb_type *param_types,
+    duckdb_type return_type_id) {
+    duckdb_scalar_function f = duckdb_create_scalar_function();
+    idx_t i;
+    duckdb_logical_type ret_type;
+    if (!f) return 0;
+    duckdb_scalar_function_set_name(f, name);
+    for (i = 0; i < nparams; i++) {
+        duckdb_logical_type t = duckdb_create_logical_type(param_types[i]);
+        duckdb_scalar_function_add_parameter(f, t);
+        duckdb_destroy_logical_type(&t);
+    }
+    ret_type = duckdb_create_logical_type(return_type_id);
+    duckdb_scalar_function_set_return_type(f, ret_type);
+    duckdb_destroy_logical_type(&ret_type);
+    duckdb_scalar_function_set_function(f, fn);
+    duckdb_scalar_function_set_special_handling(f);
+    duckdb_scalar_function_set_volatile(f);
+    if (!ducknng_set_scalar_sql_context(f, ctx)) { duckdb_destroy_scalar_function(&f); return 0; }
+    if (duckdb_register_scalar_function(con, f) == DuckDBError) {
+        duckdb_destroy_scalar_function(&f);
+        return 0;
+    }
+    duckdb_destroy_scalar_function(&f);
+    return 1;
+}
+
 static void destroy_servers_bind_data(void *ptr) {
     ducknng_servers_bind_data *data = (ducknng_servers_bind_data *)ptr;
     idx_t i;
@@ -78,6 +151,54 @@ static void destroy_servers_bind_data(void *ptr) {
 static void destroy_servers_init_data(void *ptr) {
     ducknng_servers_init_data *data = (ducknng_servers_init_data *)ptr;
     if (data) duckdb_free(data);
+}
+
+static void ducknng_set_service_limits_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t ncols = duckdb_data_chunk_get_column_count(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    bool *out = (bool *)duckdb_vector_get_data(output);
+    if (ducknng_reject_scalar_inside_authorizer(info, ctx)) return;
+    for (row = 0; row < count; row++) {
+        char *name = arg_varchar_dup(duckdb_data_chunk_get_vector(input, 0), row);
+        uint64_t max_open_sessions = arg_u64(duckdb_data_chunk_get_vector(input, 1), row, 0);
+        uint64_t max_active_pipes = 0;
+        uint64_t max_inflight_requests = 0;
+        ducknng_service *svc = NULL;
+        char *errmsg = NULL;
+        size_t i;
+        if (!ctx || !ctx->rt || !name || !name[0]) {
+            if (name) duckdb_free(name);
+            duckdb_scalar_function_set_error(info, "ducknng: service name is required");
+            return;
+        }
+        ducknng_mutex_lock(&ctx->rt->mu);
+        for (i = 0; i < ctx->rt->service_count; i++) {
+            if (ctx->rt->services[i] && ctx->rt->services[i]->name && strcmp(ctx->rt->services[i]->name, name) == 0) {
+                svc = ctx->rt->services[i];
+                break;
+            }
+        }
+        if (!svc) {
+            ducknng_mutex_unlock(&ctx->rt->mu);
+            duckdb_free(name);
+            duckdb_scalar_function_set_error(info, "ducknng: service not found");
+            return;
+        }
+        max_active_pipes = ncols > 2 ? arg_u64(duckdb_data_chunk_get_vector(input, 2), row, 0) : ducknng_service_max_active_pipes(svc);
+        max_inflight_requests = ncols > 3 ? arg_u64(duckdb_data_chunk_get_vector(input, 3), row, 0) : ducknng_service_max_inflight_requests(svc);
+        if (ducknng_service_set_limits(svc, max_open_sessions, max_active_pipes, max_inflight_requests, &errmsg) != 0) {
+            ducknng_mutex_unlock(&ctx->rt->mu);
+            duckdb_free(name);
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to set service limits");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        ducknng_mutex_unlock(&ctx->rt->mu);
+        duckdb_free(name);
+        out[row] = true;
+    }
 }
 
 static void ducknng_servers_bind(duckdb_bind_info info) {
@@ -118,6 +239,8 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
             bind->rows[i].active_pipes = svc ? (uint64_t)ducknng_service_active_pipe_count(svc) : 0;
             bind->rows[i].max_open_sessions = svc ? ducknng_service_max_open_sessions(svc) : 0;
             bind->rows[i].max_active_pipes = svc ? ducknng_service_max_active_pipes(svc) : 0;
+            bind->rows[i].inflight_requests = svc ? (uint64_t)ducknng_service_inflight_request_count(svc) : 0;
+            bind->rows[i].max_inflight_requests = svc ? ducknng_service_max_inflight_requests(svc) : 0;
             bind->rows[i].tls_enabled = svc ? (bool)svc->tls_enabled : false;
             bind->rows[i].tls_auth_mode = svc ? svc->tls_opts.auth_mode : 0;
             bind->rows[i].peer_identity_required = svc ? (bool)ducknng_service_requires_peer_identity(svc) : false;
@@ -148,6 +271,8 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
     duckdb_bind_add_result_column(info, "active_pipes", type);
     duckdb_bind_add_result_column(info, "max_open_sessions", type);
     duckdb_bind_add_result_column(info, "max_active_pipes", type);
+    duckdb_bind_add_result_column(info, "inflight_requests", type);
+    duckdb_bind_add_result_column(info, "max_inflight_requests", type);
     duckdb_destroy_logical_type(&type);
     type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
     duckdb_bind_add_result_column(info, "tls_enabled", type);
@@ -198,6 +323,8 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     duckdb_vector vec_active_pipes;
     duckdb_vector vec_max_open_sessions;
     duckdb_vector vec_max_active_pipes;
+    duckdb_vector vec_inflight_requests;
+    duckdb_vector vec_max_inflight_requests;
     duckdb_vector vec_tls_enabled;
     duckdb_vector vec_tls_auth_mode;
     duckdb_vector vec_peer_identity_required;
@@ -213,6 +340,8 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     uint64_t *active_pipes;
     uint64_t *max_open_sessions;
     uint64_t *max_active_pipes;
+    uint64_t *inflight_requests;
+    uint64_t *max_inflight_requests;
     bool *tls_enabled;
     int32_t *tls_auth_mode;
     bool *peer_identity_required;
@@ -238,14 +367,16 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     vec_active_pipes = duckdb_data_chunk_get_vector(output, 6);
     vec_max_open_sessions = duckdb_data_chunk_get_vector(output, 7);
     vec_max_active_pipes = duckdb_data_chunk_get_vector(output, 8);
-    vec_tls_enabled = duckdb_data_chunk_get_vector(output, 9);
-    vec_tls_auth_mode = duckdb_data_chunk_get_vector(output, 10);
-    vec_peer_identity_required = duckdb_data_chunk_get_vector(output, 11);
-    vec_peer_allowlist_active = duckdb_data_chunk_get_vector(output, 12);
-    vec_ip_allowlist_active = duckdb_data_chunk_get_vector(output, 13);
-    vec_sql_authorizer_active = duckdb_data_chunk_get_vector(output, 14);
-    vec_peer_allowlist_count = duckdb_data_chunk_get_vector(output, 15);
-    vec_ip_allowlist_count = duckdb_data_chunk_get_vector(output, 16);
+    vec_inflight_requests = duckdb_data_chunk_get_vector(output, 9);
+    vec_max_inflight_requests = duckdb_data_chunk_get_vector(output, 10);
+    vec_tls_enabled = duckdb_data_chunk_get_vector(output, 11);
+    vec_tls_auth_mode = duckdb_data_chunk_get_vector(output, 12);
+    vec_peer_identity_required = duckdb_data_chunk_get_vector(output, 13);
+    vec_peer_allowlist_active = duckdb_data_chunk_get_vector(output, 14);
+    vec_ip_allowlist_active = duckdb_data_chunk_get_vector(output, 15);
+    vec_sql_authorizer_active = duckdb_data_chunk_get_vector(output, 16);
+    vec_peer_allowlist_count = duckdb_data_chunk_get_vector(output, 17);
+    vec_ip_allowlist_count = duckdb_data_chunk_get_vector(output, 18);
 
     service_ids = (uint64_t *)duckdb_vector_get_data(vec_service_id);
     contexts = (int32_t *)duckdb_vector_get_data(vec_contexts);
@@ -254,6 +385,8 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     active_pipes = (uint64_t *)duckdb_vector_get_data(vec_active_pipes);
     max_open_sessions = (uint64_t *)duckdb_vector_get_data(vec_max_open_sessions);
     max_active_pipes = (uint64_t *)duckdb_vector_get_data(vec_max_active_pipes);
+    inflight_requests = (uint64_t *)duckdb_vector_get_data(vec_inflight_requests);
+    max_inflight_requests = (uint64_t *)duckdb_vector_get_data(vec_max_inflight_requests);
     tls_enabled = (bool *)duckdb_vector_get_data(vec_tls_enabled);
     tls_auth_mode = (int32_t *)duckdb_vector_get_data(vec_tls_auth_mode);
     peer_identity_required = (bool *)duckdb_vector_get_data(vec_peer_identity_required);
@@ -272,6 +405,8 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
         active_pipes[i] = row->active_pipes;
         max_open_sessions[i] = row->max_open_sessions;
         max_active_pipes[i] = row->max_active_pipes;
+        inflight_requests[i] = row->inflight_requests;
+        max_inflight_requests[i] = row->max_inflight_requests;
         tls_enabled[i] = row->tls_enabled;
         tls_auth_mode[i] = row->tls_auth_mode;
         peer_identity_required[i] = row->peer_identity_required;
@@ -291,7 +426,13 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
 
 int ducknng_register_sql_service(duckdb_connection con, ducknng_sql_context *ctx) {
     duckdb_table_function tf;
+    duckdb_type service_limits_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT};
+    duckdb_type service_limits_extended_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
+    duckdb_type service_limits_full_types[4] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
     if (!ctx || !ctx->rt) return 0;
+    if (!register_scalar(con, "ducknng_set_service_limits", 2, ducknng_set_service_limits_scalar, ctx, service_limits_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(con, "ducknng_set_service_limits", 3, ducknng_set_service_limits_scalar, ctx, service_limits_extended_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(con, "ducknng_set_service_limits", 4, ducknng_set_service_limits_scalar, ctx, service_limits_full_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
     duckdb_table_function_set_name(tf, "ducknng_list_servers");

@@ -34,6 +34,11 @@ SELECT ducknng_set_service_limits('missing_service', 1::UBIGINT, 1::UBIGINT)
 ducknng: service not found
 
 statement error
+SELECT ducknng_set_service_limits('missing_service', 1::UBIGINT, 1::UBIGINT, 1::UBIGINT)
+----
+ducknng: service not found
+
+statement error
 SELECT ducknng_open_socket('not-a-protocol')
 ----
 ducknng: protocol must be one of bus, pair, pair0, pair1, poly, push, pull, pub, sub, req, rep, surveyor, respondent
@@ -96,10 +101,10 @@ SELECT CASE WHEN ducknng_set_service_limits('negative_rpc', 0::UBIGINT) THEN 1 E
 ----
 1
 
-query II
-SELECT max_open_sessions, max_active_pipes FROM ducknng_list_servers() WHERE name = 'negative_rpc'
+query III
+SELECT max_open_sessions, max_active_pipes, max_inflight_requests FROM ducknng_list_servers() WHERE name = 'negative_rpc'
 ----
-0	0
+0	0	0
 
 statement error
 SELECT ducknng_start_server('negative_rpc', 'tcp://127.0.0.1:0', 1, 134217728, 300000, 0::UBIGINT)
