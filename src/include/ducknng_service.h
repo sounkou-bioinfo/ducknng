@@ -48,6 +48,7 @@ typedef struct ducknng_pipe_event {
     uint64_t pipe_id;
     char *event;
     int admitted;
+    char *reason;
     char *remote_addr;
     char *remote_ip;
     int32_t remote_port;

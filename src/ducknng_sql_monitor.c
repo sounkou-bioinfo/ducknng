@@ -20,6 +20,7 @@ typedef struct {
     char *scheme;
     char *event;
     int admitted;
+    char *reason;
     char *remote_addr;
     char *remote_ip;
     int32_t remote_port;
@@ -88,6 +89,7 @@ static void ducknng_monitor_row_reset(ducknng_monitor_row *row) {
     if (row->transport_family) duckdb_free(row->transport_family);
     if (row->scheme) duckdb_free(row->scheme);
     if (row->event) duckdb_free(row->event);
+    if (row->reason) duckdb_free(row->reason);
     if (row->remote_addr) duckdb_free(row->remote_addr);
     if (row->remote_ip) duckdb_free(row->remote_ip);
     if (row->peer_identity) duckdb_free(row->peer_identity);
@@ -267,6 +269,7 @@ static void ducknng_read_monitor_bind(duckdb_bind_info info) {
             bind->rows[i].scheme = ducknng_strdup(ducknng_transport_scheme_name(parsed.scheme));
             bind->rows[i].event = events[i].event ? ducknng_strdup(events[i].event) : NULL;
             bind->rows[i].admitted = events[i].admitted;
+            bind->rows[i].reason = events[i].reason ? ducknng_strdup(events[i].reason) : NULL;
             bind->rows[i].remote_addr = events[i].remote_addr ? ducknng_strdup(events[i].remote_addr) : NULL;
             bind->rows[i].remote_ip = events[i].remote_ip ? ducknng_strdup(events[i].remote_ip) : NULL;
             bind->rows[i].remote_port = events[i].remote_port;
@@ -292,6 +295,7 @@ static void ducknng_read_monitor_bind(duckdb_bind_info info) {
     duckdb_bind_add_result_column(info, "admitted", type);
     duckdb_destroy_logical_type(&type);
     type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_bind_add_result_column(info, "reason", type);
     duckdb_bind_add_result_column(info, "remote_addr", type);
     duckdb_bind_add_result_column(info, "remote_ip", type);
     duckdb_destroy_logical_type(&type);
@@ -341,10 +345,11 @@ static void ducknng_read_monitor_scan(duckdb_function_info info, duckdb_data_chu
         if (row->event) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 7), i, row->event); else set_null(duckdb_data_chunk_get_vector(output, 7), i);
         if (row->admitted < 0) set_null(duckdb_data_chunk_get_vector(output, 8), i);
         else ((bool *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 8)))[i] = row->admitted ? true : false;
-        if (row->remote_addr) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 9), i, row->remote_addr); else set_null(duckdb_data_chunk_get_vector(output, 9), i);
-        if (row->remote_ip) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 10), i, row->remote_ip); else set_null(duckdb_data_chunk_get_vector(output, 10), i);
-        ((int32_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 11)))[i] = row->remote_port;
-        if (row->peer_identity) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 12), i, row->peer_identity); else set_null(duckdb_data_chunk_get_vector(output, 12), i);
+        if (row->reason) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 9), i, row->reason); else set_null(duckdb_data_chunk_get_vector(output, 9), i);
+        if (row->remote_addr) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 10), i, row->remote_addr); else set_null(duckdb_data_chunk_get_vector(output, 10), i);
+        if (row->remote_ip) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 11), i, row->remote_ip); else set_null(duckdb_data_chunk_get_vector(output, 11), i);
+        ((int32_t *)duckdb_vector_get_data(duckdb_data_chunk_get_vector(output, 12)))[i] = row->remote_port;
+        if (row->peer_identity) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 13), i, row->peer_identity); else set_null(duckdb_data_chunk_get_vector(output, 13), i);
     }
     init->offset += chunk_size;
     duckdb_data_chunk_set_size(output, chunk_size);

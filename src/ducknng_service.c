@@ -35,6 +35,7 @@ static void ducknng_service_clear_authorizer(ducknng_service *svc) {
 static void ducknng_pipe_event_reset(ducknng_pipe_event *event) {
     if (!event) return;
     if (event->event) duckdb_free(event->event);
+    if (event->reason) duckdb_free(event->reason);
     if (event->remote_addr) duckdb_free(event->remote_addr);
     if (event->remote_ip) duckdb_free(event->remote_ip);
     if (event->peer_identity) duckdb_free(event->peer_identity);
@@ -378,11 +379,13 @@ static int ducknng_pipe_event_copy(ducknng_pipe_event *dst, const ducknng_pipe_e
     memset(dst, 0, sizeof(*dst));
     *dst = *src;
     dst->event = src->event ? ducknng_strdup(src->event) : NULL;
+    dst->reason = src->reason ? ducknng_strdup(src->reason) : NULL;
     dst->remote_addr = src->remote_addr ? ducknng_strdup(src->remote_addr) : NULL;
     dst->remote_ip = src->remote_ip ? ducknng_strdup(src->remote_ip) : NULL;
     dst->peer_identity = src->peer_identity ? ducknng_strdup(src->peer_identity) : NULL;
-    if ((src->event && !dst->event) || (src->remote_addr && !dst->remote_addr) ||
-        (src->remote_ip && !dst->remote_ip) || (src->peer_identity && !dst->peer_identity)) {
+    if ((src->event && !dst->event) || (src->reason && !dst->reason) ||
+        (src->remote_addr && !dst->remote_addr) || (src->remote_ip && !dst->remote_ip) ||
+        (src->peer_identity && !dst->peer_identity)) {
         ducknng_pipe_event_reset(dst);
         return -1;
     }
@@ -461,7 +464,8 @@ static void ducknng_service_pipe_state_remove_locked(ducknng_service *svc, nng_p
 }
 
 static void ducknng_service_pipe_event_append(ducknng_service *svc, nng_pipe pipe,
-    const char *event_name, const nng_sockaddr *remote_addr, const char *identity, int admitted) {
+    const char *event_name, const nng_sockaddr *remote_addr, const char *identity,
+    int admitted, const char *reason) {
     ducknng_pipe_event event;
     size_t idx;
     int is_add_post;
@@ -472,11 +476,13 @@ static void ducknng_service_pipe_event_append(ducknng_service *svc, nng_pipe pip
     event.pipe_id = pipe.id > 0 ? (uint64_t)pipe.id : 0;
     event.event = ducknng_strdup(event_name);
     event.admitted = admitted;
+    event.reason = reason && reason[0] ? ducknng_strdup(reason) : NULL;
     event.remote_addr = ducknng_sockaddr_addr_dup(remote_addr, &event.remote_ip, &event.remote_port);
     event.peer_identity = identity && identity[0] ? ducknng_strdup(identity) : NULL;
     is_add_post = strcmp(event_name, "add_post") == 0;
     is_rem_post = strcmp(event_name, "rem_post") == 0;
-    if (!event.event || (identity && identity[0] && !event.peer_identity)) {
+    if (!event.event || (reason && reason[0] && !event.reason) ||
+        (identity && identity[0] && !event.peer_identity)) {
         ducknng_pipe_event_reset(&event);
         return;
     }
@@ -1152,6 +1158,7 @@ static const char *ducknng_pipe_event_name(nng_pipe_ev ev) {
 static void ducknng_service_pipe_event_cb(nng_pipe pipe, nng_pipe_ev ev, void *arg) {
     ducknng_service *svc = (ducknng_service *)arg;
     char *identity = NULL;
+    char *admission_err = NULL;
     nng_sockaddr remote_addr;
     int have_remote_addr = 0;
     int allowed = ev == NNG_PIPE_EV_ADD_PRE ? 1 : -1;
@@ -1160,18 +1167,20 @@ static void ducknng_service_pipe_event_cb(nng_pipe pipe, nng_pipe_ev ev, void *a
     have_remote_addr = ducknng_pipe_remote_addr(pipe, &remote_addr) == 0;
     if (ev == NNG_PIPE_EV_ADD_PRE) {
         allowed = ducknng_service_network_admission_check(svc, identity,
-            have_remote_addr ? &remote_addr : NULL, NULL) == 0;
+            have_remote_addr ? &remote_addr : NULL, &admission_err) == 0;
         if (allowed && svc->mu_initialized) {
             ducknng_mutex_lock(&svc->mu);
             if (svc->max_active_pipes > 0 && svc->pipe_state_count >= (size_t)svc->max_active_pipes) {
                 allowed = 0;
+                admission_err = ducknng_strdup("ducknng: max active pipes exceeded");
             }
             ducknng_mutex_unlock(&svc->mu);
         }
     }
     ducknng_service_pipe_event_append(svc, pipe, ducknng_pipe_event_name(ev),
-        have_remote_addr ? &remote_addr : NULL, identity, allowed);
+        have_remote_addr ? &remote_addr : NULL, identity, allowed, admission_err);
     if (identity) duckdb_free(identity);
+    if (admission_err) duckdb_free(admission_err);
     if (ev == NNG_PIPE_EV_ADD_PRE && !allowed) (void)nng_pipe_close(pipe);
 }
 

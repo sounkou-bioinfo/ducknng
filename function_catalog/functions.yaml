@@ -170,7 +170,7 @@
       "kind": "table",
       "category": "Introspection",
       "signature": "ducknng_read_monitor(name, after_seq, max_events)",
-      "returns": "TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)",
+      "returns": "TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, reason VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
       "description": "Read the bounded per-service NNG pipe monitor event stream.",
@@ -178,7 +178,8 @@
         "Events currently cover NNG transports using nng_pipe_notify ADD_PRE, ADD_POST, and REM_POST callbacks.",
         "after_seq returns only events with seq greater than the supplied value; max_events = 0 means no explicit caller cap beyond the service ring buffer.",
         "admitted is populated for ADD_PRE admission decisions and NULL for post-add/remove notifications.",
-        "The stream is a bounded in-memory ring intended as a foundation for telemetry, admission audit, mesh membership, routing, and forwarding demos."
+        "The stream is a bounded in-memory ring intended as a foundation for telemetry, admission audit, mesh membership, routing, and forwarding demos.",
+        "reason is populated for denied ADD_PRE events when the fast C admission path has a stable reason."
       ],
       "examples": [
         "SELECT * FROM ducknng_read_monitor('svc', 0::UBIGINT, 100::UBIGINT) ORDER BY seq;"

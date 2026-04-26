@@ -263,7 +263,7 @@ This file is generated from `function_catalog/functions.yaml`.
 | name                     | kind  | arguments                     | returns                                                                                                                                                                                                                                                                                                                                                                                                                    | description                                                                     |
 |--------------------------|-------|-------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | `ducknng_list_servers`   | table |                               | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, active_pipes UBIGINT, max_open_sessions UBIGINT, max_active_pipes UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services.                                               |
-| `ducknng_read_monitor`   | table | `name, after_seq, max_events` | `TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)`                                                                                                                                                                  | Read the bounded per-service NNG pipe monitor event stream.                     |
+| `ducknng_read_monitor`   | table | `name, after_seq, max_events` | `TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, reason VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)`                                                                                                                                                  | Read the bounded per-service NNG pipe monitor event stream.                     |
 | `ducknng_monitor_status` | table | `name`                        | `TABLE(service_name VARCHAR, event_capacity UBIGINT, event_count UBIGINT, oldest_seq UBIGINT, newest_seq UBIGINT, dropped_events UBIGINT, active_pipes UBIGINT, max_active_pipes UBIGINT)`                                                                                                                                                                                                                                 | Return pipe monitor ring status and active-pipe counters for a running service. |
 | `ducknng_list_pipes`     | table | `name`                        | `TABLE(pipe_id UBIGINT, opened_ms UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)`                                                                                                                                                                                                            | List currently active NNG pipes for a running service.                          |
 
@@ -1879,7 +1879,7 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_47faa60568b92.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_4ada7308efb2d.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
 #> 1                                                                                                                             TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
@@ -2085,17 +2085,18 @@ exposes it with `ducknng_read_monitor(name, after_seq, max_events)`. It
 exposes ring/counter metadata with `ducknng_monitor_status(name)` and
 current active NNG pipes with `ducknng_list_pipes(name)`. The event
 stream includes event sequence, timestamp, service, transport, pipe id,
-admission result for `ADD_PRE`, remote address, and verified peer
-identity when present; the active-pipe table gives the current pipe set
-for routing and membership decisions. These primitives are a natural
-foundation for telemetry, connection counts, connection churn,
-per-service pipe event streams, presence/worker membership, dynamic
-routing, backpressure-aware scheduling, mesh-style DuckDB service
-discovery, routing/forwarding demos, and other application-level event
-streams. HTTP/HTTPS framed RPC currently uses the same admission policy
-but does not expose NNG protocol-socket pipe events; a broader HTTP
-server framework can reuse the same request context and monitor concepts
-without changing the framed RPC wire protocol.
+admission result for `ADD_PRE`, denial reason when the fast C path has
+one, remote address, and verified peer identity when present; the
+active-pipe table gives the current pipe set for routing and membership
+decisions. These primitives are a natural foundation for telemetry,
+connection counts, connection churn, per-service pipe event streams,
+presence/worker membership, dynamic routing, backpressure-aware
+scheduling, mesh-style DuckDB service discovery, routing/forwarding
+demos, and other application-level event streams. HTTP/HTTPS framed RPC
+currently uses the same admission policy but does not expose NNG
+protocol-socket pipe events; a broader HTTP server framework can reuse
+the same request context and monitor concepts without changing the
+framed RPC wire protocol.
 
 ## References
 

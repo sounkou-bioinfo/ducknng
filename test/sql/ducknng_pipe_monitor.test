@@ -137,7 +137,11 @@ SELECT ducknng_request_raw(getvariable('monitor_rpc_url')::VARCHAR, from_hex('01
 true
 
 query I
-SELECT count(*) FILTER (WHERE event = 'add_pre' AND admitted = false) > 0
+SELECT count(*) FILTER (
+         WHERE event = 'add_pre'
+           AND admitted = false
+           AND reason = 'ducknng: max active pipes exceeded'
+       ) > 0
 FROM ducknng_read_monitor('monitor_rpc', 0::UBIGINT, 100::UBIGINT)
 ----
 true

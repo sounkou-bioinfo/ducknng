@@ -918,7 +918,7 @@ Expand the full generated function catalog
 <td><code>ducknng_read_monitor</code></td>
 <td>table</td>
 <td><code>name, after_seq, max_events</code></td>
-<td><code>TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)</code></td>
+<td><code>TABLE(seq UBIGINT, ts_ms UBIGINT, pipe_id UBIGINT, service_name VARCHAR, listen VARCHAR, transport_family VARCHAR, scheme VARCHAR, event VARCHAR, admitted BOOLEAN, reason VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, peer_identity VARCHAR)</code></td>
 <td>Read the bounded per-service NNG pipe monitor event stream.</td>
 </tr>
 <tr class="odd">
@@ -2927,7 +2927,7 @@ local ducknng server and dial a req socket</h4>
 <span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
 <span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
 <span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_47faa60568b92.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_4ada7308efb2d.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
 <span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
 <span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
 <span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
@@ -3120,17 +3120,18 @@ exposes ring/counter metadata with
 <code>ducknng_monitor_status(name)</code> and current active NNG pipes
 with <code>ducknng_list_pipes(name)</code>. The event stream includes
 event sequence, timestamp, service, transport, pipe id, admission result
-for <code>ADD_PRE</code>, remote address, and verified peer identity
-when present; the active-pipe table gives the current pipe set for
-routing and membership decisions. These primitives are a natural
-foundation for telemetry, connection counts, connection churn,
-per-service pipe event streams, presence/worker membership, dynamic
-routing, backpressure-aware scheduling, mesh-style DuckDB service
-discovery, routing/forwarding demos, and other application-level event
-streams. HTTP/HTTPS framed RPC currently uses the same admission policy
-but does not expose NNG protocol-socket pipe events; a broader HTTP
-server framework can reuse the same request context and monitor concepts
-without changing the framed RPC wire protocol.</p>
+for <code>ADD_PRE</code>, denial reason when the fast C path has one,
+remote address, and verified peer identity when present; the active-pipe
+table gives the current pipe set for routing and membership decisions.
+These primitives are a natural foundation for telemetry, connection
+counts, connection churn, per-service pipe event streams,
+presence/worker membership, dynamic routing, backpressure-aware
+scheduling, mesh-style DuckDB service discovery, routing/forwarding
+demos, and other application-level event streams. HTTP/HTTPS framed RPC
+currently uses the same admission policy but does not expose NNG
+protocol-socket pipe events; a broader HTTP server framework can reuse
+the same request context and monitor concepts without changing the
+framed RPC wire protocol.</p>
 <h2 id="references">References</h2>
 <ul>
 <li><a href="https://nng.nanomsg.org/">NNG</a> for the underlying
