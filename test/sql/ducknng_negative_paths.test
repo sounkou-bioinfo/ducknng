@@ -70,6 +70,35 @@ true
 
 query IT
 SELECT ok, error
+FROM ducknng_get_rpc_manifest('ftp://127.0.0.1:9', 0::UBIGINT)
+----
+0	ducknng: unsupported transport URL scheme
+
+query I
+SELECT ducknng_request_raw('ftp://127.0.0.1:9', from_hex('00'), 10, 0::UBIGINT) IS NULL
+----
+true
+
+query IT
+SELECT ok, error
+FROM ducknng_open_query('ftp://127.0.0.1:9', 'SELECT 1', 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+----
+0	ducknng: unsupported transport URL scheme
+
+query IT
+SELECT ok, error
+FROM ducknng_ncurl('ftp://127.0.0.1:9', 'GET', NULL, NULL, 10, 0::UBIGINT)
+----
+0	ducknng: unsupported transport URL scheme
+
+statement error
+SELECT *
+FROM ducknng_ncurl_table('ftp://127.0.0.1:9', 'GET', NULL, NULL, 10, 0::UBIGINT)
+----
+ducknng: unsupported transport URL scheme
+
+query IT
+SELECT ok, error
 FROM ducknng_decode_frame(from_hex('00'))
 ----
 0	ducknng: invalid frame envelope
