@@ -1182,7 +1182,8 @@ wait_for_ducknng_listener <- function(path, timeout_secs = 10, interval_secs = 0
 ```{r exec-example-setup}
 # Start a ducknng server in this R session, then talk to it over a req socket.
 ext_path <- normalizePath("build/release/ducknng.duckdb_extension")
-ipc_path <- tempfile(pattern = "ducknng_readme_exec_", tmpdir = "/tmp", fileext = ".ipc")
+ipc_path <- "/tmp/ducknng_readme_exec.ipc"
+unlink(ipc_path)
 ipc_url <- paste0("ipc://", ipc_path)
 
 db_driver <- duckdb::duckdb(

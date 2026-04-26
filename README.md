@@ -1865,7 +1865,8 @@ wait_for_ducknng_listener <- function(path, timeout_secs = 10, interval_secs = 0
 ``` r
 # Start a ducknng server in this R session, then talk to it over a req socket.
 ext_path <- normalizePath("build/release/ducknng.duckdb_extension")
-ipc_path <- tempfile(pattern = "ducknng_readme_exec_", tmpdir = "/tmp", fileext = ".ipc")
+ipc_path <- "/tmp/ducknng_readme_exec.ipc"
+unlink(ipc_path)
 ipc_url <- paste0("ipc://", ipc_path)
 
 db_driver <- duckdb::duckdb(
@@ -1886,8 +1887,8 @@ DBI::dbGetQuery(
     ipc_url
   )
 )
-#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec_82fea6d603efe.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
-#> 1                                                                                                                             TRUE
+#>   ducknng_start_server('sql_exec', 'ipc:///tmp/ducknng_readme_exec.ipc', 1, 134217728, 300000, CAST(0 AS "UBIGINT"))
+#> 1                                                                                                               TRUE
 DBI::dbGetQuery(db_con, "SELECT ducknng_register_exec_method()")
 #>   ducknng_register_exec_method()
 #> 1                           TRUE

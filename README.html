@@ -2917,35 +2917,36 @@ helpers</h4>
 local ducknng server and dial a req socket</h4>
 <div class="sourceCode" id="cb37"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb37-1"><a href="#cb37-1" tabindex="-1"></a><span class="co"># Start a ducknng server in this R session, then talk to it over a req socket.</span></span>
 <span id="cb37-2"><a href="#cb37-2" tabindex="-1"></a>ext_path <span class="ot">&lt;-</span> <span class="fu">normalizePath</span>(<span class="st">&quot;build/release/ducknng.duckdb_extension&quot;</span>)</span>
-<span id="cb37-3"><a href="#cb37-3" tabindex="-1"></a>ipc_path <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">pattern =</span> <span class="st">&quot;ducknng_readme_exec_&quot;</span>, <span class="at">tmpdir =</span> <span class="st">&quot;/tmp&quot;</span>, <span class="at">fileext =</span> <span class="st">&quot;.ipc&quot;</span>)</span>
-<span id="cb37-4"><a href="#cb37-4" tabindex="-1"></a>ipc_url <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;ipc://&quot;</span>, ipc_path)</span>
-<span id="cb37-5"><a href="#cb37-5" tabindex="-1"></a></span>
-<span id="cb37-6"><a href="#cb37-6" tabindex="-1"></a>db_driver <span class="ot">&lt;-</span> duckdb<span class="sc">::</span><span class="fu">duckdb</span>(</span>
-<span id="cb37-7"><a href="#cb37-7" tabindex="-1"></a>  <span class="at">dbdir =</span> <span class="st">&quot;:memory:&quot;</span>,</span>
-<span id="cb37-8"><a href="#cb37-8" tabindex="-1"></a>  <span class="at">config =</span> <span class="fu">list</span>(<span class="at">allow_unsigned_extensions =</span> <span class="st">&quot;true&quot;</span>)</span>
-<span id="cb37-9"><a href="#cb37-9" tabindex="-1"></a>)</span>
-<span id="cb37-10"><a href="#cb37-10" tabindex="-1"></a>db_con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(db_driver)</span>
-<span id="cb37-11"><a href="#cb37-11" tabindex="-1"></a></span>
-<span id="cb37-12"><a href="#cb37-12" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT 42 AS ok&quot;</span>)</span>
-<span id="cb37-13"><a href="#cb37-13" tabindex="-1"></a><span class="co">#&gt;   ok</span></span>
-<span id="cb37-14"><a href="#cb37-14" tabindex="-1"></a><span class="co">#&gt; 1 42</span></span>
-<span id="cb37-15"><a href="#cb37-15" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbExecute</span>(db_con, <span class="fu">sprintf</span>(<span class="st">&quot;LOAD &#39;%s&#39;&quot;</span>, ext_path))</span>
-<span id="cb37-16"><a href="#cb37-16" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
-<span id="cb37-17"><a href="#cb37-17" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(</span>
-<span id="cb37-18"><a href="#cb37-18" tabindex="-1"></a>  db_con,</span>
-<span id="cb37-19"><a href="#cb37-19" tabindex="-1"></a>  <span class="fu">sprintf</span>(</span>
-<span id="cb37-20"><a href="#cb37-20" tabindex="-1"></a>    <span class="st">&quot;SELECT ducknng_start_server(&#39;sql_exec&#39;, &#39;%s&#39;, 1, 134217728, 300000, 0::UBIGINT)&quot;</span>,</span>
-<span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    ipc_url</span>
-<span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>  )</span>
-<span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>)</span>
-<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec_82fea6d603efe.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
-<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                                             TRUE</span></span>
-<span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
-<span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
-<span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>
-<span id="cb37-29"><a href="#cb37-29" tabindex="-1"></a></span>
-<span id="cb37-30"><a href="#cb37-30" tabindex="-1"></a><span class="fu">wait_for_ducknng_listener</span>(ipc_path)</span>
-<span id="cb37-31"><a href="#cb37-31" tabindex="-1"></a>req <span class="ot">&lt;-</span> nanonext<span class="sc">::</span><span class="fu">socket</span>(<span class="st">&quot;req&quot;</span>, <span class="at">dial =</span> ipc_url)</span></code></pre></div>
+<span id="cb37-3"><a href="#cb37-3" tabindex="-1"></a>ipc_path <span class="ot">&lt;-</span> <span class="st">&quot;/tmp/ducknng_readme_exec.ipc&quot;</span></span>
+<span id="cb37-4"><a href="#cb37-4" tabindex="-1"></a><span class="fu">unlink</span>(ipc_path)</span>
+<span id="cb37-5"><a href="#cb37-5" tabindex="-1"></a>ipc_url <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;ipc://&quot;</span>, ipc_path)</span>
+<span id="cb37-6"><a href="#cb37-6" tabindex="-1"></a></span>
+<span id="cb37-7"><a href="#cb37-7" tabindex="-1"></a>db_driver <span class="ot">&lt;-</span> duckdb<span class="sc">::</span><span class="fu">duckdb</span>(</span>
+<span id="cb37-8"><a href="#cb37-8" tabindex="-1"></a>  <span class="at">dbdir =</span> <span class="st">&quot;:memory:&quot;</span>,</span>
+<span id="cb37-9"><a href="#cb37-9" tabindex="-1"></a>  <span class="at">config =</span> <span class="fu">list</span>(<span class="at">allow_unsigned_extensions =</span> <span class="st">&quot;true&quot;</span>)</span>
+<span id="cb37-10"><a href="#cb37-10" tabindex="-1"></a>)</span>
+<span id="cb37-11"><a href="#cb37-11" tabindex="-1"></a>db_con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(db_driver)</span>
+<span id="cb37-12"><a href="#cb37-12" tabindex="-1"></a></span>
+<span id="cb37-13"><a href="#cb37-13" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT 42 AS ok&quot;</span>)</span>
+<span id="cb37-14"><a href="#cb37-14" tabindex="-1"></a><span class="co">#&gt;   ok</span></span>
+<span id="cb37-15"><a href="#cb37-15" tabindex="-1"></a><span class="co">#&gt; 1 42</span></span>
+<span id="cb37-16"><a href="#cb37-16" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbExecute</span>(db_con, <span class="fu">sprintf</span>(<span class="st">&quot;LOAD &#39;%s&#39;&quot;</span>, ext_path))</span>
+<span id="cb37-17"><a href="#cb37-17" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span>
+<span id="cb37-18"><a href="#cb37-18" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(</span>
+<span id="cb37-19"><a href="#cb37-19" tabindex="-1"></a>  db_con,</span>
+<span id="cb37-20"><a href="#cb37-20" tabindex="-1"></a>  <span class="fu">sprintf</span>(</span>
+<span id="cb37-21"><a href="#cb37-21" tabindex="-1"></a>    <span class="st">&quot;SELECT ducknng_start_server(&#39;sql_exec&#39;, &#39;%s&#39;, 1, 134217728, 300000, 0::UBIGINT)&quot;</span>,</span>
+<span id="cb37-22"><a href="#cb37-22" tabindex="-1"></a>    ipc_url</span>
+<span id="cb37-23"><a href="#cb37-23" tabindex="-1"></a>  )</span>
+<span id="cb37-24"><a href="#cb37-24" tabindex="-1"></a>)</span>
+<span id="cb37-25"><a href="#cb37-25" tabindex="-1"></a><span class="co">#&gt;   ducknng_start_server(&#39;sql_exec&#39;, &#39;ipc:///tmp/ducknng_readme_exec.ipc&#39;, 1, 134217728, 300000, CAST(0 AS &quot;UBIGINT&quot;))</span></span>
+<span id="cb37-26"><a href="#cb37-26" tabindex="-1"></a><span class="co">#&gt; 1                                                                                                               TRUE</span></span>
+<span id="cb37-27"><a href="#cb37-27" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbGetQuery</span>(db_con, <span class="st">&quot;SELECT ducknng_register_exec_method()&quot;</span>)</span>
+<span id="cb37-28"><a href="#cb37-28" tabindex="-1"></a><span class="co">#&gt;   ducknng_register_exec_method()</span></span>
+<span id="cb37-29"><a href="#cb37-29" tabindex="-1"></a><span class="co">#&gt; 1                           TRUE</span></span>
+<span id="cb37-30"><a href="#cb37-30" tabindex="-1"></a></span>
+<span id="cb37-31"><a href="#cb37-31" tabindex="-1"></a><span class="fu">wait_for_ducknng_listener</span>(ipc_path)</span>
+<span id="cb37-32"><a href="#cb37-32" tabindex="-1"></a>req <span class="ot">&lt;-</span> nanonext<span class="sc">::</span><span class="fu">socket</span>(<span class="st">&quot;req&quot;</span>, <span class="at">dial =</span> ipc_url)</span></code></pre></div>
 <h4 id="create-and-insert-rows-remotely">Create and insert rows
 remotely</h4>
 <div class="sourceCode" id="cb38"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb38-1"><a href="#cb38-1" tabindex="-1"></a><span class="co"># Create a table remotely and inspect the metadata reply.</span></span>
