@@ -39,6 +39,11 @@ SELECT ducknng_set_service_limits('missing_service', 1::UBIGINT, 1::UBIGINT, 1::
 ducknng: service not found
 
 statement error
+SELECT ducknng_set_service_limits('missing_service', 1::UBIGINT, 1::UBIGINT, 1::UBIGINT, 1::UBIGINT)
+----
+ducknng: service not found
+
+statement error
 SELECT ducknng_open_socket('not-a-protocol')
 ----
 ducknng: protocol must be one of bus, pair, pair0, pair1, poly, push, pull, pub, sub, req, rep, surveyor, respondent

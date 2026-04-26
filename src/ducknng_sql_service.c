@@ -18,6 +18,7 @@ typedef struct {
     uint64_t max_active_pipes;
     uint64_t inflight_requests;
     uint64_t max_inflight_requests;
+    uint64_t max_sessions_per_peer_identity;
     bool tls_enabled;
     int32_t tls_auth_mode;
     bool peer_identity_required;
@@ -165,6 +166,7 @@ static void ducknng_set_service_limits_scalar(duckdb_function_info info, duckdb_
         uint64_t max_open_sessions = arg_u64(duckdb_data_chunk_get_vector(input, 1), row, 0);
         uint64_t max_active_pipes = 0;
         uint64_t max_inflight_requests = 0;
+        uint64_t max_sessions_per_peer_identity = 0;
         ducknng_service *svc = NULL;
         char *errmsg = NULL;
         size_t i;
@@ -188,7 +190,8 @@ static void ducknng_set_service_limits_scalar(duckdb_function_info info, duckdb_
         }
         max_active_pipes = ncols > 2 ? arg_u64(duckdb_data_chunk_get_vector(input, 2), row, 0) : ducknng_service_max_active_pipes(svc);
         max_inflight_requests = ncols > 3 ? arg_u64(duckdb_data_chunk_get_vector(input, 3), row, 0) : ducknng_service_max_inflight_requests(svc);
-        if (ducknng_service_set_limits(svc, max_open_sessions, max_active_pipes, max_inflight_requests, &errmsg) != 0) {
+        max_sessions_per_peer_identity = ncols > 4 ? arg_u64(duckdb_data_chunk_get_vector(input, 4), row, 0) : ducknng_service_max_sessions_per_peer_identity(svc);
+        if (ducknng_service_set_limits(svc, max_open_sessions, max_active_pipes, max_inflight_requests, max_sessions_per_peer_identity, &errmsg) != 0) {
             ducknng_mutex_unlock(&ctx->rt->mu);
             duckdb_free(name);
             duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to set service limits");
@@ -241,6 +244,7 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
             bind->rows[i].max_active_pipes = svc ? ducknng_service_max_active_pipes(svc) : 0;
             bind->rows[i].inflight_requests = svc ? (uint64_t)ducknng_service_inflight_request_count(svc) : 0;
             bind->rows[i].max_inflight_requests = svc ? ducknng_service_max_inflight_requests(svc) : 0;
+            bind->rows[i].max_sessions_per_peer_identity = svc ? ducknng_service_max_sessions_per_peer_identity(svc) : 0;
             bind->rows[i].tls_enabled = svc ? (bool)svc->tls_enabled : false;
             bind->rows[i].tls_auth_mode = svc ? svc->tls_opts.auth_mode : 0;
             bind->rows[i].peer_identity_required = svc ? (bool)ducknng_service_requires_peer_identity(svc) : false;
@@ -273,6 +277,7 @@ static void ducknng_servers_bind(duckdb_bind_info info) {
     duckdb_bind_add_result_column(info, "max_active_pipes", type);
     duckdb_bind_add_result_column(info, "inflight_requests", type);
     duckdb_bind_add_result_column(info, "max_inflight_requests", type);
+    duckdb_bind_add_result_column(info, "max_sessions_per_peer_identity", type);
     duckdb_destroy_logical_type(&type);
     type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
     duckdb_bind_add_result_column(info, "tls_enabled", type);
@@ -325,6 +330,7 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     duckdb_vector vec_max_active_pipes;
     duckdb_vector vec_inflight_requests;
     duckdb_vector vec_max_inflight_requests;
+    duckdb_vector vec_max_sessions_per_peer_identity;
     duckdb_vector vec_tls_enabled;
     duckdb_vector vec_tls_auth_mode;
     duckdb_vector vec_peer_identity_required;
@@ -342,6 +348,7 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     uint64_t *max_active_pipes;
     uint64_t *inflight_requests;
     uint64_t *max_inflight_requests;
+    uint64_t *max_sessions_per_peer_identity;
     bool *tls_enabled;
     int32_t *tls_auth_mode;
     bool *peer_identity_required;
@@ -369,14 +376,15 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     vec_max_active_pipes = duckdb_data_chunk_get_vector(output, 8);
     vec_inflight_requests = duckdb_data_chunk_get_vector(output, 9);
     vec_max_inflight_requests = duckdb_data_chunk_get_vector(output, 10);
-    vec_tls_enabled = duckdb_data_chunk_get_vector(output, 11);
-    vec_tls_auth_mode = duckdb_data_chunk_get_vector(output, 12);
-    vec_peer_identity_required = duckdb_data_chunk_get_vector(output, 13);
-    vec_peer_allowlist_active = duckdb_data_chunk_get_vector(output, 14);
-    vec_ip_allowlist_active = duckdb_data_chunk_get_vector(output, 15);
-    vec_sql_authorizer_active = duckdb_data_chunk_get_vector(output, 16);
-    vec_peer_allowlist_count = duckdb_data_chunk_get_vector(output, 17);
-    vec_ip_allowlist_count = duckdb_data_chunk_get_vector(output, 18);
+    vec_max_sessions_per_peer_identity = duckdb_data_chunk_get_vector(output, 11);
+    vec_tls_enabled = duckdb_data_chunk_get_vector(output, 12);
+    vec_tls_auth_mode = duckdb_data_chunk_get_vector(output, 13);
+    vec_peer_identity_required = duckdb_data_chunk_get_vector(output, 14);
+    vec_peer_allowlist_active = duckdb_data_chunk_get_vector(output, 15);
+    vec_ip_allowlist_active = duckdb_data_chunk_get_vector(output, 16);
+    vec_sql_authorizer_active = duckdb_data_chunk_get_vector(output, 17);
+    vec_peer_allowlist_count = duckdb_data_chunk_get_vector(output, 18);
+    vec_ip_allowlist_count = duckdb_data_chunk_get_vector(output, 19);
 
     service_ids = (uint64_t *)duckdb_vector_get_data(vec_service_id);
     contexts = (int32_t *)duckdb_vector_get_data(vec_contexts);
@@ -387,6 +395,7 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
     max_active_pipes = (uint64_t *)duckdb_vector_get_data(vec_max_active_pipes);
     inflight_requests = (uint64_t *)duckdb_vector_get_data(vec_inflight_requests);
     max_inflight_requests = (uint64_t *)duckdb_vector_get_data(vec_max_inflight_requests);
+    max_sessions_per_peer_identity = (uint64_t *)duckdb_vector_get_data(vec_max_sessions_per_peer_identity);
     tls_enabled = (bool *)duckdb_vector_get_data(vec_tls_enabled);
     tls_auth_mode = (int32_t *)duckdb_vector_get_data(vec_tls_auth_mode);
     peer_identity_required = (bool *)duckdb_vector_get_data(vec_peer_identity_required);
@@ -407,6 +416,7 @@ static void ducknng_servers_scan(duckdb_function_info info, duckdb_data_chunk ou
         max_active_pipes[i] = row->max_active_pipes;
         inflight_requests[i] = row->inflight_requests;
         max_inflight_requests[i] = row->max_inflight_requests;
+        max_sessions_per_peer_identity[i] = row->max_sessions_per_peer_identity;
         tls_enabled[i] = row->tls_enabled;
         tls_auth_mode[i] = row->tls_auth_mode;
         peer_identity_required[i] = row->peer_identity_required;
@@ -429,10 +439,12 @@ int ducknng_register_sql_service(duckdb_connection con, ducknng_sql_context *ctx
     duckdb_type service_limits_types[2] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT};
     duckdb_type service_limits_extended_types[3] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
     duckdb_type service_limits_full_types[4] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
+    duckdb_type service_limits_identity_types[5] = {DUCKDB_TYPE_VARCHAR, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_UBIGINT};
     if (!ctx || !ctx->rt) return 0;
     if (!register_scalar(con, "ducknng_set_service_limits", 2, ducknng_set_service_limits_scalar, ctx, service_limits_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(con, "ducknng_set_service_limits", 3, ducknng_set_service_limits_scalar, ctx, service_limits_extended_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     if (!register_scalar(con, "ducknng_set_service_limits", 4, ducknng_set_service_limits_scalar, ctx, service_limits_full_types, DUCKDB_TYPE_BOOLEAN)) return 0;
+    if (!register_scalar(con, "ducknng_set_service_limits", 5, ducknng_set_service_limits_scalar, ctx, service_limits_identity_types, DUCKDB_TYPE_BOOLEAN)) return 0;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
     duckdb_table_function_set_name(tf, "ducknng_list_servers");

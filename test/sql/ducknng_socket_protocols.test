@@ -412,3 +412,49 @@ query I
 SELECT ducknng_close_socket(9)
 ----
 1
+
+query I
+SELECT ducknng_open_socket('pull')
+----
+19
+
+query I
+SELECT ducknng_listen_socket(19::UBIGINT, 'inproc://ducknng_socket_protocols_pending_close', 0::UBIGINT, 0::UBIGINT)
+----
+1
+
+statement ok
+CREATE TEMP TABLE pending_close_recv AS
+SELECT ducknng_recv_socket_raw_aio(19::UBIGINT, 5000) AS recv_aio
+
+query I
+SELECT recv_aio > 0
+FROM pending_close_recv
+----
+1
+
+query I
+SELECT ducknng_close_socket(19::UBIGINT)
+----
+1
+
+query IIIII
+SELECT exists, terminal, state = 'error', phase = 'recv', error IS NOT NULL
+FROM ducknng_aio_status((SELECT recv_aio FROM pending_close_recv))
+----
+1	1	1	1	1
+
+query III
+SELECT ok, error IS NOT NULL, frame IS NULL
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM pending_close_recv), 1000)
+----
+0	1	1
+
+query I
+SELECT ducknng_aio_drop(recv_aio)
+FROM pending_close_recv
+----
+1
+
+statement ok
+DROP TABLE pending_close_recv

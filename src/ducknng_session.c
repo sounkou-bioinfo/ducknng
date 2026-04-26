@@ -200,6 +200,8 @@ int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result,
     uint64_t session_id;
     char owner_token[33];
     char *owner_token_copy = NULL;
+    size_t i;
+    size_t owner_session_count = 0;
     if (out_session_id) *out_session_id = 0;
     if (out_owner_token) *out_owner_token = NULL;
     if (!svc) {
@@ -219,6 +221,20 @@ int ducknng_service_add_session(ducknng_service *svc, duckdb_result *result,
         if (errmsg) *errmsg = ducknng_strdup("ducknng: max open sessions exceeded");
         if (result) duckdb_destroy_result(result);
         return 1;
+    }
+    if (svc->max_sessions_per_peer_identity > 0 && owner_identity && owner_identity[0]) {
+        for (i = 0; i < svc->session_count; i++) {
+            if (svc->sessions[i] && svc->sessions[i]->owner_identity &&
+                strcmp(svc->sessions[i]->owner_identity, owner_identity) == 0) {
+                owner_session_count++;
+            }
+        }
+        if (owner_session_count >= (size_t)svc->max_sessions_per_peer_identity) {
+            ducknng_mutex_unlock(&svc->mu);
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: max sessions per peer identity exceeded");
+            if (result) duckdb_destroy_result(result);
+            return 1;
+        }
     }
     if (svc->session_count == svc->session_cap) {
         new_cap = svc->session_cap ? svc->session_cap * 2 : 4;

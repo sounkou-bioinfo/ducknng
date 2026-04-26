@@ -102,6 +102,7 @@ typedef struct ducknng_manifest_security {
     int sessions_bind_peer_identity_when_present;
     uint64_t session_idle_timeout_ms;
     uint64_t max_open_sessions;
+    uint64_t max_sessions_per_peer_identity;
     const char *peer_identity_format;
 } ducknng_manifest_security;
 

@@ -1504,7 +1504,8 @@ int ducknng_service_authorizer_active(const ducknng_service *svc) {
 }
 
 int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
-    uint64_t max_active_pipes, uint64_t max_inflight_requests, char **errmsg) {
+    uint64_t max_active_pipes, uint64_t max_inflight_requests,
+    uint64_t max_sessions_per_peer_identity, char **errmsg) {
     if (errmsg) *errmsg = NULL;
     if (!svc) {
         if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
@@ -1514,6 +1515,7 @@ int ducknng_service_set_limits(ducknng_service *svc, uint64_t max_open_sessions,
     svc->max_open_sessions = max_open_sessions;
     svc->max_active_pipes = max_active_pipes;
     svc->max_inflight_requests = max_inflight_requests;
+    svc->max_sessions_per_peer_identity = max_sessions_per_peer_identity;
     if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
     return 0;
 }
@@ -1531,6 +1533,11 @@ uint64_t ducknng_service_max_active_pipes(const ducknng_service *svc) {
 uint64_t ducknng_service_max_inflight_requests(const ducknng_service *svc) {
     if (!svc) return 0;
     return svc->max_inflight_requests;
+}
+
+uint64_t ducknng_service_max_sessions_per_peer_identity(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return svc->max_sessions_per_peer_identity;
 }
 
 size_t ducknng_service_active_pipe_count(const ducknng_service *svc) {

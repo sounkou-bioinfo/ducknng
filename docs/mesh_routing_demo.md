@@ -90,7 +90,8 @@ SELECT ducknng_set_service_limits(
   'router_rpc',
   64::UBIGINT,   -- max_open_sessions
   256::UBIGINT,  -- max_active_pipes
-  16::UBIGINT    -- max_inflight_requests
+  16::UBIGINT,   -- max_inflight_requests
+  4::UBIGINT     -- max_sessions_per_peer_identity
 );
 ```
 
