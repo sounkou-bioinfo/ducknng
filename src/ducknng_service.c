@@ -3,6 +3,8 @@
 #include "ducknng_runtime.h"
 #include "ducknng_transport.h"
 #include "ducknng_util.h"
+#include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
@@ -21,6 +23,13 @@ static void ducknng_service_clear_ip_allowlist(ducknng_service *svc) {
     svc->ip_allowlist_count = 0;
     svc->ip_allowlist_json = NULL;
     svc->ip_allowlist_active = 0;
+}
+
+static void ducknng_service_clear_authorizer(ducknng_service *svc) {
+    if (!svc) return;
+    if (svc->authorizer_sql) duckdb_free(svc->authorizer_sql);
+    svc->authorizer_sql = NULL;
+    svc->authorizer_active = 0;
 }
 
 static void ducknng_json_skip_ws(const char **p) {
@@ -272,8 +281,291 @@ static int ducknng_pipe_remote_addr(nng_pipe pipe, nng_sockaddr *out) {
     return nng_pipe_get_addr(pipe, NNG_OPT_REMADDR, out) == 0 ? 0 : -1;
 }
 
+void ducknng_authorizer_decision_init(ducknng_authorizer_decision *decision) {
+    if (!decision) return;
+    memset(decision, 0, sizeof(*decision));
+    decision->allow = 1;
+    decision->http_status = 200;
+}
+
+void ducknng_authorizer_decision_reset(ducknng_authorizer_decision *decision) {
+    if (!decision) return;
+    if (decision->reason) duckdb_free(decision->reason);
+    if (decision->principal) duckdb_free(decision->principal);
+    if (decision->claims_json) duckdb_free(decision->claims_json);
+    ducknng_authorizer_decision_init(decision);
+}
+
+static int ducknng_ascii_name_equal(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        unsigned char ca = (unsigned char)*a++;
+        unsigned char cb = (unsigned char)*b++;
+        if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca + ('a' - 'A'));
+        if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb + ('a' - 'A'));
+        if (ca != cb) return 0;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static int ducknng_result_column_index(duckdb_result *result, const char *name) {
+    idx_t i;
+    idx_t ncols;
+    if (!result || !name) return -1;
+    ncols = duckdb_column_count(result);
+    for (i = 0; i < ncols; i++) {
+        const char *col = duckdb_column_name(result, i);
+        if (ducknng_ascii_name_equal(col, name)) return (int)i;
+    }
+    return -1;
+}
+
+static int ducknng_chunk_value_is_null(duckdb_vector vec, idx_t row) {
+    uint64_t *validity;
+    if (!vec) return 1;
+    validity = duckdb_vector_get_validity(vec);
+    return validity && !duckdb_validity_row_is_valid(validity, row);
+}
+
+static char *ducknng_chunk_varchar_dup(duckdb_data_chunk chunk, int col, idx_t row) {
+    duckdb_vector vec;
+    duckdb_string_t *data;
+    const char *src;
+    uint32_t len;
+    char *out;
+    if (!chunk || col < 0) return NULL;
+    vec = duckdb_data_chunk_get_vector(chunk, (idx_t)col);
+    if (ducknng_chunk_value_is_null(vec, row)) return NULL;
+    data = (duckdb_string_t *)duckdb_vector_get_data(vec);
+    src = duckdb_string_t_data(&data[row]);
+    len = duckdb_string_t_length(data[row]);
+    out = (char *)duckdb_malloc((size_t)len + 1);
+    if (!out) return NULL;
+    if (len) memcpy(out, src, len);
+    out[len] = '\0';
+    return out;
+}
+
+static int ducknng_chunk_bool_value(duckdb_data_chunk chunk, int col, idx_t row, int *out) {
+    duckdb_vector vec;
+    bool *data;
+    if (!chunk || col < 0 || !out) return -1;
+    vec = duckdb_data_chunk_get_vector(chunk, (idx_t)col);
+    if (ducknng_chunk_value_is_null(vec, row)) { *out = 0; return 0; }
+    data = (bool *)duckdb_vector_get_data(vec);
+    *out = data[row] ? 1 : 0;
+    return 0;
+}
+
+static int ducknng_chunk_int32_value(duckdb_data_chunk chunk, int col, idx_t row, int32_t *out) {
+    duckdb_vector vec;
+    int32_t *data;
+    if (!chunk || col < 0 || !out) return -1;
+    vec = duckdb_data_chunk_get_vector(chunk, (idx_t)col);
+    if (ducknng_chunk_value_is_null(vec, row)) return -1;
+    data = (int32_t *)duckdb_vector_get_data(vec);
+    *out = data[row];
+    return 0;
+}
+
+static int ducknng_chunk_uint64_value(duckdb_data_chunk chunk, int col, idx_t row, uint64_t *out) {
+    duckdb_vector vec;
+    uint64_t *data;
+    if (!chunk || col < 0 || !out) return -1;
+    vec = duckdb_data_chunk_get_vector(chunk, (idx_t)col);
+    if (ducknng_chunk_value_is_null(vec, row)) return -1;
+    data = (uint64_t *)duckdb_vector_get_data(vec);
+    *out = data[row];
+    return 0;
+}
+
+static int ducknng_parse_authorizer_result(duckdb_result *result,
+    ducknng_authorizer_decision *decision, char **errmsg) {
+    duckdb_data_chunk chunk = NULL;
+    duckdb_data_chunk extra = NULL;
+    idx_t rows;
+    int allow_col;
+    int reason_col;
+    int status_col;
+    int principal_col;
+    int claims_col;
+    int ttl_col;
+    int allowed = 0;
+    int status = 403;
+    int32_t status_value = 0;
+    uint64_t ttl_value = 0;
+    int rc = -1;
+    if (errmsg) *errmsg = NULL;
+    if (!result || !decision) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing SQL authorizer result");
+        return -1;
+    }
+    chunk = duckdb_fetch_chunk(*result);
+    rows = chunk ? duckdb_data_chunk_get_size(chunk) : 0;
+    if (rows != 1) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: SQL authorizer must return exactly one row");
+        goto done;
+    }
+    extra = duckdb_fetch_chunk(*result);
+    if (extra && duckdb_data_chunk_get_size(extra) > 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: SQL authorizer must return exactly one row");
+        goto done;
+    }
+    allow_col = ducknng_result_column_index(result, "allow");
+    if (allow_col < 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: SQL authorizer must return an allow column");
+        goto done;
+    }
+    if (duckdb_column_type(result, (idx_t)allow_col) != DUCKDB_TYPE_BOOLEAN ||
+        ducknng_chunk_bool_value(chunk, allow_col, 0, &allowed) != 0) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: SQL authorizer allow column must be BOOLEAN");
+        goto done;
+    }
+    status_col = ducknng_result_column_index(result, "status");
+    if (status_col >= 0 && duckdb_column_type(result, (idx_t)status_col) == DUCKDB_TYPE_INTEGER &&
+        ducknng_chunk_int32_value(chunk, status_col, 0, &status_value) == 0 &&
+        status_value >= 100 && status_value <= 599) {
+        status = (int)status_value;
+    }
+    reason_col = ducknng_result_column_index(result, "reason");
+    principal_col = ducknng_result_column_index(result, "principal");
+    claims_col = ducknng_result_column_index(result, "claims_json");
+    ttl_col = ducknng_result_column_index(result, "cache_ttl_ms");
+
+    decision->allow = allowed;
+    decision->http_status = allowed ? 200 : status;
+    if (decision->reason) { duckdb_free(decision->reason); decision->reason = NULL; }
+    if (reason_col >= 0) decision->reason = ducknng_chunk_varchar_dup(chunk, reason_col, 0);
+    if (!allowed && (!decision->reason || !decision->reason[0])) {
+        if (decision->reason) duckdb_free(decision->reason);
+        decision->reason = ducknng_strdup("ducknng: SQL authorizer denied request");
+    }
+    if (decision->principal) { duckdb_free(decision->principal); decision->principal = NULL; }
+    if (principal_col >= 0) decision->principal = ducknng_chunk_varchar_dup(chunk, principal_col, 0);
+    if (decision->claims_json) { duckdb_free(decision->claims_json); decision->claims_json = NULL; }
+    if (claims_col >= 0) decision->claims_json = ducknng_chunk_varchar_dup(chunk, claims_col, 0);
+    if (ttl_col >= 0 && duckdb_column_type(result, (idx_t)ttl_col) == DUCKDB_TYPE_UBIGINT &&
+        ducknng_chunk_uint64_value(chunk, ttl_col, 0, &ttl_value) == 0) {
+        decision->cache_ttl_ms = ttl_value;
+    }
+    rc = allowed ? 0 : -1;
+done:
+    if (extra) duckdb_destroy_data_chunk(&extra);
+    if (chunk) duckdb_destroy_data_chunk(&chunk);
+    return rc;
+}
+
+static int ducknng_service_run_sql_authorizer(ducknng_service *svc,
+    const ducknng_authorizer_context *auth_ctx, const char *authorizer_sql,
+    ducknng_authorizer_decision *decision, char **errmsg) {
+    duckdb_result result;
+    int rc = -1;
+    char *parse_err = NULL;
+    if (errmsg) *errmsg = NULL;
+    if (!svc || !svc->rt || !svc->rt->init_con || !authorizer_sql || !decision) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing SQL authorizer state");
+        return -1;
+    }
+    memset(&result, 0, sizeof(result));
+    ducknng_runtime_init_con_lock(svc->rt);
+    ducknng_runtime_current_request_service_set(svc->rt, svc);
+    ducknng_runtime_current_authorizer_context_set(svc->rt, auth_ctx);
+    if (duckdb_query(svc->rt->init_con, authorizer_sql, &result) == DuckDBError) {
+        const char *detail = duckdb_result_error(&result);
+        char *msg = NULL;
+        if (detail && detail[0]) {
+            size_t need = strlen(detail) + 32;
+            msg = (char *)duckdb_malloc(need);
+            if (msg) snprintf(msg, need, "ducknng: SQL authorizer error: %s", detail);
+        }
+        if (!msg) msg = ducknng_strdup("ducknng: SQL authorizer error");
+        decision->allow = 0;
+        decision->http_status = 500;
+        if (decision->reason) duckdb_free(decision->reason);
+        decision->reason = ducknng_strdup(msg);
+        if (errmsg) *errmsg = msg;
+        else if (msg) duckdb_free(msg);
+        ducknng_runtime_current_authorizer_context_set(svc->rt, NULL);
+        ducknng_runtime_init_con_unlock(svc->rt);
+        duckdb_destroy_result(&result);
+        return -1;
+    }
+    ducknng_runtime_current_authorizer_context_set(svc->rt, NULL);
+    ducknng_runtime_init_con_unlock(svc->rt);
+    rc = ducknng_parse_authorizer_result(&result, decision, &parse_err);
+    duckdb_destroy_result(&result);
+    if (rc != 0 && errmsg) *errmsg = parse_err ? parse_err : ducknng_strdup(decision->reason ? decision->reason : "ducknng: SQL authorizer denied request");
+    else if (parse_err) duckdb_free(parse_err);
+    return rc;
+}
+
+int ducknng_service_authorize_request(ducknng_service *svc, const ducknng_authorizer_context *auth_ctx,
+    ducknng_authorizer_decision *decision, char **errmsg) {
+    char *authorizer_sql = NULL;
+    char *local_err = NULL;
+    int authorizer_was_active = 0;
+    int rc;
+    if (errmsg) *errmsg = NULL;
+    if (!decision) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing authorizer decision");
+        return -1;
+    }
+    decision->allow = 1;
+    decision->http_status = 200;
+    rc = ducknng_service_network_admission_check(svc,
+        auth_ctx ? auth_ctx->caller_identity : NULL,
+        auth_ctx ? auth_ctx->remote_addr : NULL,
+        &local_err);
+    if (rc != 0) {
+        decision->allow = 0;
+        decision->http_status = 403;
+        if (decision->reason) duckdb_free(decision->reason);
+        decision->reason = local_err ? local_err : ducknng_strdup("ducknng: peer is not admitted");
+        if (errmsg) *errmsg = ducknng_strdup(decision->reason ? decision->reason : "ducknng: peer is not admitted");
+        return -1;
+    }
+    if (!svc) {
+        decision->allow = 0;
+        decision->http_status = 500;
+        if (decision->reason) duckdb_free(decision->reason);
+        decision->reason = ducknng_strdup("ducknng: missing service for authorization");
+        if (errmsg) *errmsg = ducknng_strdup(decision->reason);
+        return -1;
+    }
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    authorizer_was_active = svc->authorizer_active && svc->authorizer_sql && svc->authorizer_sql[0];
+    if (authorizer_was_active) {
+        authorizer_sql = ducknng_strdup(svc->authorizer_sql);
+    }
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    if (authorizer_was_active && !authorizer_sql) {
+        decision->allow = 0;
+        decision->http_status = 500;
+        if (decision->reason) duckdb_free(decision->reason);
+        decision->reason = ducknng_strdup("ducknng: failed to copy SQL authorizer");
+        if (errmsg) *errmsg = ducknng_strdup(decision->reason);
+        return -1;
+    }
+    if (!authorizer_sql) return 0;
+    rc = ducknng_service_run_sql_authorizer(svc, auth_ctx, authorizer_sql, decision, &local_err);
+    duckdb_free(authorizer_sql);
+    if (rc != 0) {
+        decision->allow = 0;
+        if (decision->http_status == 200) decision->http_status = 403;
+        if (local_err && (!decision->reason || !decision->reason[0])) {
+            if (decision->reason) duckdb_free(decision->reason);
+            decision->reason = ducknng_strdup(local_err);
+        }
+        if (errmsg) *errmsg = local_err ? local_err : ducknng_strdup(decision->reason ? decision->reason : "ducknng: SQL authorizer denied request");
+        else if (local_err) duckdb_free(local_err);
+        return -1;
+    }
+    if (local_err) duckdb_free(local_err);
+    return 0;
+}
+
 static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_frame *frame,
-    const char *caller_identity) {
+    const char *caller_identity, const ducknng_authorizer_decision *auth_decision) {
     const ducknng_method_descriptor *method = NULL;
     ducknng_method_descriptor method_snapshot;
     ducknng_request_context req_ctx;
@@ -337,6 +629,8 @@ static nng_msg *ducknng_dispatch_request(ducknng_service *svc, const ducknng_fra
 
     req_ctx.frame = frame;
     req_ctx.caller_identity = caller_identity;
+    req_ctx.auth_principal = auth_decision ? auth_decision->principal : NULL;
+    req_ctx.auth_claims_json = auth_decision ? auth_decision->claims_json : NULL;
     if (method->handler(svc, method, &req_ctx, &reply) != 0 && reply.type != DUCKNNG_RPC_ERROR) {
         ducknng_method_reply_reset(&reply);
         return ducknng_error_msg(method->name, DUCKNNG_STATUS_INTERNAL,
@@ -438,33 +732,72 @@ static void ducknng_rep_ctx_teardown(ducknng_rep_ctx *rc) {
     }
 }
 
+nng_msg *ducknng_handle_decoded_request(ducknng_service *svc, const ducknng_frame *frame,
+    const char *caller_identity, const ducknng_authorizer_decision *decision) {
+    return ducknng_dispatch_request(svc, frame, caller_identity, decision);
+}
+
 nng_msg *ducknng_handle_request_with_identity(ducknng_service *svc, nng_msg *req,
     const char *caller_identity) {
     ducknng_frame frame;
+    ducknng_authorizer_context auth_ctx;
+    ducknng_authorizer_decision decision;
+    nng_msg *reply;
     if (ducknng_decode_request(req, &frame) != 0) {
         return ducknng_error_msg(NULL, DUCKNNG_STATUS_INVALID, "invalid RPC envelope");
     }
-    return ducknng_dispatch_request(svc, &frame, caller_identity);
+    memset(&auth_ctx, 0, sizeof(auth_ctx));
+    auth_ctx.svc = svc;
+    auth_ctx.frame = &frame;
+    auth_ctx.phase = "rpc_request";
+    auth_ctx.transport_family = DUCKNNG_TRANSPORT_FAMILY_NNG;
+    auth_ctx.caller_identity = caller_identity;
+    ducknng_authorizer_decision_init(&decision);
+    if (ducknng_service_authorize_request(svc, &auth_ctx, &decision, NULL) != 0) {
+        reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
+            decision.reason ? decision.reason : "ducknng: request is not authorized");
+        ducknng_authorizer_decision_reset(&decision);
+        return reply;
+    }
+    reply = ducknng_dispatch_request(svc, &frame, caller_identity, &decision);
+    ducknng_authorizer_decision_reset(&decision);
+    return reply;
 }
 
 nng_msg *ducknng_handle_request(ducknng_service *svc, nng_msg *req) {
     nng_pipe pipe;
     nng_sockaddr remote_addr;
-    memset(&pipe, 0, sizeof(pipe));
-    if (req) pipe = nng_msg_get_pipe(req);
-    int have_remote_addr = ducknng_pipe_remote_addr(pipe, &remote_addr) == 0;
-    char *caller_identity = ducknng_msg_verified_peer_identity(req);
-    char *admission_err = NULL;
+    ducknng_frame frame;
+    ducknng_authorizer_context auth_ctx;
+    ducknng_authorizer_decision decision;
+    int have_remote_addr;
+    char *caller_identity;
     nng_msg *reply;
-    if (ducknng_service_network_admission_check(svc, caller_identity,
-            have_remote_addr ? &remote_addr : NULL, &admission_err) != 0) {
+    memset(&pipe, 0, sizeof(pipe));
+    memset(&auth_ctx, 0, sizeof(auth_ctx));
+    if (req) pipe = nng_msg_get_pipe(req);
+    have_remote_addr = ducknng_pipe_remote_addr(pipe, &remote_addr) == 0;
+    caller_identity = ducknng_msg_verified_peer_identity(req);
+    if (ducknng_decode_request(req, &frame) != 0) {
+        if (caller_identity) duckdb_free(caller_identity);
+        return ducknng_error_msg(NULL, DUCKNNG_STATUS_INVALID, "invalid RPC envelope");
+    }
+    auth_ctx.svc = svc;
+    auth_ctx.frame = &frame;
+    auth_ctx.phase = "rpc_request";
+    auth_ctx.transport_family = DUCKNNG_TRANSPORT_FAMILY_NNG;
+    auth_ctx.remote_addr = have_remote_addr ? &remote_addr : NULL;
+    auth_ctx.caller_identity = caller_identity;
+    ducknng_authorizer_decision_init(&decision);
+    if (ducknng_service_authorize_request(svc, &auth_ctx, &decision, NULL) != 0) {
         reply = ducknng_error_msg(NULL, DUCKNNG_STATUS_UNAUTHORIZED,
-            admission_err ? admission_err : "ducknng: peer is not admitted");
-        if (admission_err) duckdb_free(admission_err);
+            decision.reason ? decision.reason : "ducknng: request is not authorized");
+        ducknng_authorizer_decision_reset(&decision);
         if (caller_identity) duckdb_free(caller_identity);
         return reply;
     }
-    reply = ducknng_handle_request_with_identity(svc, req, caller_identity);
+    reply = ducknng_dispatch_request(svc, &frame, caller_identity, &decision);
+    ducknng_authorizer_decision_reset(&decision);
     if (caller_identity) duckdb_free(caller_identity);
     return reply;
 }
@@ -564,6 +897,7 @@ void ducknng_service_destroy(ducknng_service *svc) {
     if (svc->tls_config_source) duckdb_free(svc->tls_config_source);
     ducknng_tls_opts_reset(&svc->tls_opts);
     ducknng_service_clear_ip_allowlist(svc);
+    ducknng_service_clear_authorizer(svc);
     for (i = 0; i < session_count; i++) {
         if (sessions && sessions[i]) ducknng_session_destroy(sessions[i]);
     }
@@ -833,6 +1167,37 @@ int ducknng_service_ip_allowlist_active(const ducknng_service *svc) {
 size_t ducknng_service_ip_allowlist_count(const ducknng_service *svc) {
     if (!svc) return 0;
     return svc->ip_allowlist_count;
+}
+
+int ducknng_service_set_authorizer(ducknng_service *svc, const char *authorizer_sql, char **errmsg) {
+    char *copy = NULL;
+    if (errmsg) *errmsg = NULL;
+    if (!svc) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: service not found");
+        return -1;
+    }
+    if (!authorizer_sql || !authorizer_sql[0]) {
+        if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+        ducknng_service_clear_authorizer(svc);
+        if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+        return 0;
+    }
+    copy = ducknng_strdup(authorizer_sql);
+    if (!copy) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying SQL authorizer");
+        return -1;
+    }
+    if (svc->mu_initialized) ducknng_mutex_lock(&svc->mu);
+    ducknng_service_clear_authorizer(svc);
+    svc->authorizer_sql = copy;
+    svc->authorizer_active = 1;
+    if (svc->mu_initialized) ducknng_mutex_unlock(&svc->mu);
+    return 0;
+}
+
+int ducknng_service_authorizer_active(const ducknng_service *svc) {
+    if (!svc) return 0;
+    return svc->authorizer_active ? 1 : 0;
 }
 
 int ducknng_service_stop(ducknng_service *svc, char **errmsg) {

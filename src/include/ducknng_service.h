@@ -3,6 +3,7 @@
 #include "ducknng_nng_compat.h"
 #include "ducknng_session.h"
 #include "ducknng_thread.h"
+#include "ducknng_transport.h"
 #include "ducknng_wire.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -17,6 +18,29 @@ typedef struct ducknng_ip_allow_rule {
     uint8_t addr[16];
     uint8_t prefix_bits;
 } ducknng_ip_allow_rule;
+
+typedef struct ducknng_authorizer_context {
+    ducknng_service *svc;
+    const ducknng_frame *frame;
+    ducknng_transport_family transport_family;
+    ducknng_transport_scheme scheme;
+    const char *phase;
+    const char *caller_identity;
+    const nng_sockaddr *remote_addr;
+    const char *http_method;
+    const char *http_path;
+    const char *content_type;
+    uint64_t body_bytes;
+} ducknng_authorizer_context;
+
+typedef struct ducknng_authorizer_decision {
+    int allow;
+    int http_status;
+    char *reason;
+    char *principal;
+    char *claims_json;
+    uint64_t cache_ttl_ms;
+} ducknng_authorizer_decision;
 
 struct ducknng_rep_ctx {
     ducknng_service *svc;
@@ -48,6 +72,8 @@ struct ducknng_service {
     ducknng_ip_allow_rule *ip_allowlist;
     size_t ip_allowlist_count;
     char *ip_allowlist_json;
+    int authorizer_active;
+    char *authorizer_sql;
     nng_socket rep_sock;
     nng_listener listener;
     ducknng_rep_ctx *ctxs;
@@ -98,4 +124,12 @@ int ducknng_service_set_peer_allowlist(ducknng_service *svc, const char *identit
 int ducknng_service_set_ip_allowlist(ducknng_service *svc, const char *cidrs_json, char **errmsg);
 int ducknng_service_ip_allowlist_active(const ducknng_service *svc);
 size_t ducknng_service_ip_allowlist_count(const ducknng_service *svc);
+int ducknng_service_set_authorizer(ducknng_service *svc, const char *authorizer_sql, char **errmsg);
+int ducknng_service_authorizer_active(const ducknng_service *svc);
+void ducknng_authorizer_decision_init(ducknng_authorizer_decision *decision);
+void ducknng_authorizer_decision_reset(ducknng_authorizer_decision *decision);
+int ducknng_service_authorize_request(ducknng_service *svc, const ducknng_authorizer_context *auth_ctx,
+    ducknng_authorizer_decision *decision, char **errmsg);
+nng_msg *ducknng_handle_decoded_request(ducknng_service *svc, const ducknng_frame *frame,
+    const char *caller_identity, const ducknng_authorizer_decision *decision);
 const char *ducknng_service_resolved_listen(const ducknng_service *svc);

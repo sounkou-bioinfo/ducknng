@@ -14,7 +14,7 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_list_servers` | table |  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services. |
+| `ducknng_list_servers` | table |  | `TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)` | List registered ducknng services. |
 
 ## Method Registry
 
@@ -54,6 +54,8 @@ This file is generated from `function_catalog/functions.yaml`.
 | `ducknng_set_tls_peer_allowlist` | scalar | `tls_config_id, identities_json` | `BOOLEAN` | Set the default exact peer-identity allowlist on a TLS config handle. |
 | `ducknng_set_service_peer_allowlist` | scalar | `name, identities_json` | `BOOLEAN` | Dynamically set the exact peer-identity allowlist for a running service. |
 | `ducknng_set_service_ip_allowlist` | scalar | `name, cidrs_json` | `BOOLEAN` | Dynamically set the IP/CIDR remote-address allowlist for a running service. |
+| `ducknng_auth_context` | table |  | `TABLE(phase VARCHAR, service_name VARCHAR, transport_family VARCHAR, scheme VARCHAR, listen VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, tls_verified BOOLEAN, peer_identity VARCHAR, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, http_method VARCHAR, http_path VARCHAR, content_type VARCHAR, body_bytes UBIGINT, rpc_method VARCHAR, rpc_type VARCHAR, payload_bytes UBIGINT)` | Expose the current request context to a SQL authorization callback. |
+| `ducknng_set_service_authorizer` | scalar | `name, authorizer_sql` | `BOOLEAN` | Install or clear a service-level SQL authorization callback evaluated uniformly for framed RPC requests before method dispatch. |
 | `ducknng_self_signed_tls_config` | scalar | `common_name, valid_days, auth_mode` | `UBIGINT` | Generate a self-signed development certificate and register it as a TLS config handle. |
 | `ducknng_tls_config_from_pem` | scalar | `cert_pem, key_pem, ca_pem, password, auth_mode` | `UBIGINT` | Register a TLS config handle from in-memory PEM material. |
 | `ducknng_tls_config_from_files` | scalar | `cert_key_file, ca_file, password, auth_mode` | `UBIGINT` | Register a TLS config handle from file-backed certificate material. |

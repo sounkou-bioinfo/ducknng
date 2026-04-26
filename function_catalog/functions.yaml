@@ -57,7 +57,7 @@
       "kind": "table",
       "category": "Introspection",
       "signature": "ducknng_list_servers()",
-      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)",
+      "returns": "TABLE(service_id UBIGINT, name VARCHAR, listen VARCHAR, contexts INTEGER, running BOOLEAN, sessions UBIGINT, tls_enabled BOOLEAN, tls_auth_mode INTEGER, peer_identity_required BOOLEAN, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, peer_allowlist_count UBIGINT, ip_allowlist_count UBIGINT)",
       "since": "0.1.0",
       "implemented": true,
       "description": "List registered ducknng services.",
@@ -67,7 +67,8 @@
         "peer_allowlist_active reports whether service-level peer admission uses an exact verified-identity allowlist.",
         "peer_allowlist_count reports the number of admitted identities; an active allowlist with count 0 denies every verified peer.",
         "ip_allowlist_active reports whether service-level remote-address admission uses an IP/CIDR allowlist.",
-        "ip_allowlist_count reports the number of configured IP/CIDR rules; an active allowlist with count 0 denies every remote address."
+        "ip_allowlist_count reports the number of configured IP/CIDR rules; an active allowlist with count 0 denies every remote address.",
+        "sql_authorizer_active reports whether a service-level SQL authorization callback is installed."
       ],
       "examples": [
         "SELECT * FROM ducknng_list_servers();"
@@ -402,6 +403,45 @@
       ],
       "examples": [
         "SELECT ducknng_set_service_ip_allowlist('svc', '[\"127.0.0.1/32\",\"10.0.0.0/8\"]');"
+      ]
+    },
+    {
+      "name": "ducknng_auth_context",
+      "kind": "table",
+      "category": "Transport Security",
+      "signature": "ducknng_auth_context()",
+      "returns": "TABLE(phase VARCHAR, service_name VARCHAR, transport_family VARCHAR, scheme VARCHAR, listen VARCHAR, remote_addr VARCHAR, remote_ip VARCHAR, remote_port INTEGER, tls_verified BOOLEAN, peer_identity VARCHAR, peer_allowlist_active BOOLEAN, ip_allowlist_active BOOLEAN, sql_authorizer_active BOOLEAN, http_method VARCHAR, http_path VARCHAR, content_type VARCHAR, body_bytes UBIGINT, rpc_method VARCHAR, rpc_type VARCHAR, payload_bytes UBIGINT)",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Expose the current request context to a SQL authorization callback.",
+      "notes": [
+        "Returns one row only while a ducknng SQL authorizer is running; outside that callback it returns zero rows.",
+        "The same context shape is used for NNG and HTTP/HTTPS framed RPC carriers where metadata is available.",
+        "Bearer session tokens are intentionally not exposed in this context table."
+      ],
+      "examples": [
+        "SELECT allow, status, reason FROM (SELECT rpc_method = 'manifest' AS allow, 403 AS status, 'denied' AS reason FROM ducknng_auth_context());"
+      ]
+    },
+    {
+      "name": "ducknng_set_service_authorizer",
+      "kind": "scalar",
+      "category": "Transport Security",
+      "signature": "ducknng_set_service_authorizer(name, authorizer_sql)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Install or clear a service-level SQL authorization callback evaluated uniformly for framed RPC requests before method dispatch.",
+      "notes": [
+        "authorizer_sql must return exactly one row with a BOOLEAN allow column.",
+        "Optional result columns are status INTEGER, reason VARCHAR, principal VARCHAR, claims_json VARCHAR, and cache_ttl_ms UBIGINT.",
+        "The callback can inspect the current request using ducknng_auth_context().",
+        "NULL or an empty string clears the SQL authorizer and returns to the built-in admission policy.",
+        "Fast C admission checks such as required mTLS, peer identity allowlists, and compiled IP/CIDR allowlists still run before the SQL callback.",
+        "The SQL callback runs through the service-owned DuckDB execution lane; keep it short and avoid recursive ducknng client calls to the same service."
+      ],
+      "examples": [
+        "SELECT ducknng_set_service_authorizer('svc', 'SELECT rpc_method = ''manifest'' AS allow, 403 AS status, ''denied'' AS reason FROM ducknng_auth_context()');"
       ]
     },
     {

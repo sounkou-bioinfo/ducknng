@@ -47,7 +47,7 @@ Implemented now:
 - first-class raw AIO handles for one pending NNG operation: socket send/recv, HTTP/HTTPS ncurl requests, req-style request/reply futures, and the first raw unary RPC futures
 - manifest-driven RPC helpers, opt-in `exec`, and query sessions (`query_open`, `fetch`, `close`, `cancel`)
 - registry auth policy controls such as `ducknng_set_method_auth('manifest', true)` for protecting discovery through verified peer identity
-- dynamic exact peer-identity and IP/CIDR allowlists through `ducknng_set_tls_peer_allowlist(...)`, `ducknng_set_service_peer_allowlist(...)`, and `ducknng_set_service_ip_allowlist(...)`; NNG services use NNG pipe notifications for new-pipe admission
+- fast C admission checks for mTLS, exact peer-identity allowlists, and compiled IP/CIDR allowlists, plus flexible service-level SQL authorization callbacks through `ducknng_set_service_authorizer(...)` and `ducknng_auth_context()`; NNG services use NNG pipe notifications for new-pipe admission
 - automatic synchronous helper routing over NNG or HTTP/HTTPS based on URL scheme
 - TLS config handles for `tls+tcp://`, `wss://`, and `https://`; `auth_mode = 2` enables required peer verification/mTLS
 - session ownership by `session_token`, additionally bound to verified mTLS peer identity when present; `query_open` replies expose the server-owned effective `idle_timeout_ms`
@@ -919,7 +919,9 @@ SELECT ducknng_stop_server('tls_demo_self');
 SELECT ducknng_drop_tls_config(1);
 ```
 
-For mTLS, create the same kind of TLS handle with `auth_mode = 2`. On listeners this requires the peer to present a certificate trusted by the configured CA; on clients it requires server verification. The dispatcher derives the current caller identity from the first verified peer certificate SAN as `tls:san:<value>`, falling back to the common name as `tls:cn:<common-name>`. Sessions opened over mTLS are still controlled by `session_token`, but they are also bound to that verified peer identity. `ducknng_set_tls_peer_allowlist(...)` sets an exact identity allowlist copied into future services, and `ducknng_set_service_peer_allowlist(...)` changes the allowlist dynamically for a running service. NNG listeners use NNG's `NNG_PIPE_EV_ADD_PRE` pipe notification to close non-admitted new pipes before they are added to the socket; HTTP/HTTPS returns HTTP `403` before RPC dispatch. `ducknng_list_servers()` exposes `tls_enabled`, `tls_auth_mode`, `peer_identity_required`, `peer_allowlist_active`, and `peer_allowlist_count` so deployments can distinguish TLS without client verification from mTLS and allowlisted mTLS. Individual registry-backed methods can also require verified peer identity; for example, `ducknng_set_method_auth('manifest', true)` protects manifest discovery without unregistering the method.
+For mTLS, create the same kind of TLS handle with `auth_mode = 2`. On listeners this requires the peer to present a certificate trusted by the configured CA; on clients it requires server verification. The dispatcher derives the current caller identity from the first verified peer certificate SAN as `tls:san:<value>`, falling back to the common name as `tls:cn:<common-name>`. Sessions opened over mTLS are still controlled by `session_token`, but they are also bound to that verified peer identity. `ducknng_set_tls_peer_allowlist(...)` sets an exact identity allowlist copied into future services, and `ducknng_set_service_peer_allowlist(...)` changes the allowlist dynamically for a running service. NNG listeners use NNG's `NNG_PIPE_EV_ADD_PRE` pipe notification to close non-admitted new pipes before they are added to the socket; HTTP/HTTPS returns HTTP `403` before RPC dispatch. `ducknng_list_servers()` exposes `tls_enabled`, `tls_auth_mode`, `peer_identity_required`, `peer_allowlist_active`, `ip_allowlist_active`, `sql_authorizer_active`, and the corresponding counts so deployments can distinguish TLS without client verification from mTLS, allowlisted mTLS, IP-gated services, and services with SQL authorization callbacks. Individual registry-backed methods can also require verified peer identity; for example, `ducknng_set_method_auth('manifest', true)` protects manifest discovery without unregistering the method.
+
+The built-in mTLS, peer-identity allowlist, and IP/CIDR allowlist checks are the fast C path for common denials. They run before the flexible SQL callback and, for NNG transports, can reject new pipes at `NNG_PIPE_EV_ADD_PRE` without entering DuckDB. For policy that depends on tables, tenants, method names, headers, or deployment-specific rules, install a service-level SQL authorizer with `ducknng_set_service_authorizer(name, authorizer_sql)`. The callback sees one row from `ducknng_auth_context()` while it runs and must return exactly one row with a Boolean `allow` column; optional columns are `status`, `reason`, `principal`, `claims_json`, and `cache_ttl_ms`. `NULL` or an empty string clears the SQL authorizer. This callback is intentionally evaluated at the request/dispatch boundary, not inside NNG's low-level pipe callback. It runs through the service-owned DuckDB execution lane, so keep it short and side-effect-light: prefer table/view lookups, avoid recursive `ducknng_*` client calls to the same service, avoid stopping the service from its own callback, and do not use it for long-running work. That limitation avoids deadlocks while keeping one uniform policy interface for NNG, HTTP/HTTPS framed RPC, and the planned broader HTTP server framework.
 
 ### `tls+tcp://` from file-backed certificate material
 
@@ -1256,7 +1258,8 @@ A strong direct-exposure baseline is:
 2. create the TLS handle with `auth_mode = 2` so peers must present a verified client certificate;
 3. configure a private CA or otherwise narrow certificate issuance so the trust root is not broader than the application;
 4. set exact peer-identity and/or IP/CIDR allowlists before exposure with `ducknng_set_tls_peer_allowlist(...)` and the optional `ip_allowlist_json` startup argument;
-5. optionally update a running service dynamically with `ducknng_set_service_peer_allowlist(...)` and `ducknng_set_service_ip_allowlist(...)`.
+5. install a service-level SQL authorizer with `ducknng_set_service_authorizer(...)` when admission depends on deployment tables, tenants, method names, or HTTP metadata;
+6. optionally update a running service dynamically with `ducknng_set_service_peer_allowlist(...)`, `ducknng_set_service_ip_allowlist(...)`, and `ducknng_set_service_authorizer(...)`.
 
 The relevant identity strings currently come from verified TLS peer metadata and are SAN-first, CN-fallback: `tls:san:<value>` or `tls:cn:<common-name>`. Peer identity allowlists are exact-match. IP allowlists are parsed once into IPv4/IPv6 literal or CIDR rules such as `127.0.0.1/32`, `10.0.0.0/8`, or `::1/128`. `NULL` or an empty SQL string clears an allowlist and returns to default-open admission subject to TLS/method/session policy. An empty JSON array, `[]`, is active deny-all.
 
@@ -1287,6 +1290,15 @@ SELECT ducknng_set_service_peer_allowlist(
 SELECT ducknng_set_service_ip_allowlist(
   'sql_http',
   '["127.0.0.1/32","10.0.0.0/8"]'
+);
+
+-- Add a flexible SQL callback when policy depends on request context.
+SELECT ducknng_set_service_authorizer(
+  'sql_http',
+  'SELECT remote_ip = ''127.0.0.1'' AND rpc_method = ''manifest'' AS allow,
+          403 AS status,
+          ''not authorized'' AS reason
+   FROM ducknng_auth_context()'
 );
 ```
 

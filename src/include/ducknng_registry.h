@@ -36,6 +36,8 @@ typedef enum ducknng_session_behavior {
 typedef struct ducknng_request_context {
     const ducknng_frame *frame;
     const char *caller_identity;
+    const char *auth_principal;
+    const char *auth_claims_json;
     void *session;
 } ducknng_request_context;
 
@@ -96,6 +98,7 @@ typedef struct ducknng_manifest_security {
     uint64_t peer_allowlist_count;
     int ip_allowlist_active;
     uint64_t ip_allowlist_count;
+    int sql_authorizer_active;
     int sessions_bind_peer_identity_when_present;
     uint64_t session_idle_timeout_ms;
     const char *peer_identity_format;

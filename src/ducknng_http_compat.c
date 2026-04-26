@@ -718,6 +718,7 @@ typedef struct ducknng_http_server_state {
     struct ducknng_service *svc;
     nng_http_server *server;
     nng_http_handler *handler;
+    char *path;
     ducknng_mutex mu;
     ducknng_cond cv;
     int stopping;
@@ -861,7 +862,6 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
     const char *content_type;
     void *body = NULL;
     size_t body_len = 0;
-    nng_msg *req_msg = NULL;
     nng_msg *reply_msg = NULL;
     nng_http_res *res = NULL;
     char *caller_identity = NULL;
@@ -914,28 +914,35 @@ static void ducknng_http_rpc_handler(nng_aio *aio) {
     caller_identity = ducknng_http_conn_verified_peer_identity(conn);
     have_remote_addr = ducknng_http_conn_remote_addr(conn, &remote_addr) == 0;
     {
-        char *admission_err = NULL;
-        if (ducknng_service_network_admission_check(state->svc, caller_identity,
-                have_remote_addr ? &remote_addr : NULL, &admission_err) != 0) {
-            rv = ducknng_http_alloc_text_response(&res, 403,
-                admission_err ? admission_err : "ducknng: peer identity is not admitted");
-            if (admission_err) duckdb_free(admission_err);
+        ducknng_authorizer_context auth_ctx;
+        ducknng_authorizer_decision decision;
+        memset(&auth_ctx, 0, sizeof(auth_ctx));
+        auth_ctx.svc = state->svc;
+        auth_ctx.frame = &frame;
+        auth_ctx.phase = "rpc_request";
+        auth_ctx.transport_family = DUCKNNG_TRANSPORT_FAMILY_HTTP;
+        auth_ctx.scheme = state->svc && state->svc->tls_enabled ? DUCKNNG_TRANSPORT_SCHEME_HTTPS : DUCKNNG_TRANSPORT_SCHEME_HTTP;
+        auth_ctx.caller_identity = caller_identity;
+        auth_ctx.remote_addr = have_remote_addr ? &remote_addr : NULL;
+        auth_ctx.http_method = "POST";
+        auth_ctx.http_path = state->path;
+        auth_ctx.content_type = content_type;
+        auth_ctx.body_bytes = (uint64_t)body_len;
+        ducknng_authorizer_decision_init(&decision);
+        if (ducknng_service_authorize_request(state->svc, &auth_ctx, &decision, NULL) != 0) {
+            uint16_t status = (decision.http_status >= 100 && decision.http_status <= 599) ?
+                (uint16_t)decision.http_status : 403;
+            rv = ducknng_http_alloc_text_response(&res, status,
+                decision.reason ? decision.reason : "ducknng: request is not authorized");
+            ducknng_authorizer_decision_reset(&decision);
             if (caller_identity) duckdb_free(caller_identity);
             ducknng_http_finish_response(aio, res, rv);
             return;
         }
+        reply_msg = ducknng_handle_decoded_request(state->svc, &frame, caller_identity, &decision);
+        ducknng_authorizer_decision_reset(&decision);
     }
-    rv = nng_msg_alloc(&req_msg, body_len);
-    if (rv != 0) {
-        if (caller_identity) duckdb_free(caller_identity);
-        ducknng_http_finish_response(aio, NULL, rv);
-        return;
-    }
-    if (body_len) memcpy(nng_msg_body(req_msg), body, body_len);
-    reply_msg = ducknng_handle_request_with_identity(state->svc, req_msg, caller_identity);
     if (caller_identity) duckdb_free(caller_identity);
-    nng_msg_free(req_msg);
-    req_msg = NULL;
     if (!reply_msg) {
         rv = ducknng_http_alloc_text_response(&res, 500, "ducknng: failed to dispatch request");
         ducknng_http_finish_response(aio, res, rv);
@@ -1051,8 +1058,16 @@ int ducknng_http_server_start(struct ducknng_service *svc, ducknng_http_server_s
     }
     memset(state, 0, sizeof(*state));
     state->svc = svc;
+    state->path = ducknng_strdup(up->u_path ? up->u_path : "/");
+    if (!state->path) {
+        nng_url_free(up);
+        duckdb_free(state);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying HTTP path");
+        return -1;
+    }
     if (ducknng_mutex_init(&state->mu) != 0) {
         nng_url_free(up);
+        if (state->path) duckdb_free(state->path);
         duckdb_free(state);
         if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize HTTP server mutex");
         return -1;
@@ -1061,6 +1076,7 @@ int ducknng_http_server_start(struct ducknng_service *svc, ducknng_http_server_s
     if (ducknng_cond_init(&state->cv) != 0) {
         ducknng_mutex_destroy(&state->mu);
         nng_url_free(up);
+        if (state->path) duckdb_free(state->path);
         duckdb_free(state);
         if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to initialize HTTP server condition variable");
         return -1;
@@ -1114,6 +1130,7 @@ fail:
         }
         if (state->cv_initialized) ducknng_cond_destroy(&state->cv);
         if (state->mu_initialized) ducknng_mutex_destroy(&state->mu);
+        if (state->path) duckdb_free(state->path);
         duckdb_free(state);
     }
     if (up) nng_url_free(up);
@@ -1148,5 +1165,6 @@ void ducknng_http_server_stop(ducknng_http_server_state *state) {
     if (state->server) nng_http_server_release(state->server);
     if (state->cv_initialized) ducknng_cond_destroy(&state->cv);
     if (state->mu_initialized) ducknng_mutex_destroy(&state->mu);
+    if (state->path) duckdb_free(state->path);
     duckdb_free(state);
 }
