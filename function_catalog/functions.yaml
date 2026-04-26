@@ -480,7 +480,8 @@
         "max_open_sessions limits concurrently open query sessions for the service.",
         "A value of 0 clears the limit and means unlimited for this first limit surface.",
         "When the limit is exceeded, query_open fails with ducknng: max open sessions exceeded.",
-        "Future service limits may include principal-based caps, byte budgets, and rate limits.",
+        "Current built-in quota owners are the service itself and, for max_sessions_per_peer_identity, the verified TLS peer identity. SQL-authorizer principal values are deployment policy/audit metadata, not built-in quota owners yet.",
+        "Future additive service limits may include principal-based caps, byte budgets, and rate limits.",
         "max_active_pipes limits simultaneously active NNG protocol-socket pipes for the service; 0 means unlimited.",
         "The two-argument form preserves the current max_active_pipes value.",
         "max_inflight_requests limits concurrent requests inside the service request boundary; 0 means unlimited.",
@@ -1055,6 +1056,7 @@
         "session_token must match the bearer capability returned by ducknng_open_query().",
         "If the session was opened over verified mTLS, this request must arrive with the same transport-derived peer identity.",
         "When a row batch is returned, payload contains one Arrow IPC batch and control_json is NULL.",
+        "Decode a row-batch payload in SQL with ducknng_parse_body(payload, 'application/vnd.apache.arrow.stream').",
         "When the session is exhausted, payload is NULL, state is usually exhausted, and end_of_stream is TRUE."
       ],
       "examples": [

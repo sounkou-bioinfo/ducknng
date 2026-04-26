@@ -123,9 +123,9 @@ Still intentionally deferred or not sealed:
   fallback
 - full SQL-side decoding of session `fetch` Arrow batch BLOBs is still a
   future table-function layer
-- envelope-level application authentication is not implemented; the
-  current contract is `session_token` plus optional verified mTLS owner
-  identity plus deployment admission/authorization policy
+- session ownership is sealed around `session_token` plus optional
+  verified mTLS owner identity; any future envelope-level application
+  authentication is additive and does not replace those checks
 - routing/forwarding and mesh scheduling are not sealed APIs yet; the
   new pipe monitor and active-pipe snapshot are the first
   membership/telemetry foundation
@@ -1359,7 +1359,8 @@ SELECT getvariable('session_id') AS opened_session_id,
 FROM session_open;
 
 -- The first fetch returns one Arrow IPC batch in payload.
-SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
+CREATE TEMP TABLE session_fetch AS
+SELECT *
 FROM ducknng_fetch_query(
   'ipc:///tmp/ducknng_sql_session_demo.ipc', -- url
   getvariable('session_id')::UBIGINT,        -- session_id returned by open_query
@@ -1368,6 +1369,22 @@ FROM ducknng_fetch_query(
   0::UBIGINT,                                -- batch_bytes override
   0::UBIGINT                                 -- tls_config_id
 );
+
+SELECT ok, session_id, state IS NULL AS state_is_null, octet_length(payload) > 0 AS has_payload, end_of_stream
+FROM session_fetch;
+
+-- Decode that Arrow IPC fetch payload through the body codec table path.
+-- DuckDB table-function arguments cannot contain subqueries, so keep the
+-- payload in a variable before passing it to ducknng_parse_body().
+SET VARIABLE session_fetch_payload = (SELECT payload FROM session_fetch);
+
+SELECT *
+FROM ducknng_parse_body(
+  getvariable('session_fetch_payload')::BLOB,
+  'application/vnd.apache.arrow.stream'
+);
+
+DROP TABLE session_fetch;
 
 -- The second fetch returns JSON control metadata saying the session is exhausted.
 SELECT ok, session_id, state, payload IS NULL AS no_payload, end_of_stream
@@ -1408,6 +1425,12 @@ SELECT ducknng_stop_server('sql_session_demo');
     +------+------------+---------------+-------------+---------------+
     | true | 1          | true          | true        | false         |
     +------+------------+---------------+-------------+---------------+
+    +----+
+    | id |
+    +----+
+    | 1  |
+    | 2  |
+    +----+
     +------+------------+-----------+------------+---------------+
     |  ok  | session_id |   state   | no_payload | end_of_stream |
     +------+------------+-----------+------------+---------------+
@@ -1519,22 +1542,26 @@ simultaneously active NNG protocol-socket pipes at `ADD_PRE`, and the
 four-argument form also caps concurrent in-flight requests before SQL
 authorizers and RPC dispatch, and the five-argument form also caps
 concurrently open query sessions per verified peer identity; `0` means
-unlimited for any cap. For policy that depends on tables, tenants,
-method names, headers, or deployment-specific rules, install a
-service-level SQL authorizer with
-`ducknng_set_service_authorizer(name, authorizer_sql)`. The callback
-sees one row from `ducknng_auth_context()` while it runs and must return
-exactly one row with a Boolean `allow` column; optional columns are
-`status`, `reason`, `principal`, `claims_json`, and `cache_ttl_ms`.
-`NULL` or an empty string clears the SQL authorizer. This callback is
-intentionally evaluated at the request/dispatch boundary, not inside
-NNG’s low-level pipe callback. It runs through the service-owned DuckDB
-execution lane, so keep it short and side-effect-light: prefer
-table/view lookups, avoid recursive `ducknng_*` client calls to the same
-service, avoid stopping the service from its own callback, and do not
-use it for long-running work. That limitation avoids deadlocks while
-keeping one uniform policy interface for NNG, HTTP/HTTPS framed RPC, and
-the planned broader HTTP server framework.
+unlimited for any cap. Those are the stable built-in quota owners today:
+the service itself and, when present, the verified peer identity. The
+optional SQL-authorizer `principal` column is deployment policy/audit
+metadata, not yet durable session ownership metadata for built-in
+quotas. For policy that depends on tables, tenants, method names,
+headers, or deployment-specific rules, install a service-level SQL
+authorizer with `ducknng_set_service_authorizer(name, authorizer_sql)`.
+The callback sees one row from `ducknng_auth_context()` while it runs
+and must return exactly one row with a Boolean `allow` column; optional
+columns are `status`, `reason`, `principal`, `claims_json`, and
+`cache_ttl_ms`. `NULL` or an empty string clears the SQL authorizer.
+This callback is intentionally evaluated at the request/dispatch
+boundary, not inside NNG’s low-level pipe callback. It runs through the
+service-owned DuckDB execution lane, so keep it short and
+side-effect-light: prefer table/view lookups, avoid recursive
+`ducknng_*` client calls to the same service, avoid stopping the service
+from its own callback, and do not use it for long-running work. That
+limitation avoids deadlocks while keeping one uniform policy interface
+for NNG, HTTP/HTTPS framed RPC, and the planned broader HTTP server
+framework.
 
 ### `tls+tcp://` from file-backed certificate material
 

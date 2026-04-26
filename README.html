@@ -744,9 +744,10 @@ yet; the current HTTP server is the framed RPC mount</li>
 BLOB fallback</li>
 <li>full SQL-side decoding of session <code>fetch</code> Arrow batch
 BLOBs is still a future table-function layer</li>
-<li>envelope-level application authentication is not implemented; the
-current contract is <code>session_token</code> plus optional verified
-mTLS owner identity plus deployment admission/authorization policy</li>
+<li>session ownership is sealed around <code>session_token</code> plus
+optional verified mTLS owner identity; any future envelope-level
+application authentication is additive and does not replace those
+checks</li>
 <li>routing/forwarding and mesh scheduling are not sealed APIs yet; the
 new pipe monitor and active-pipe snapshot are the first
 membership/telemetry foundation</li>
@@ -2430,38 +2431,55 @@ and close a query session explicitly</h3>
 <span id="cb27-32"><a href="#cb27-32" tabindex="-1"></a><span class="kw">FROM</span> session_open;</span>
 <span id="cb27-33"><a href="#cb27-33" tabindex="-1"></a></span>
 <span id="cb27-34"><a href="#cb27-34" tabindex="-1"></a><span class="co">-- The first fetch returns one Arrow IPC batch in payload.</span></span>
-<span id="cb27-35"><a href="#cb27-35" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> state_is_null, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload, end_of_stream</span>
-<span id="cb27-36"><a href="#cb27-36" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
-<span id="cb27-37"><a href="#cb27-37" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
-<span id="cb27-38"><a href="#cb27-38" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
-<span id="cb27-39"><a href="#cb27-39" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_token&#39;</span>):<span class="ch">:VARCHAR</span>,     <span class="co">-- session_token returned by open_query</span></span>
-<span id="cb27-40"><a href="#cb27-40" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
-<span id="cb27-41"><a href="#cb27-41" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
-<span id="cb27-42"><a href="#cb27-42" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
-<span id="cb27-43"><a href="#cb27-43" tabindex="-1"></a>);</span>
-<span id="cb27-44"><a href="#cb27-44" tabindex="-1"></a></span>
-<span id="cb27-45"><a href="#cb27-45" tabindex="-1"></a><span class="co">-- The second fetch returns JSON control metadata saying the session is exhausted.</span></span>
-<span id="cb27-46"><a href="#cb27-46" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state, payload <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> no_payload, end_of_stream</span>
-<span id="cb27-47"><a href="#cb27-47" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
-<span id="cb27-48"><a href="#cb27-48" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
-<span id="cb27-49"><a href="#cb27-49" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
-<span id="cb27-50"><a href="#cb27-50" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_token&#39;</span>):<span class="ch">:VARCHAR</span>,     <span class="co">-- session_token returned by open_query</span></span>
-<span id="cb27-51"><a href="#cb27-51" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
-<span id="cb27-52"><a href="#cb27-52" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
-<span id="cb27-53"><a href="#cb27-53" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
-<span id="cb27-54"><a href="#cb27-54" tabindex="-1"></a>);</span>
-<span id="cb27-55"><a href="#cb27-55" tabindex="-1"></a></span>
-<span id="cb27-56"><a href="#cb27-56" tabindex="-1"></a><span class="co">-- Close the exhausted session explicitly.</span></span>
-<span id="cb27-57"><a href="#cb27-57" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state</span>
-<span id="cb27-58"><a href="#cb27-58" tabindex="-1"></a><span class="kw">FROM</span> ducknng_close_query(</span>
-<span id="cb27-59"><a href="#cb27-59" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
-<span id="cb27-60"><a href="#cb27-60" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
-<span id="cb27-61"><a href="#cb27-61" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_token&#39;</span>):<span class="ch">:VARCHAR</span>,     <span class="co">-- session_token returned by open_query</span></span>
-<span id="cb27-62"><a href="#cb27-62" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
-<span id="cb27-63"><a href="#cb27-63" tabindex="-1"></a>);</span>
-<span id="cb27-64"><a href="#cb27-64" tabindex="-1"></a></span>
-<span id="cb27-65"><a href="#cb27-65" tabindex="-1"></a><span class="co">-- Stop the demo listener after the session is closed.</span></span>
-<span id="cb27-66"><a href="#cb27-66" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_session_demo&#39;</span>);</span></code></pre></div>
+<span id="cb27-35"><a href="#cb27-35" tabindex="-1"></a><span class="kw">CREATE</span> TEMP <span class="kw">TABLE</span> session_fetch <span class="kw">AS</span></span>
+<span id="cb27-36"><a href="#cb27-36" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
+<span id="cb27-37"><a href="#cb27-37" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
+<span id="cb27-38"><a href="#cb27-38" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb27-39"><a href="#cb27-39" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
+<span id="cb27-40"><a href="#cb27-40" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_token&#39;</span>):<span class="ch">:VARCHAR</span>,     <span class="co">-- session_token returned by open_query</span></span>
+<span id="cb27-41"><a href="#cb27-41" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
+<span id="cb27-42"><a href="#cb27-42" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
+<span id="cb27-43"><a href="#cb27-43" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
+<span id="cb27-44"><a href="#cb27-44" tabindex="-1"></a>);</span>
+<span id="cb27-45"><a href="#cb27-45" tabindex="-1"></a></span>
+<span id="cb27-46"><a href="#cb27-46" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> state_is_null, octet_length(payload) <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">AS</span> has_payload, end_of_stream</span>
+<span id="cb27-47"><a href="#cb27-47" tabindex="-1"></a><span class="kw">FROM</span> session_fetch;</span>
+<span id="cb27-48"><a href="#cb27-48" tabindex="-1"></a></span>
+<span id="cb27-49"><a href="#cb27-49" tabindex="-1"></a><span class="co">-- Decode that Arrow IPC fetch payload through the body codec table path.</span></span>
+<span id="cb27-50"><a href="#cb27-50" tabindex="-1"></a><span class="co">-- DuckDB table-function arguments cannot contain subqueries, so keep the</span></span>
+<span id="cb27-51"><a href="#cb27-51" tabindex="-1"></a><span class="co">-- payload in a variable before passing it to ducknng_parse_body().</span></span>
+<span id="cb27-52"><a href="#cb27-52" tabindex="-1"></a><span class="kw">SET</span> VARIABLE session_fetch_payload <span class="op">=</span> (<span class="kw">SELECT</span> payload <span class="kw">FROM</span> session_fetch);</span>
+<span id="cb27-53"><a href="#cb27-53" tabindex="-1"></a></span>
+<span id="cb27-54"><a href="#cb27-54" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span></span>
+<span id="cb27-55"><a href="#cb27-55" tabindex="-1"></a><span class="kw">FROM</span> ducknng_parse_body(</span>
+<span id="cb27-56"><a href="#cb27-56" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_fetch_payload&#39;</span>):<span class="ch">:BLOB</span>,</span>
+<span id="cb27-57"><a href="#cb27-57" tabindex="-1"></a>  <span class="st">&#39;application/vnd.apache.arrow.stream&#39;</span></span>
+<span id="cb27-58"><a href="#cb27-58" tabindex="-1"></a>);</span>
+<span id="cb27-59"><a href="#cb27-59" tabindex="-1"></a></span>
+<span id="cb27-60"><a href="#cb27-60" tabindex="-1"></a><span class="kw">DROP</span> <span class="kw">TABLE</span> session_fetch;</span>
+<span id="cb27-61"><a href="#cb27-61" tabindex="-1"></a></span>
+<span id="cb27-62"><a href="#cb27-62" tabindex="-1"></a><span class="co">-- The second fetch returns JSON control metadata saying the session is exhausted.</span></span>
+<span id="cb27-63"><a href="#cb27-63" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state, payload <span class="kw">IS</span> <span class="kw">NULL</span> <span class="kw">AS</span> no_payload, end_of_stream</span>
+<span id="cb27-64"><a href="#cb27-64" tabindex="-1"></a><span class="kw">FROM</span> ducknng_fetch_query(</span>
+<span id="cb27-65"><a href="#cb27-65" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb27-66"><a href="#cb27-66" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
+<span id="cb27-67"><a href="#cb27-67" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_token&#39;</span>):<span class="ch">:VARCHAR</span>,     <span class="co">-- session_token returned by open_query</span></span>
+<span id="cb27-68"><a href="#cb27-68" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_rows override</span></span>
+<span id="cb27-69"><a href="#cb27-69" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>,                                <span class="co">-- batch_bytes override</span></span>
+<span id="cb27-70"><a href="#cb27-70" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
+<span id="cb27-71"><a href="#cb27-71" tabindex="-1"></a>);</span>
+<span id="cb27-72"><a href="#cb27-72" tabindex="-1"></a></span>
+<span id="cb27-73"><a href="#cb27-73" tabindex="-1"></a><span class="co">-- Close the exhausted session explicitly.</span></span>
+<span id="cb27-74"><a href="#cb27-74" tabindex="-1"></a><span class="kw">SELECT</span> ok, session_id, state</span>
+<span id="cb27-75"><a href="#cb27-75" tabindex="-1"></a><span class="kw">FROM</span> ducknng_close_query(</span>
+<span id="cb27-76"><a href="#cb27-76" tabindex="-1"></a>  <span class="st">&#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;</span>, <span class="co">-- url</span></span>
+<span id="cb27-77"><a href="#cb27-77" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_id&#39;</span>):<span class="ch">:UBIGINT</span>,        <span class="co">-- session_id returned by open_query</span></span>
+<span id="cb27-78"><a href="#cb27-78" tabindex="-1"></a>  getvariable(<span class="st">&#39;session_token&#39;</span>):<span class="ch">:VARCHAR</span>,     <span class="co">-- session_token returned by open_query</span></span>
+<span id="cb27-79"><a href="#cb27-79" tabindex="-1"></a>  <span class="dv">0</span>:<span class="ch">:UBIGINT</span>                                 <span class="co">-- tls_config_id</span></span>
+<span id="cb27-80"><a href="#cb27-80" tabindex="-1"></a>);</span>
+<span id="cb27-81"><a href="#cb27-81" tabindex="-1"></a></span>
+<span id="cb27-82"><a href="#cb27-82" tabindex="-1"></a><span class="co">-- Stop the demo listener after the session is closed.</span></span>
+<span id="cb27-83"><a href="#cb27-83" tabindex="-1"></a><span class="kw">SELECT</span> ducknng_stop_server(<span class="st">&#39;sql_session_demo&#39;</span>);</span></code></pre></div>
 <pre><code>+--------------------------------------------------------------------------------------------------------------+
 | ducknng_start_server(&#39;sql_session_demo&#39;, &#39;ipc:///tmp/ducknng_sql_session_demo.ipc&#39;, 1, 134217728, 300000, 0) |
 +--------------------------------------------------------------------------------------------------------------+
@@ -2477,6 +2495,12 @@ and close a query session explicitly</h3>
 +------+------------+---------------+-------------+---------------+
 | true | 1          | true          | true        | false         |
 +------+------------+---------------+-------------+---------------+
++----+
+| id |
++----+
+| 1  |
+| 2  |
++----+
 +------+------------+-----------+------------+---------------+
 |  ok  | session_id |   state   | no_payload | end_of_stream |
 +------+------------+-----------+------------+---------------+
@@ -2587,9 +2611,14 @@ also caps simultaneously active NNG protocol-socket pipes at
 <code>ADD_PRE</code>, and the four-argument form also caps concurrent
 in-flight requests before SQL authorizers and RPC dispatch, and the
 five-argument form also caps concurrently open query sessions per
-verified peer identity; <code>0</code> means unlimited for any cap. For
-policy that depends on tables, tenants, method names, headers, or
-deployment-specific rules, install a service-level SQL authorizer with
+verified peer identity; <code>0</code> means unlimited for any cap.
+Those are the stable built-in quota owners today: the service itself
+and, when present, the verified peer identity. The optional
+SQL-authorizer <code>principal</code> column is deployment policy/audit
+metadata, not yet durable session ownership metadata for built-in
+quotas. For policy that depends on tables, tenants, method names,
+headers, or deployment-specific rules, install a service-level SQL
+authorizer with
 <code>ducknng_set_service_authorizer(name, authorizer_sql)</code>. The
 callback sees one row from <code>ducknng_auth_context()</code> while it
 runs and must return exactly one row with a Boolean <code>allow</code>

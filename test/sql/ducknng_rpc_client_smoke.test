@@ -222,11 +222,30 @@ FROM ducknng_cancel_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 999::UBIGIN
 ----
 0	ducknng: session not found
 
+statement ok
+CREATE TEMP TABLE rpc_fetch_payload AS
+SELECT *
+FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+
 query IIIII
 SELECT ok, session_id, state IS NULL, octet_length(payload) > 0, end_of_stream
-FROM ducknng_fetch_query('ipc:///tmp/ducknng_rpc_client_smoke.ipc', 1::UBIGINT, getvariable('rpc_session_token')::VARCHAR, 0::UBIGINT, 0::UBIGINT, 0::UBIGINT)
+FROM rpc_fetch_payload
 ----
 1	1	1	1	0
+
+statement ok
+SET VARIABLE rpc_fetch_payload_blob = (
+  SELECT payload FROM rpc_fetch_payload
+)
+
+query II
+SELECT count(*)::INTEGER, sum(i)::INTEGER
+FROM ducknng_parse_body(getvariable('rpc_fetch_payload_blob')::BLOB, 'application/vnd.apache.arrow.stream')
+----
+6	45
+
+statement ok
+DROP TABLE rpc_fetch_payload
 
 query IITII
 SELECT ok, session_id, state, payload IS NULL, end_of_stream

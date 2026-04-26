@@ -136,11 +136,10 @@ That explicit lifecycle is the honest current API contract.
 
 ## 6. Relation to API hardening
 
-The recent lifetime pass improved internal destruction and ownership correctness, but API hardening is not finished.
+The recent lifetime pass improved internal destruction and ownership correctness, and the session ownership model is now explicit: `session_id` is a lookup key, `session_token` is the bearer capability, and verified mTLS identity is an additional owner constraint when present. Envelope-level RPC authentication may be added later as an application-auth layer, but it is not a prerequisite for the current session lifetime contract.
 
-The main remaining lifetime-adjacent sealing blockers are still:
+The main remaining lifetime-adjacent sealing blockers are therefore narrower:
 
-- final decision on whether the current `session_token` plus optional mTLS owner-identity model is the sealed ownership model or whether envelope-level RPC authentication must land later
 - any remaining borrowed-pointer or concurrent-handle edge cases that should be eliminated before calling the API sealed
 - clear documentation of which resources are user-managed and which are statement-local/internal
 
