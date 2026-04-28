@@ -2,6 +2,7 @@
 #include "ducknng_util.h"
 #include "nanoarrow/nanoarrow.h"
 #include "nanoarrow/nanoarrow_ipc.h"
+#include <stdio.h>
 #include <string.h>
 
 DUCKDB_EXTENSION_EXTERN
@@ -95,6 +96,46 @@ static int ducknng_set_arrow_schema_type(duckdb_logical_type logical_type, struc
         case DUCKDB_TYPE_DECIMAL:
             return ArrowSchemaSetTypeDecimal(schema, NANOARROW_TYPE_DECIMAL128,
                 (int32_t)duckdb_decimal_width(logical_type), (int32_t)duckdb_decimal_scale(logical_type)) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_HUGEINT:
+            return ArrowSchemaSetTypeDecimal(schema, NANOARROW_TYPE_DECIMAL128, 38, 0) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_UUID:
+            return ArrowSchemaSetType(schema, NANOARROW_TYPE_STRING) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_TIMESTAMP_TZ:
+            return ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_MICRO, "UTC") == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_ENUM:
+            return ArrowSchemaSetType(schema, NANOARROW_TYPE_STRING) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_MAP: {
+            duckdb_logical_type key_type = duckdb_map_type_key_type(logical_type);
+            duckdb_logical_type value_type = duckdb_map_type_value_type(logical_type);
+            int ok;
+            if (ArrowSchemaSetType(schema, NANOARROW_TYPE_MAP) != NANOARROW_OK) {
+                if (key_type) duckdb_destroy_logical_type(&key_type);
+                if (value_type) duckdb_destroy_logical_type(&value_type);
+                return -1;
+            }
+            ok = key_type && value_type &&
+                ducknng_set_arrow_schema_type(key_type, schema->children[0]->children[0], errmsg) == 0 &&
+                ducknng_set_arrow_schema_type(value_type, schema->children[0]->children[1], errmsg) == 0;
+            if (key_type) duckdb_destroy_logical_type(&key_type);
+            if (value_type) duckdb_destroy_logical_type(&value_type);
+            return ok ? 0 : -1;
+        }
+        case DUCKDB_TYPE_UNION: {
+            idx_t nmembers = duckdb_union_type_member_count(logical_type);
+            idx_t i;
+            if (ArrowSchemaSetTypeUnion(schema, NANOARROW_TYPE_DENSE_UNION, (int64_t)nmembers) != NANOARROW_OK) return -1;
+            for (i = 0; i < nmembers; i++) {
+                duckdb_logical_type member_type = duckdb_union_type_member_type(logical_type, i);
+                char *member_name = duckdb_union_type_member_name(logical_type, i);
+                int member_ok = member_type &&
+                    ArrowSchemaSetName(schema->children[i], member_name ? member_name : "") == NANOARROW_OK &&
+                    ducknng_set_arrow_schema_type(member_type, schema->children[i], errmsg) == 0;
+                if (member_name) duckdb_free(member_name);
+                if (member_type) duckdb_destroy_logical_type(&member_type);
+                if (!member_ok) return -1;
+            }
+            return 0;
+        }
         case DUCKDB_TYPE_LIST: {
             duckdb_logical_type child_type = duckdb_list_type_child_type(logical_type);
             int ok;
@@ -125,7 +166,8 @@ static int ducknng_set_arrow_schema_type(duckdb_logical_type logical_type, struc
         default:
             if (errmsg) {
                 *errmsg = ducknng_strdup(
-                    "ducknng: unary exec row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, and STRUCT");
+                    "ducknng: unary exec row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, "
+                    "HUGEINT, UUID, TIMESTAMP_TZ, ENUM, VARCHAR, BLOB, LIST, MAP, STRUCT, and UNION");
             }
             return -1;
     }
@@ -159,6 +201,24 @@ static int ducknng_build_result_schema(duckdb_result result, struct ArrowSchema 
 
 static int ducknng_is_valid(uint64_t *validity, idx_t row) {
     return validity ? duckdb_validity_row_is_valid(validity, row) : 1;
+}
+
+static void ducknng_format_uuid(duckdb_hugeint stored, char out[37]) {
+    /* DuckDB stores UUIDs as int128 with the top bit XOR'd so signed-int sort order
+     * matches lexicographic UUID order; flip it back here to recover canonical bytes. */
+    uint8_t bytes[16];
+    uint64_t hi = (uint64_t)stored.upper ^ 0x8000000000000000ULL;
+    uint64_t lo = stored.lower;
+    int i;
+    for (i = 0; i < 8; i++) bytes[i] = (uint8_t)((hi >> (56 - 8 * i)) & 0xff);
+    for (i = 0; i < 8; i++) bytes[8 + i] = (uint8_t)((lo >> (56 - 8 * i)) & 0xff);
+    snprintf(out, 37,
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5],
+        bytes[6], bytes[7],
+        bytes[8], bytes[9],
+        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
 }
 
 static int ducknng_append_decimal_value(duckdb_logical_type logical_type, duckdb_vector vector,
@@ -250,6 +310,116 @@ static int ducknng_append_vector_value(duckdb_logical_type logical_type, duckdb_
             return ArrowArrayAppendInt(array, ((duckdb_timestamp_ns *)data)[row].nanos) == NANOARROW_OK ? 0 : -1;
         case DUCKDB_TYPE_DECIMAL:
             return ducknng_append_decimal_value(logical_type, vector, array, row);
+        case DUCKDB_TYPE_HUGEINT: {
+            struct ArrowDecimal decimal;
+            duckdb_hugeint value = ((duckdb_hugeint *)data)[row];
+            ArrowDecimalInit(&decimal, 128, 38, 0);
+            decimal.words[decimal.low_word_index] = value.lower;
+            decimal.words[decimal.high_word_index] = (uint64_t)value.upper;
+            return ArrowArrayAppendDecimal(array, &decimal) == NANOARROW_OK ? 0 : -1;
+        }
+        case DUCKDB_TYPE_UUID: {
+            duckdb_hugeint stored = ((duckdb_hugeint *)data)[row];
+            char buf[37];
+            struct ArrowStringView view;
+            ducknng_format_uuid(stored, buf);
+            view.data = buf;
+            view.size_bytes = 36;
+            return ArrowArrayAppendString(array, view) == NANOARROW_OK ? 0 : -1;
+        }
+        case DUCKDB_TYPE_TIMESTAMP_TZ:
+            return ArrowArrayAppendInt(array, ((duckdb_timestamp *)data)[row].micros) == NANOARROW_OK ? 0 : -1;
+        case DUCKDB_TYPE_ENUM: {
+            duckdb_type internal = duckdb_enum_internal_type(logical_type);
+            uint64_t idx;
+            char *dict;
+            struct ArrowStringView view;
+            int rc;
+            switch (internal) {
+                case DUCKDB_TYPE_UTINYINT:  idx = ((uint8_t *)data)[row]; break;
+                case DUCKDB_TYPE_USMALLINT: idx = ((uint16_t *)data)[row]; break;
+                case DUCKDB_TYPE_UINTEGER:  idx = ((uint32_t *)data)[row]; break;
+                default:
+                    if (errmsg) *errmsg = ducknng_strdup("ducknng: unsupported ENUM internal type");
+                    return -1;
+            }
+            dict = duckdb_enum_dictionary_value(logical_type, (idx_t)idx);
+            if (!dict) {
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to resolve ENUM dictionary value");
+                return -1;
+            }
+            view.data = dict;
+            view.size_bytes = (int64_t)strlen(dict);
+            rc = ArrowArrayAppendString(array, view) == NANOARROW_OK ? 0 : -1;
+            duckdb_free(dict);
+            return rc;
+        }
+        case DUCKDB_TYPE_MAP: {
+            duckdb_list_entry *entries = (duckdb_list_entry *)data;
+            duckdb_logical_type key_type = duckdb_map_type_key_type(logical_type);
+            duckdb_logical_type value_type = duckdb_map_type_value_type(logical_type);
+            duckdb_type key_type_id = key_type ? duckdb_get_type_id(key_type) : DUCKDB_TYPE_INVALID;
+            duckdb_type value_type_id = value_type ? duckdb_get_type_id(value_type) : DUCKDB_TYPE_INVALID;
+            duckdb_vector entries_vector = duckdb_list_vector_get_child(vector);
+            duckdb_vector key_vector = entries_vector ? duckdb_struct_vector_get_child(entries_vector, 0) : NULL;
+            duckdb_vector value_vector = entries_vector ? duckdb_struct_vector_get_child(entries_vector, 1) : NULL;
+            uint64_t offset = entries[row].offset;
+            uint64_t length = entries[row].length;
+            uint64_t j;
+            int ok = 1;
+            if (!key_type || !value_type || !key_vector || !value_vector) ok = 0;
+            for (j = 0; ok && j < length; j++) {
+                if (ducknng_append_vector_value(key_type, key_type_id, key_vector,
+                        array->children[0]->children[0], (idx_t)(offset + j), errmsg) != 0) ok = 0;
+                if (ok && ducknng_append_vector_value(value_type, value_type_id, value_vector,
+                        array->children[0]->children[1], (idx_t)(offset + j), errmsg) != 0) ok = 0;
+                if (ok && ArrowArrayFinishElement(array->children[0]) != NANOARROW_OK) ok = 0;
+            }
+            if (key_type) duckdb_destroy_logical_type(&key_type);
+            if (value_type) duckdb_destroy_logical_type(&value_type);
+            if (!ok) return -1;
+            return ArrowArrayFinishElement(array) == NANOARROW_OK ? 0 : -1;
+        }
+        case DUCKDB_TYPE_UNION: {
+            /* DuckDB stores UNION as a struct vector: child 0 is the UTINYINT tag,
+             * children 1..N are the variant values. Read the tag, append the active
+             * member to the corresponding Arrow dense union child, and finalize. */
+            idx_t nmembers = duckdb_union_type_member_count(logical_type);
+            duckdb_vector tag_vector = duckdb_struct_vector_get_child(vector, 0);
+            uint8_t *tags = tag_vector ? (uint8_t *)duckdb_vector_get_data(tag_vector) : NULL;
+            uint8_t tag;
+            duckdb_logical_type member_type;
+            duckdb_type member_type_id;
+            duckdb_vector member_vector;
+            idx_t i;
+            int member_ok;
+            if (!tags || nmembers == 0) {
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to read UNION tag vector");
+                return -1;
+            }
+            tag = tags[row];
+            if ((idx_t)tag >= nmembers) {
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: UNION tag is out of range");
+                return -1;
+            }
+            member_type = duckdb_union_type_member_type(logical_type, (idx_t)tag);
+            member_type_id = member_type ? duckdb_get_type_id(member_type) : DUCKDB_TYPE_INVALID;
+            member_vector = duckdb_struct_vector_get_child(vector, (idx_t)tag + 1);
+            member_ok = member_type && member_vector &&
+                ducknng_append_vector_value(member_type, member_type_id, member_vector,
+                    array->children[tag], row, errmsg) == 0;
+            if (member_type) duckdb_destroy_logical_type(&member_type);
+            if (!member_ok) return -1;
+            /* Dense union: bump non-active children once so their lengths stay aligned
+             * with the union's logical length expectations on the writer side. */
+            for (i = 0; i < nmembers; i++) {
+                if (i == (idx_t)tag) continue;
+                if (ArrowArrayAppendNull(array->children[i], 0) != NANOARROW_OK) {
+                    /* Non-fatal: dense unions don't actually require parallel growth. */
+                }
+            }
+            return ArrowArrayFinishUnionElement(array, (int8_t)tag) == NANOARROW_OK ? 0 : -1;
+        }
         case DUCKDB_TYPE_LIST: {
             duckdb_list_entry *entries = (duckdb_list_entry *)data;
             duckdb_logical_type child_type = duckdb_list_type_child_type(logical_type);
@@ -286,7 +456,9 @@ static int ducknng_append_vector_value(duckdb_logical_type logical_type, duckdb_
         default:
             if (errmsg) {
                 *errmsg = ducknng_strdup(
-                    "ducknng: encountered unsupported DuckDB type while encoding unary row reply");
+                    "ducknng: encountered unsupported DuckDB type while encoding unary row reply "
+                    "(BOOLEAN, numeric/date/time/timestamp/decimal scalars, HUGEINT, UUID, "
+                    "TIMESTAMP_TZ, ENUM, VARCHAR, BLOB, LIST, MAP, STRUCT, UNION are supported)");
             }
             return -1;
     }

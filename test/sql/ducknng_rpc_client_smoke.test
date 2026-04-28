@@ -159,15 +159,94 @@ FROM ducknng_query_rpc(
 1	2	10
 2	4	20
 
+query II
+SELECT typeof(tsz), tsz = TIMESTAMPTZ '2024-01-02 03:04:05+00'
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SET TimeZone = ''UTC''; SELECT TIMESTAMPTZ ''2024-01-02 03:04:05+00'' AS tsz',
+  0::UBIGINT
+)
+----
+TIMESTAMP WITH TIME ZONE	1
+
+# HUGEINT is emitted as Arrow decimal128(38, 0) and decoded back as DECIMAL(38, 0);
+# values cast to HUGEINT recover the original int128 range.
+query III
+SELECT typeof(h),
+       h::HUGEINT = (-170141183460469231731687303715884105728)::HUGEINT,
+       big_pos::HUGEINT = 170141183460469231731687303715884105727::HUGEINT
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT (-170141183460469231731687303715884105728)::HUGEINT AS h,
+          170141183460469231731687303715884105727::HUGEINT AS big_pos',
+  0::UBIGINT
+)
+----
+DECIMAL(38,0)	1	1
+
+# UUID is emitted as Arrow utf8 (canonical 36-char form) per types.md, so the
+# client receives a VARCHAR. Cast back to UUID for value comparison.
+query III
+SELECT typeof(u), u, u::UUID = '12345678-1234-5678-1234-567812345678'::UUID
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT ''12345678-1234-5678-1234-567812345678''::UUID AS u',
+  0::UBIGINT
+)
+----
+VARCHAR	12345678-1234-5678-1234-567812345678	1
+
+# ENUM is emitted as the resolved utf8 string per types.md (no dictionary
+# round-trip is promised for the v1 contract).
+query III
+SELECT typeof(e), e, e = 'happy'
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'CREATE TYPE IF NOT EXISTS mood AS ENUM (''sad'', ''ok'', ''happy'');
+   SELECT ''happy''::mood AS e',
+  0::UBIGINT
+)
+----
+VARCHAR	happy	1
+
+# MAP roundtrips as a DuckDB MAP through Arrow's MAP layout. Inspect with
+# map_keys / map_values to keep the assertion independent of DuckDB's
+# version-specific MAP indexing return type.
+query IIIII
+SELECT typeof(m),
+       map_keys(m)[1], map_keys(m)[2],
+       map_values(m)[1], map_values(m)[2]
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT MAP {''a'': 1, ''b'': 2}::MAP(VARCHAR, INTEGER) AS m',
+  0::UBIGINT
+)
+----
+MAP(VARCHAR, INTEGER)	a	b	1	2
+
+# UNION is emitted as Arrow dense_union; the raw frame is well-formed but the
+# DuckDB-facing decoder for dense_union vectors is not implemented yet, so the
+# v1 contract surfaces UNION values via raw frames / ducknng_parse_body rather
+# than ducknng_query_rpc.
 statement error
 SELECT *
 FROM ducknng_query_rpc(
   'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
-  'SELECT TIMESTAMPTZ ''2024-01-02 03:04:05+00'' AS tsz',
+  'SELECT union_value(num := 42::INTEGER) AS uv',
   0::UBIGINT
 )
 ----
-ducknng: unary exec row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, and STRUCT
+ducknng: remote unary row replies currently support
+
+statement error
+SELECT *
+FROM ducknng_query_rpc(
+  'ipc:///tmp/ducknng_rpc_client_smoke.ipc',
+  'SELECT INTERVAL 1 DAY AS iv',
+  0::UBIGINT
+)
+----
+ducknng: unary exec row replies currently support
 
 statement ok
 CREATE TEMP TABLE rpc_open AS

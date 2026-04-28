@@ -458,3 +458,87 @@ FROM pending_close_recv
 
 statement ok
 DROP TABLE pending_close_recv
+
+# end-to-end three-peer bus broadcast: A listens, B and C dial A, and one
+# raw send from A is delivered to both B and C.
+query I
+SELECT ducknng_open_socket('bus')
+----
+20
+
+query I
+SELECT ducknng_open_socket('bus')
+----
+21
+
+query I
+SELECT ducknng_open_socket('bus')
+----
+22
+
+query I
+SELECT ducknng_listen_socket(20::UBIGINT, 'inproc://ducknng_socket_protocols_bus_broadcast', 134217728, 0::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_dial_socket(21::UBIGINT, 'inproc://ducknng_socket_protocols_bus_broadcast', 1000, 0::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_dial_socket(22::UBIGINT, 'inproc://ducknng_socket_protocols_bus_broadcast', 1000, 0::UBIGINT)
+----
+1
+
+statement ok
+CREATE TEMP TABLE bus_recv_b AS
+SELECT ducknng_recv_socket_raw_aio(21::UBIGINT, 1000) AS recv_aio
+
+statement ok
+CREATE TEMP TABLE bus_recv_c AS
+SELECT ducknng_recv_socket_raw_aio(22::UBIGINT, 1000) AS recv_aio
+
+query I
+SELECT ducknng_send_socket_raw(20::UBIGINT, from_hex('6275732d62726f616463617374'), 1000)
+----
+1
+
+query II
+SELECT ok, hex(frame) = '6275732D62726F616463617374'
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM bus_recv_b), 1000)
+----
+1	1
+
+query II
+SELECT ok, hex(frame) = '6275732D62726F616463617374'
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM bus_recv_c), 1000)
+----
+1	1
+
+statement ok
+SELECT ducknng_aio_drop(recv_aio) FROM bus_recv_b
+
+statement ok
+SELECT ducknng_aio_drop(recv_aio) FROM bus_recv_c
+
+statement ok
+DROP TABLE bus_recv_b
+
+statement ok
+DROP TABLE bus_recv_c
+
+query I
+SELECT ducknng_close_socket(22::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_close_socket(21::UBIGINT)
+----
+1
+
+query I
+SELECT ducknng_close_socket(20::UBIGINT)
+----
+1

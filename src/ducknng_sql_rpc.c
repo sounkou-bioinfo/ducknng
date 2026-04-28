@@ -1046,8 +1046,11 @@ static int ducknng_arrow_schema_to_logical_type(const struct ArrowSchema *schema
             return 0;
         case NANOARROW_TYPE_TIMESTAMP:
             if (schema_view.timezone && schema_view.timezone[0]) {
-                if (errmsg) *errmsg = ducknng_strdup("ducknng: timezone-bearing Arrow timestamps are not supported yet");
-                return -1;
+                /* Arrow timestamps with a timezone are received as DuckDB TIMESTAMP_TZ.
+                 * The micros field maps directly; the contract emits "UTC" but accepts
+                 * any tz string and treats the values as UTC-normalized micros. */
+                *out_type = duckdb_create_logical_type(DUCKDB_TYPE_TIMESTAMP_TZ);
+                return *out_type ? 0 : -1;
             }
             if (schema_view.time_unit == NANOARROW_TIME_UNIT_SECOND) *out_type = duckdb_create_logical_type(DUCKDB_TYPE_TIMESTAMP_S);
             else if (schema_view.time_unit == NANOARROW_TIME_UNIT_MILLI) *out_type = duckdb_create_logical_type(DUCKDB_TYPE_TIMESTAMP_MS);
@@ -1067,6 +1070,19 @@ static int ducknng_arrow_schema_to_logical_type(const struct ArrowSchema *schema
             ok = ducknng_arrow_schema_to_logical_type(schema->children[0], &child_type, errmsg) == 0 && child_type;
             if (ok) *out_type = duckdb_create_list_type(child_type);
             if (child_type) duckdb_destroy_logical_type(&child_type);
+            return ok && *out_type ? 0 : -1;
+        }
+        case NANOARROW_TYPE_MAP: {
+            duckdb_logical_type key_type = NULL;
+            duckdb_logical_type value_type = NULL;
+            int ok;
+            if (!schema->children || !schema->children[0] || !schema->children[0]->children ||
+                !schema->children[0]->children[0] || !schema->children[0]->children[1]) return -1;
+            ok = ducknng_arrow_schema_to_logical_type(schema->children[0]->children[0], &key_type, errmsg) == 0 && key_type &&
+                 ducknng_arrow_schema_to_logical_type(schema->children[0]->children[1], &value_type, errmsg) == 0 && value_type;
+            if (ok) *out_type = duckdb_create_map_type(key_type, value_type);
+            if (key_type) duckdb_destroy_logical_type(&key_type);
+            if (value_type) duckdb_destroy_logical_type(&value_type);
             return ok && *out_type ? 0 : -1;
         }
         case NANOARROW_TYPE_STRUCT: {
@@ -1097,7 +1113,7 @@ static int ducknng_arrow_schema_to_logical_type(const struct ArrowSchema *schema
         }
         default:
             if (errmsg) *errmsg = ducknng_strdup(
-                "ducknng: remote unary row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, and STRUCT");
+                "ducknng: remote unary row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, MAP, and STRUCT (DENSE_UNION/SPARSE_UNION schemas are emitted but not yet decoded into DuckDB column vectors)");
             return -1;
     }
 }
@@ -1342,8 +1358,15 @@ static int ducknng_query_rpc_assign_column_at(duckdb_vector vec, struct ArrowArr
             int64_t mul = schema_view.time_unit == NANOARROW_TIME_UNIT_SECOND ? 1000000LL :
                 (schema_view.time_unit == NANOARROW_TIME_UNIT_MILLI ? 1000LL : 1LL);
             if (schema_view.timezone && schema_view.timezone[0]) {
-                if (errmsg) *errmsg = ducknng_strdup("ducknng: timezone-bearing Arrow timestamps are not supported yet");
-                return -1;
+                /* TIMESTAMP_TZ stores micros in a duckdb_timestamp; the Arrow tz tag is
+                 * not surfaced in the row buffer beyond schema-level metadata. */
+                duckdb_timestamp *out = (duckdb_timestamp *)duckdb_vector_get_data(vec);
+                for (i = 0; i < count; i++) {
+                    idx_t dst = dst_offset + i;
+                    if (ArrowArrayViewIsNull(col_view, src_offset + i)) set_null(vec, dst);
+                    else out[dst].micros = (int64_t)ArrowArrayViewGetIntUnsafe(col_view, src_offset + i) * mul;
+                }
+                return 0;
             }
             if (schema_view.time_unit == NANOARROW_TIME_UNIT_SECOND) {
                 duckdb_timestamp_s *out = (duckdb_timestamp_s *)duckdb_vector_get_data(vec);
@@ -1387,7 +1410,12 @@ static int ducknng_query_rpc_assign_column_at(duckdb_vector vec, struct ArrowArr
             return 0;
         }
         case NANOARROW_TYPE_LIST:
-        case NANOARROW_TYPE_LARGE_LIST: {
+        case NANOARROW_TYPE_LARGE_LIST:
+        case NANOARROW_TYPE_MAP: {
+            /* DuckDB MAP shares the LIST<STRUCT<key,value>> physical layout, so the
+             * same offset/length unrolling works. The Arrow MAP child schema stores
+             * the entries struct at children[0] in both Arrow and the DuckDB map
+             * backing vector. */
             duckdb_list_entry *entries = (duckdb_list_entry *)duckdb_vector_get_data(vec);
             duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
             idx_t child_size = duckdb_list_vector_get_size(vec);
@@ -1405,7 +1433,7 @@ static int ducknng_query_rpc_assign_column_at(duckdb_vector vec, struct ArrowArr
                 }
                 if (duckdb_list_vector_reserve(vec, child_size + child_len) == DuckDBError ||
                     duckdb_list_vector_set_size(vec, child_size + child_len) == DuckDBError) {
-                    if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to reserve DuckDB list child vector");
+                    if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to reserve DuckDB list/map child vector");
                     return -1;
                 }
                 entries[dst].offset = child_size;

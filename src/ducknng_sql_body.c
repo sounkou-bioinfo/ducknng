@@ -32,7 +32,8 @@ typedef enum ducknng_body_codec_kind {
     DUCKNNG_BODY_CODEC_TSV = 4,
     DUCKNNG_BODY_CODEC_PARQUET = 5,
     DUCKNNG_BODY_CODEC_ARROW_IPC = 6,
-    DUCKNNG_BODY_CODEC_DUCKNNG_FRAME = 7
+    DUCKNNG_BODY_CODEC_DUCKNNG_FRAME = 7,
+    DUCKNNG_BODY_CODEC_USER = 8
 } ducknng_body_codec_kind;
 
 typedef enum ducknng_body_result_kind {
@@ -49,10 +50,12 @@ typedef struct {
     uint8_t *raw;
     idx_t raw_len;
     char *text;
+    int text_is_null;
     struct ArrowSchema schema;
     struct ArrowArray array;
     idx_t row_count;
     ducknng_frame_decode_bind_data frame;
+    char *user_function_name; /* set when codec_kind == USER */
 } ducknng_body_parse_bind_data;
 
 typedef struct {
@@ -69,7 +72,16 @@ typedef struct {
 } ducknng_codec_static_row;
 
 typedef struct {
-    const ducknng_codec_static_row *rows;
+    char *provider;
+    char *media_types;
+    char *kind;
+    char *function_name;
+    char *output;
+    char *notes;
+} ducknng_codec_dyn_row;
+
+typedef struct {
+    ducknng_codec_dyn_row *rows;
     idx_t row_count;
 } ducknng_codecs_bind_data;
 
@@ -121,6 +133,29 @@ static int ducknng_set_table_sql_context(duckdb_table_function tf, const ducknng
     if (!copy) return 0;
     duckdb_table_function_set_extra_info(tf, copy, destroy_sql_context_extra);
     return 1;
+}
+
+static int ducknng_set_scalar_sql_context(duckdb_scalar_function fn, const ducknng_sql_context *ctx) {
+    ducknng_sql_context *copy = ducknng_dup_sql_context(ctx);
+    if (!copy) return 0;
+    duckdb_scalar_function_set_extra_info(fn, copy, destroy_sql_context_extra);
+    return 1;
+}
+
+static char *arg_varchar_dup(duckdb_vector vec, idx_t row) {
+    duckdb_string_t *data;
+    const char *src;
+    uint32_t len;
+    char *out;
+    if (arg_is_null(vec, row)) return NULL;
+    data = (duckdb_string_t *)duckdb_vector_get_data(vec);
+    src = duckdb_string_t_data(&data[row]);
+    len = duckdb_string_t_length(data[row]);
+    out = (char *)duckdb_malloc((size_t)len + 1);
+    if (!out) return NULL;
+    if (len) memcpy(out, src, len);
+    out[len] = '\0';
+    return out;
 }
 
 static int ducknng_sql_inside_authorizer(ducknng_sql_context *ctx) {
@@ -249,6 +284,7 @@ static const char *ducknng_body_codec_provider_name(int codec_kind) {
         case DUCKNNG_BODY_CODEC_PARQUET: return "parquet";
         case DUCKNNG_BODY_CODEC_ARROW_IPC: return "arrow_ipc";
         case DUCKNNG_BODY_CODEC_DUCKNNG_FRAME: return "ducknng_frame";
+        case DUCKNNG_BODY_CODEC_USER: return "user";
         case DUCKNNG_BODY_CODEC_RAW:
         default: return "raw";
     }
@@ -361,6 +397,7 @@ static void destroy_body_parse_bind_data(void *ptr) {
     if (data->media_type) duckdb_free(data->media_type);
     if (data->raw) duckdb_free(data->raw);
     if (data->text) duckdb_free(data->text);
+    if (data->user_function_name) duckdb_free(data->user_function_name);
     if (data->array.release) ArrowArrayRelease(&data->array);
     if (data->schema.release) ArrowSchemaRelease(&data->schema);
     ducknng_frame_decode_bind_data_reset(&data->frame);
@@ -375,7 +412,20 @@ static void destroy_body_parse_init_data(void *ptr) {
 
 static void destroy_codecs_bind_data(void *ptr) {
     ducknng_codecs_bind_data *data = (ducknng_codecs_bind_data *)ptr;
-    if (data) duckdb_free(data);
+    idx_t i;
+    if (!data) return;
+    if (data->rows) {
+        for (i = 0; i < data->row_count; i++) {
+            if (data->rows[i].provider) duckdb_free(data->rows[i].provider);
+            if (data->rows[i].media_types) duckdb_free(data->rows[i].media_types);
+            if (data->rows[i].kind) duckdb_free(data->rows[i].kind);
+            if (data->rows[i].function_name) duckdb_free(data->rows[i].function_name);
+            if (data->rows[i].output) duckdb_free(data->rows[i].output);
+            if (data->rows[i].notes) duckdb_free(data->rows[i].notes);
+        }
+        duckdb_free(data->rows);
+    }
+    duckdb_free(data);
 }
 
 static void destroy_codecs_init_data(void *ptr) {
@@ -511,8 +561,11 @@ static int ducknng_arrow_schema_to_logical_type(const struct ArrowSchema *schema
             return 0;
         case NANOARROW_TYPE_TIMESTAMP:
             if (schema_view.timezone && schema_view.timezone[0]) {
-                if (errmsg) *errmsg = ducknng_strdup("ducknng: timezone-bearing Arrow timestamps are not supported yet");
-                return -1;
+                /* Arrow timestamps with a timezone are received as DuckDB TIMESTAMP_TZ.
+                 * The micros field maps directly; the contract emits "UTC" but accepts
+                 * any tz string and treats the values as UTC-normalized micros. */
+                *out_type = duckdb_create_logical_type(DUCKDB_TYPE_TIMESTAMP_TZ);
+                return *out_type ? 0 : -1;
             }
             if (schema_view.time_unit == NANOARROW_TIME_UNIT_SECOND) *out_type = duckdb_create_logical_type(DUCKDB_TYPE_TIMESTAMP_S);
             else if (schema_view.time_unit == NANOARROW_TIME_UNIT_MILLI) *out_type = duckdb_create_logical_type(DUCKDB_TYPE_TIMESTAMP_MS);
@@ -532,6 +585,19 @@ static int ducknng_arrow_schema_to_logical_type(const struct ArrowSchema *schema
             ok = ducknng_arrow_schema_to_logical_type(schema->children[0], &child_type, errmsg) == 0 && child_type;
             if (ok) *out_type = duckdb_create_list_type(child_type);
             if (child_type) duckdb_destroy_logical_type(&child_type);
+            return ok && *out_type ? 0 : -1;
+        }
+        case NANOARROW_TYPE_MAP: {
+            duckdb_logical_type key_type = NULL;
+            duckdb_logical_type value_type = NULL;
+            int ok;
+            if (!schema->children || !schema->children[0] || !schema->children[0]->children ||
+                !schema->children[0]->children[0] || !schema->children[0]->children[1]) return -1;
+            ok = ducknng_arrow_schema_to_logical_type(schema->children[0]->children[0], &key_type, errmsg) == 0 && key_type &&
+                 ducknng_arrow_schema_to_logical_type(schema->children[0]->children[1], &value_type, errmsg) == 0 && value_type;
+            if (ok) *out_type = duckdb_create_map_type(key_type, value_type);
+            if (key_type) duckdb_destroy_logical_type(&key_type);
+            if (value_type) duckdb_destroy_logical_type(&value_type);
             return ok && *out_type ? 0 : -1;
         }
         case NANOARROW_TYPE_STRUCT: {
@@ -562,7 +628,7 @@ static int ducknng_arrow_schema_to_logical_type(const struct ArrowSchema *schema
         }
         default:
             if (errmsg) *errmsg = ducknng_strdup(
-                "ducknng: remote unary row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, and STRUCT");
+                "ducknng: remote unary row replies currently support BOOLEAN, numeric/date/time/timestamp/decimal scalars, VARCHAR, BLOB, LIST, MAP, and STRUCT (DENSE_UNION/SPARSE_UNION schemas are emitted but not yet decoded into DuckDB column vectors)");
             return -1;
     }
 }
@@ -807,8 +873,14 @@ static int ducknng_query_rpc_assign_column_at(duckdb_vector vec, struct ArrowArr
             int64_t mul = schema_view.time_unit == NANOARROW_TIME_UNIT_SECOND ? 1000000LL :
                 (schema_view.time_unit == NANOARROW_TIME_UNIT_MILLI ? 1000LL : 1LL);
             if (schema_view.timezone && schema_view.timezone[0]) {
-                if (errmsg) *errmsg = ducknng_strdup("ducknng: timezone-bearing Arrow timestamps are not supported yet");
-                return -1;
+                /* TIMESTAMP_TZ stores micros in a duckdb_timestamp. */
+                duckdb_timestamp *out = (duckdb_timestamp *)duckdb_vector_get_data(vec);
+                for (i = 0; i < count; i++) {
+                    idx_t dst = dst_offset + i;
+                    if (ArrowArrayViewIsNull(col_view, src_offset + i)) set_null(vec, dst);
+                    else out[dst].micros = (int64_t)ArrowArrayViewGetIntUnsafe(col_view, src_offset + i) * mul;
+                }
+                return 0;
             }
             if (schema_view.time_unit == NANOARROW_TIME_UNIT_SECOND) {
                 duckdb_timestamp_s *out = (duckdb_timestamp_s *)duckdb_vector_get_data(vec);
@@ -852,7 +924,10 @@ static int ducknng_query_rpc_assign_column_at(duckdb_vector vec, struct ArrowArr
             return 0;
         }
         case NANOARROW_TYPE_LIST:
-        case NANOARROW_TYPE_LARGE_LIST: {
+        case NANOARROW_TYPE_LARGE_LIST:
+        case NANOARROW_TYPE_MAP: {
+            /* DuckDB MAP shares the LIST<STRUCT<key,value>> physical layout, so the
+             * same offset/length unrolling works. */
             duckdb_list_entry *entries = (duckdb_list_entry *)duckdb_vector_get_data(vec);
             duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
             idx_t child_size = duckdb_list_vector_get_size(vec);
@@ -870,7 +945,7 @@ static int ducknng_query_rpc_assign_column_at(duckdb_vector vec, struct ArrowArr
                 }
                 if (duckdb_list_vector_reserve(vec, child_size + child_len) == DuckDBError ||
                     duckdb_list_vector_set_size(vec, child_size + child_len) == DuckDBError) {
-                    if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to reserve DuckDB list child vector");
+                    if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to reserve DuckDB list/map child vector");
                     return -1;
                 }
                 entries[dst].offset = child_size;
@@ -1220,11 +1295,126 @@ cleanup:
     return rc;
 }
 
+static int ducknng_is_sql_identifier(const char *s) {
+    /* Tight allowlist for codec scalar function names so register/unregister cannot
+     * splice arbitrary SQL into the dispatcher. ASCII letter/underscore start, then
+     * letters/digits/underscores/dots (for schema-qualified names). */
+    size_t i;
+    if (!s || !*s) return 0;
+    if (!((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z') || s[0] == '_')) return 0;
+    for (i = 1; s[i]; i++) {
+        char c = s[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '.')) return 0;
+    }
+    return 1;
+}
+
+static int ducknng_body_parse_run_user_codec(ducknng_sql_context *ctx, ducknng_body_parse_bind_data *bind,
+    const uint8_t *body, size_t body_len, const char *function_name, char **errmsg) {
+    duckdb_prepared_statement stmt = NULL;
+    duckdb_result result;
+    char *sql = NULL;
+    size_t sql_len;
+    const char *prep_err;
+    int rc = -1;
+    memset(&result, 0, sizeof(result));
+    if (errmsg) *errmsg = NULL;
+    if (!ctx || !ctx->rt || !ctx->rt->init_con) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: missing runtime for user codec");
+        return -1;
+    }
+    if (!ducknng_is_sql_identifier(function_name)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: codec function name must be a plain SQL identifier");
+        return -1;
+    }
+    if (ducknng_runtime_current_thread_request_service_get(ctx->rt)) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: user body codecs cannot run inside service-owned SQL yet");
+        return -1;
+    }
+    /* Build "SELECT <fn>(?::BLOB) AS value" and prepare it against the runtime
+     * connection. The body BLOB binds as parameter 1; identifier name was
+     * validated above so direct splicing is safe. */
+    sql_len = strlen(function_name) + 32;
+    sql = (char *)duckdb_malloc(sql_len);
+    if (!sql) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory building user codec query");
+        return -1;
+    }
+    snprintf(sql, sql_len, "SELECT %s(?::BLOB) AS value", function_name);
+    ducknng_runtime_init_con_lock(ctx->rt);
+    if (duckdb_prepare(ctx->rt->init_con, sql, &stmt) == DuckDBError) {
+        prep_err = stmt ? duckdb_prepare_error(stmt) : NULL;
+        if (errmsg) *errmsg = ducknng_strdup(prep_err && prep_err[0] ? prep_err : "ducknng: failed to prepare user codec query");
+        goto cleanup;
+    }
+    if (duckdb_bind_blob(stmt, 1, body ? body : (const void *)"", (idx_t)body_len) == DuckDBError) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: failed to bind body to user codec");
+        goto cleanup;
+    }
+    if (duckdb_execute_prepared(stmt, &result) == DuckDBError) {
+        const char *exec_err = duckdb_result_error(&result);
+        if (errmsg) *errmsg = ducknng_strdup(exec_err && exec_err[0] ? exec_err : "ducknng: user codec execution failed");
+        goto cleanup;
+    }
+    {
+        duckdb_data_chunk chunk = duckdb_fetch_chunk(result);
+        idx_t chunk_size;
+        duckdb_vector vec;
+        duckdb_logical_type col_type;
+        duckdb_type col_type_id;
+        if (!chunk) {
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: user codec returned no rows");
+            goto cleanup;
+        }
+        chunk_size = duckdb_data_chunk_get_size(chunk);
+        if (chunk_size < 1 || duckdb_data_chunk_get_column_count(chunk) < 1) {
+            duckdb_destroy_data_chunk(&chunk);
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: user codec returned no rows");
+            goto cleanup;
+        }
+        vec = duckdb_data_chunk_get_vector(chunk, 0);
+        col_type = duckdb_vector_get_column_type(vec);
+        col_type_id = duckdb_get_type_id(col_type);
+        duckdb_destroy_logical_type(&col_type);
+        if (col_type_id != DUCKDB_TYPE_VARCHAR) {
+            duckdb_destroy_data_chunk(&chunk);
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: user codec must return VARCHAR (cast inside the function if needed)");
+            goto cleanup;
+        }
+        if (arg_is_null(vec, 0)) {
+            bind->text_is_null = 1;
+            bind->text = NULL;
+        } else {
+            duckdb_string_t *strs = (duckdb_string_t *)duckdb_vector_get_data(vec);
+            const char *src = duckdb_string_t_data(&strs[0]);
+            uint32_t len = duckdb_string_t_length(strs[0]);
+            bind->text = (char *)duckdb_malloc((size_t)len + 1);
+            if (!bind->text) {
+                duckdb_destroy_data_chunk(&chunk);
+                if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory copying user codec result");
+                goto cleanup;
+            }
+            if (len) memcpy(bind->text, src, len);
+            bind->text[len] = '\0';
+        }
+        duckdb_destroy_data_chunk(&chunk);
+    }
+    rc = 0;
+cleanup:
+    if (result.internal_data) duckdb_destroy_result(&result);
+    if (stmt) duckdb_destroy_prepare(&stmt);
+    ducknng_runtime_init_con_unlock(ctx->rt);
+    if (sql) duckdb_free(sql);
+    return rc;
+}
+
 static int ducknng_body_parse_prepare(duckdb_bind_info info, ducknng_sql_context *ctx,
     const uint8_t *body, size_t body_len, const char *content_type) {
     ducknng_body_parse_bind_data *bind;
     duckdb_logical_type type;
     char *errmsg = NULL;
+    char *user_fn = NULL;
     idx_t col;
     bind = (ducknng_body_parse_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
@@ -1238,7 +1428,16 @@ static int ducknng_body_parse_prepare(duckdb_bind_info info, ducknng_sql_context
         duckdb_bind_set_error(info, "ducknng: out of memory normalizing content type");
         return -1;
     }
-    bind->codec_kind = ducknng_body_codec_for_media_type(bind->media_type);
+    /* User-registered codecs take precedence over built-in providers so a
+     * deployment can override application/json or text/* with its own scalar. */
+    user_fn = ctx && ctx->rt ? ducknng_runtime_find_user_codec(ctx->rt, bind->media_type) : NULL;
+    if (user_fn) {
+        bind->codec_kind = DUCKNNG_BODY_CODEC_USER;
+        bind->user_function_name = user_fn;
+        user_fn = NULL;
+    } else {
+        bind->codec_kind = ducknng_body_codec_for_media_type(bind->media_type);
+    }
     bind->provider = ducknng_strdup(ducknng_body_codec_provider_name(bind->codec_kind));
     if (!bind->provider) {
         destroy_body_parse_bind_data(bind);
@@ -1246,6 +1445,19 @@ static int ducknng_body_parse_prepare(duckdb_bind_info info, ducknng_sql_context
         return -1;
     }
     switch (bind->codec_kind) {
+        case DUCKNNG_BODY_CODEC_USER:
+            if (ducknng_body_parse_run_user_codec(ctx, bind, body, body_len, bind->user_function_name, &errmsg) != 0) {
+                destroy_body_parse_bind_data(bind);
+                duckdb_bind_set_error(info, errmsg ? errmsg : "ducknng: user codec failed");
+                if (errmsg) duckdb_free(errmsg);
+                return -1;
+            }
+            bind->result_kind = DUCKNNG_BODY_RESULT_SINGLE;
+            type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+            duckdb_bind_add_result_column(info, "value", type);
+            duckdb_destroy_logical_type(&type);
+            duckdb_bind_set_cardinality(info, 1, true);
+            break;
         case DUCKNNG_BODY_CODEC_TEXT:
             if (!ducknng_bytes_look_text(body, body_len)) {
                 destroy_body_parse_bind_data(bind);
@@ -1474,6 +1686,9 @@ static void ducknng_body_parse_scan(duckdb_function_info info, duckdb_data_chunk
         if (bind->codec_kind == DUCKNNG_BODY_CODEC_TEXT) {
             if (bind->text) duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 0), 0, bind->text);
             else set_null(duckdb_data_chunk_get_vector(output, 0), 0);
+        } else if (bind->codec_kind == DUCKNNG_BODY_CODEC_USER) {
+            if (bind->text_is_null || !bind->text) set_null(duckdb_data_chunk_get_vector(output, 0), 0);
+            else duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 0), 0, bind->text);
         } else {
             if (bind->raw) assign_blob(duckdb_data_chunk_get_vector(output, 0), 0, bind->raw, bind->raw_len);
             else assign_blob(duckdb_data_chunk_get_vector(output, 0), 0, (const uint8_t *)"", 0);
@@ -1539,19 +1754,82 @@ static const ducknng_codec_static_row DUCKNNG_BUILTIN_CODECS[] = {
     {"ducknng_frame", "application/vnd.ducknng.frame", "decoded frame columns", "Decoded as one ducknng protocol frame, matching ducknng_decode_frame()."}
 };
 
+static int ducknng_codec_dyn_row_set(ducknng_codec_dyn_row *row, const char *provider,
+    const char *media_types, const char *kind, const char *function_name,
+    const char *output, const char *notes) {
+    row->provider = provider ? ducknng_strdup(provider) : NULL;
+    row->media_types = media_types ? ducknng_strdup(media_types) : NULL;
+    row->kind = kind ? ducknng_strdup(kind) : NULL;
+    row->function_name = function_name ? ducknng_strdup(function_name) : NULL;
+    row->output = output ? ducknng_strdup(output) : NULL;
+    row->notes = notes ? ducknng_strdup(notes) : NULL;
+    if (provider && !row->provider) return -1;
+    if (media_types && !row->media_types) return -1;
+    if (kind && !row->kind) return -1;
+    if (function_name && !row->function_name) return -1;
+    if (output && !row->output) return -1;
+    if (notes && !row->notes) return -1;
+    return 0;
+}
+
 static void ducknng_codecs_bind(duckdb_bind_info info) {
     ducknng_codecs_bind_data *bind;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_bind_get_extra_info(info);
     duckdb_logical_type type;
+    idx_t builtin_count = (idx_t)(sizeof(DUCKNNG_BUILTIN_CODECS) / sizeof(DUCKNNG_BUILTIN_CODECS[0]));
+    idx_t user_count = 0;
+    idx_t total;
+    idx_t i;
     bind = (ducknng_codecs_bind_data *)duckdb_malloc(sizeof(*bind));
     if (!bind) {
         duckdb_bind_set_error(info, "ducknng: out of memory");
         return;
     }
-    bind->rows = DUCKNNG_BUILTIN_CODECS;
-    bind->row_count = (idx_t)(sizeof(DUCKNNG_BUILTIN_CODECS) / sizeof(DUCKNNG_BUILTIN_CODECS[0]));
+    memset(bind, 0, sizeof(*bind));
+    if (ctx && ctx->rt) {
+        ducknng_mutex_lock(&ctx->rt->mu);
+        user_count = (idx_t)ctx->rt->user_codec_count;
+    }
+    total = builtin_count + user_count;
+    bind->rows = total ? (ducknng_codec_dyn_row *)duckdb_malloc(sizeof(*bind->rows) * total) : NULL;
+    if (total && !bind->rows) {
+        if (ctx && ctx->rt) ducknng_mutex_unlock(&ctx->rt->mu);
+        destroy_codecs_bind_data(bind);
+        duckdb_bind_set_error(info, "ducknng: out of memory listing codecs");
+        return;
+    }
+    if (bind->rows) memset(bind->rows, 0, sizeof(*bind->rows) * total);
+    for (i = 0; i < builtin_count; i++) {
+        const ducknng_codec_static_row *src = &DUCKNNG_BUILTIN_CODECS[i];
+        if (ducknng_codec_dyn_row_set(&bind->rows[bind->row_count], src->provider, src->media_types,
+                "builtin", NULL, src->output, src->notes) != 0) {
+            if (ctx && ctx->rt) ducknng_mutex_unlock(&ctx->rt->mu);
+            destroy_codecs_bind_data(bind);
+            duckdb_bind_set_error(info, "ducknng: out of memory copying builtin codec rows");
+            return;
+        }
+        bind->row_count++;
+    }
+    if (ctx && ctx->rt) {
+        for (i = 0; i < user_count; i++) {
+            const ducknng_user_codec *uc = &ctx->rt->user_codecs[i];
+            if (ducknng_codec_dyn_row_set(&bind->rows[bind->row_count], "user", uc->content_type,
+                    "user", uc->function_name, "value VARCHAR",
+                    "User codec: <function_name>(BLOB) -> VARCHAR. Takes precedence over built-in providers.") != 0) {
+                ducknng_mutex_unlock(&ctx->rt->mu);
+                destroy_codecs_bind_data(bind);
+                duckdb_bind_set_error(info, "ducknng: out of memory copying user codec rows");
+                return;
+            }
+            bind->row_count++;
+        }
+        ducknng_mutex_unlock(&ctx->rt->mu);
+    }
     type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_bind_add_result_column(info, "provider", type);
     duckdb_bind_add_result_column(info, "media_types", type);
+    duckdb_bind_add_result_column(info, "kind", type);
+    duckdb_bind_add_result_column(info, "function_name", type);
     duckdb_bind_add_result_column(info, "output", type);
     duckdb_bind_add_result_column(info, "notes", type);
     duckdb_destroy_logical_type(&type);
@@ -1585,11 +1863,19 @@ static void ducknng_codecs_scan(duckdb_function_info info, duckdb_data_chunk out
     remaining = init->bind->row_count - init->offset;
     chunk_size = remaining > duckdb_vector_size() ? duckdb_vector_size() : remaining;
     for (i = 0; i < chunk_size; i++) {
-        const ducknng_codec_static_row *row = &init->bind->rows[init->offset + i];
-        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 0), i, row->provider);
-        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 1), i, row->media_types);
-        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 2), i, row->output);
-        duckdb_vector_assign_string_element(duckdb_data_chunk_get_vector(output, 3), i, row->notes);
+        const ducknng_codec_dyn_row *row = &init->bind->rows[init->offset + i];
+        duckdb_vector v0 = duckdb_data_chunk_get_vector(output, 0);
+        duckdb_vector v1 = duckdb_data_chunk_get_vector(output, 1);
+        duckdb_vector v2 = duckdb_data_chunk_get_vector(output, 2);
+        duckdb_vector v3 = duckdb_data_chunk_get_vector(output, 3);
+        duckdb_vector v4 = duckdb_data_chunk_get_vector(output, 4);
+        duckdb_vector v5 = duckdb_data_chunk_get_vector(output, 5);
+        if (row->provider) duckdb_vector_assign_string_element(v0, i, row->provider); else set_null(v0, i);
+        if (row->media_types) duckdb_vector_assign_string_element(v1, i, row->media_types); else set_null(v1, i);
+        if (row->kind) duckdb_vector_assign_string_element(v2, i, row->kind); else set_null(v2, i);
+        if (row->function_name) duckdb_vector_assign_string_element(v3, i, row->function_name); else set_null(v3, i);
+        if (row->output) duckdb_vector_assign_string_element(v4, i, row->output); else set_null(v4, i);
+        if (row->notes) duckdb_vector_assign_string_element(v5, i, row->notes); else set_null(v5, i);
     }
     init->offset += chunk_size;
     duckdb_data_chunk_set_size(output, chunk_size);
@@ -1657,11 +1943,12 @@ static int register_ncurl_table_named(duckdb_connection con, ducknng_sql_context
     return 1;
 }
 
-static int register_codecs_table_named(duckdb_connection con, const char *name) {
+static int register_codecs_table_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name) {
     duckdb_table_function tf;
     tf = duckdb_create_table_function();
     if (!tf) return 0;
     duckdb_table_function_set_name(tf, name);
+    if (ctx && !ducknng_set_table_sql_context(tf, ctx)) { duckdb_destroy_table_function(&tf); return 0; }
     duckdb_table_function_set_bind(tf, ducknng_codecs_bind);
     duckdb_table_function_set_init(tf, ducknng_codecs_init);
     duckdb_table_function_set_function(tf, ducknng_codecs_scan);
@@ -1694,10 +1981,95 @@ static int register_frame_decode_table_named(duckdb_connection con, const char *
 }
 
 
+static void ducknng_register_codec_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    bool *out = (bool *)duckdb_vector_get_data(output);
+    duckdb_vector ct_vec = duckdb_data_chunk_get_vector(input, 0);
+    duckdb_vector fn_vec = duckdb_data_chunk_get_vector(input, 1);
+    for (row = 0; row < count; row++) {
+        char *content_type = arg_varchar_dup(ct_vec, row);
+        char *function_name = arg_varchar_dup(fn_vec, row);
+        char *errmsg = NULL;
+        int ok;
+        if (!ctx || !ctx->rt || !content_type || !function_name) {
+            if (content_type) duckdb_free(content_type);
+            if (function_name) duckdb_free(function_name);
+            duckdb_scalar_function_set_error(info, "ducknng: register_codec requires non-null content_type and function_name");
+            return;
+        }
+        if (!ducknng_is_sql_identifier(function_name)) {
+            duckdb_free(content_type);
+            duckdb_free(function_name);
+            duckdb_scalar_function_set_error(info, "ducknng: codec function name must be a plain SQL identifier (letters, digits, underscore, dot)");
+            return;
+        }
+        ok = ducknng_runtime_register_user_codec(ctx->rt, content_type, function_name, &errmsg);
+        duckdb_free(content_type);
+        duckdb_free(function_name);
+        if (!ok) {
+            duckdb_scalar_function_set_error(info, errmsg ? errmsg : "ducknng: failed to register codec");
+            if (errmsg) duckdb_free(errmsg);
+            return;
+        }
+        if (errmsg) duckdb_free(errmsg);
+        out[row] = true;
+    }
+}
+
+static void ducknng_unregister_codec_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    idx_t count = duckdb_data_chunk_get_size(input);
+    idx_t row;
+    ducknng_sql_context *ctx = (ducknng_sql_context *)duckdb_scalar_function_get_extra_info(info);
+    bool *out = (bool *)duckdb_vector_get_data(output);
+    duckdb_vector ct_vec = duckdb_data_chunk_get_vector(input, 0);
+    for (row = 0; row < count; row++) {
+        char *content_type = arg_varchar_dup(ct_vec, row);
+        if (!ctx || !ctx->rt || !content_type) {
+            if (content_type) duckdb_free(content_type);
+            duckdb_scalar_function_set_error(info, "ducknng: unregister_codec requires a non-null content_type");
+            return;
+        }
+        out[row] = ducknng_runtime_unregister_user_codec(ctx->rt, content_type) ? true : false;
+        duckdb_free(content_type);
+    }
+}
+
+static int register_codec_scalar_named(duckdb_connection con, ducknng_sql_context *ctx, const char *name,
+    idx_t nparams, duckdb_scalar_function_t fn) {
+    duckdb_scalar_function f;
+    duckdb_logical_type t;
+    idx_t i;
+    f = duckdb_create_scalar_function();
+    if (!f) return 0;
+    duckdb_scalar_function_set_name(f, name);
+    for (i = 0; i < nparams; i++) {
+        t = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+        duckdb_scalar_function_add_parameter(f, t);
+        duckdb_destroy_logical_type(&t);
+    }
+    t = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    duckdb_scalar_function_set_return_type(f, t);
+    duckdb_destroy_logical_type(&t);
+    duckdb_scalar_function_set_function(f, fn);
+    duckdb_scalar_function_set_special_handling(f);
+    duckdb_scalar_function_set_volatile(f);
+    if (!ducknng_set_scalar_sql_context(f, ctx)) { duckdb_destroy_scalar_function(&f); return 0; }
+    if (duckdb_register_scalar_function(con, f) == DuckDBError) {
+        duckdb_destroy_scalar_function(&f);
+        return 0;
+    }
+    duckdb_destroy_scalar_function(&f);
+    return 1;
+}
+
 int ducknng_register_sql_body(duckdb_connection con, ducknng_sql_context *ctx) {
     if (!register_body_parse_table_named(con, ctx, "ducknng_parse_body")) return 0;
     if (!register_ncurl_table_named(con, ctx, "ducknng_ncurl_table")) return 0;
-    if (!register_codecs_table_named(con, "ducknng_list_codecs")) return 0;
+    if (!register_codecs_table_named(con, ctx, "ducknng_list_codecs")) return 0;
     if (!register_frame_decode_table_named(con, "ducknng_decode_frame")) return 0;
+    if (!register_codec_scalar_named(con, ctx, "ducknng_register_codec", 2, ducknng_register_codec_scalar)) return 0;
+    if (!register_codec_scalar_named(con, ctx, "ducknng_unregister_codec", 1, ducknng_unregister_codec_scalar)) return 0;
     return 1;
 }

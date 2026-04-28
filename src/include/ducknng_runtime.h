@@ -95,6 +95,11 @@ typedef struct ducknng_client_aio {
     char *error;
 } ducknng_client_aio;
 
+typedef struct ducknng_user_codec {
+    char *content_type; /* lower-cased, trimmed */
+    char *function_name; /* DuckDB scalar function name */
+} ducknng_user_codec;
+
 typedef struct ducknng_runtime {
     duckdb_database *db;
     duckdb_connection init_con;
@@ -115,6 +120,9 @@ typedef struct ducknng_runtime {
     ducknng_tls_config **tls_configs;
     size_t tls_config_count;
     size_t tls_config_cap;
+    ducknng_user_codec *user_codecs;
+    size_t user_codec_count;
+    size_t user_codec_cap;
     uint64_t next_service_id;
     uint64_t next_client_socket_id;
     uint64_t next_client_aio_id;
@@ -123,6 +131,15 @@ typedef struct ducknng_runtime {
     atomic_uintptr_t current_request_service_ptr;
     ducknng_method_registry registry;
 } ducknng_runtime;
+
+/* User codec helpers. Registry is keyed by lower-cased trimmed content_type.
+ * register: upserts (content_type -> function_name); returns 1 on success.
+ * unregister: removes; returns 1 if an entry was removed.
+ * find: returns a strdup-ed function_name (caller frees) or NULL. */
+int ducknng_runtime_register_user_codec(ducknng_runtime *rt, const char *content_type,
+    const char *function_name, char **errmsg);
+int ducknng_runtime_unregister_user_codec(ducknng_runtime *rt, const char *content_type);
+char *ducknng_runtime_find_user_codec(ducknng_runtime *rt, const char *content_type);
 
 int ducknng_runtime_init(duckdb_connection connection, duckdb_extension_info info,
     struct duckdb_extension_access *access, ducknng_runtime **out_rt, int *out_created);

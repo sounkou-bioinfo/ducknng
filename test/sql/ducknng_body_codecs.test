@@ -101,3 +101,90 @@ query I
 SELECT CASE WHEN ducknng_stop_server('codec_http') THEN 1 ELSE 0 END
 ----
 1
+
+# --- user codec hooks (ducknng_register_codec / ducknng_unregister_codec) ---
+
+# Define a SQL UDF that the codec layer can dispatch against. Takes a BLOB
+# and returns a VARCHAR; the codec hook will splice the function name into
+# "SELECT <fn>(?::BLOB)" so the registry only accepts plain identifiers.
+statement ok
+CREATE OR REPLACE FUNCTION test_codec_upper(b BLOB) AS upper(decode(b))
+
+query I
+SELECT CASE WHEN ducknng_register_codec('application/x-test-upper', 'test_codec_upper') THEN 1 ELSE 0 END
+----
+1
+
+# list_codecs() now reports the user codec alongside built-ins.
+query TTTT
+SELECT provider, media_types, kind, function_name
+FROM ducknng_list_codecs()
+WHERE kind = 'user'
+ORDER BY media_types
+----
+user	application/x-test-upper	user	test_codec_upper
+
+# A request whose Content-Type matches the user codec is routed through it,
+# producing a single-row "value VARCHAR" table.
+query T
+SELECT value
+FROM ducknng_parse_body('hello'::BLOB, 'application/x-test-upper')
+----
+HELLO
+
+# Content-type matching is case-insensitive and tolerant of parameters.
+query T
+SELECT value
+FROM ducknng_parse_body('mixed'::BLOB, 'Application/X-Test-Upper; charset=utf-8')
+----
+MIXED
+
+# User codecs take precedence over built-in providers when the media type matches.
+statement ok
+CREATE OR REPLACE FUNCTION test_codec_jsonbypass(b BLOB) AS concat('bypass:', decode(b))
+
+query I
+SELECT CASE WHEN ducknng_register_codec('application/json', 'test_codec_jsonbypass') THEN 1 ELSE 0 END
+----
+1
+
+query T
+SELECT value
+FROM ducknng_parse_body('{"a":1}'::BLOB, 'application/json')
+----
+bypass:{"a":1}
+
+# Unregister restores the built-in JSON provider.
+query I
+SELECT CASE WHEN ducknng_unregister_codec('application/json') THEN 1 ELSE 0 END
+----
+1
+
+query I
+SELECT a
+FROM ducknng_parse_body('[{"a":42}]'::BLOB, 'application/json')
+----
+42
+
+# Function name is a plain SQL identifier allowlist; reject injection attempts.
+statement error
+SELECT ducknng_register_codec('application/x-injection', 'foo; DROP TABLE bar')
+----
+ducknng: codec function name must be a plain SQL identifier
+
+# Unregistering an unknown codec returns FALSE without erroring.
+query I
+SELECT CASE WHEN ducknng_unregister_codec('application/x-never-registered') THEN 1 ELSE 0 END
+----
+0
+
+# Clean up the upper codec.
+query I
+SELECT CASE WHEN ducknng_unregister_codec('application/x-test-upper') THEN 1 ELSE 0 END
+----
+1
+
+query I
+SELECT count(*) FROM ducknng_list_codecs() WHERE kind = 'user'
+----
+0

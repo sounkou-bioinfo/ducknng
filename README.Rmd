@@ -27,87 +27,52 @@ knitr::knit_engines$set(sql = function(options) {
 
 # ducknng
 
-`ducknng` is a pure C DuckDB extension providing [`nanonext`](https://github.com/r-lib/nanonext)-inspired bindings to the [NNG Scalability Protocols](https://nng.nanomsg.org/). It also includes a small framed RPC layer, informed by [`mangoro`](https://github.com/sounkou-bioinfo/mangoro), whose thin versioned envelope carries Arrow IPC or JSON payloads.
+`ducknng` is a pure C DuckDB extension that turns a DuckDB process into an [NNG](https://nng.nanomsg.org/) endpoint — server, client, or both — and adds a small framed RPC layer so a SQL session can call another DuckDB session across `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, `wss://`, `http://`, or `https://`. RPC row payloads ride on Arrow IPC.
 
-The current implementation is easiest to understand as four surfaces layered on the same runtime.
+It draws on two R packages. [`nanonext`](https://github.com/r-lib/nanonext) supplies the socket and AIO ergonomics; [`mangoro`](https://github.com/sounkou-bioinfo/mangoro) supplies the thin versioned envelope. The DuckDB integration keeps generated SQL injection-safe but assumes the deployment owns the trust boundary — see **Deployment and admission policy** below.
 
-1. **NNG transports, socket patterns, AIO, and pipe telemetry.**
-   `ducknng_start_server(...)` starts the framed RPC service on NNG `REP`, and the generic socket API (`ducknng_open_socket(...)`, `ducknng_dial_socket(...)`, `ducknng_listen_socket(...)`, raw send/recv, and socket AIO helpers) exposes NNG socket patterns such as `req`, `rep`, `pair`, `push`, `pull`, `pub`, `sub`, `bus`, `surveyor`, and `respondent`. AIO is a first-class part of this layer: helpers such as `ducknng_send_socket_raw_aio(...)`, `ducknng_recv_socket_raw_aio(...)`, `ducknng_request_raw_aio(...)`, `ducknng_aio_status(...)`, and `ducknng_aio_collect(...)` represent one pending NNG operation as a future-like SQL handle. This family uses NNG URL schemes: `inproc://`, `ipc://`, `tcp://`, `tls+tcp://`, `ws://`, and `wss://`. `tls+tcp://` is NNG's TLS-over-TCP transport; `wss://` is NNG WebSocket-over-TLS. They are not HTTP routes; `http://` and `https://` are supported by the HTTP/HTTPS carrier layer below. NNG services also expose pipe/membership telemetry through `ducknng_read_monitor(name, after_seq, max_events)`, `ducknng_monitor_status(name)`, and the active-pipe snapshot `ducknng_list_pipes(name)`.
+### How the pieces stack
 
-2. **HTTP/HTTPS as a framed RPC carrier and raw HTTP client surface.**
-   `ducknng_start_http_server(...)` mounts the same framed RPC protocol at an `http://` or `https://` URL path. The endpoint accepts `POST` with `Content-Type: application/vnd.ducknng.frame`, and the body is one complete `ducknng` frame. The synchronous request/RPC/session helpers route over `http://` and `https://` by URL scheme, so there are no duplicate method names such as `http_exec` or `http_fetch`. Raw HTTP helpers (`ducknng_ncurl(...)`, `ducknng_ncurl_aio(...)`, and `ducknng_ncurl_aio_collect(...)`) live beside the socket transports, but `http://` is not an NNG protocol-socket transport in the same sense as `tcp://`. `https://` means HTTP over TLS; it is wire-incompatible with NNG `tls+tcp://` because HTTP has methods, headers, status codes, and paths, while NNG `tls+tcp://` carries NNG socket-protocol frames directly.
+The extension is one runtime with four layers; later sections walk through each in turn.
 
-3. **Framed RPC, registry policy, authorization, and sessions.**
-   The RPC envelope is manifest/registry-driven. Built-in helpers cover discovery, opt-in `exec`, raw unary RPC, and query sessions (`query_open`, `fetch`, `close`, `cancel`). Descriptor policy controls such as `ducknng_set_method_auth('manifest', true)` can require verified peer identity for selected methods. Fast C admission runs before dispatch for required mTLS, exact peer-identity allowlists, compiled IP/CIDR allowlists, and service limits; optional SQL authorizers installed with `ducknng_set_service_authorizer(...)` run at the request boundary and expose context through `ducknng_auth_context()`. `session_id` is only a lookup key; `session_token` is the bearer capability, and sessions opened with verified mTLS identity are additionally bound to that identity. Server-owned session policy, including `idle_timeout_ms`, `max_open_sessions`, and `max_sessions_per_peer_identity`, is exposed in service/manifest metadata. Live counters such as `active_pipes` and `inflight_requests` intentionally live in service/monitor introspection instead of the manifest.
+1. **Transport.** NNG sockets and listeners across the full transport family. Synchronous send/recv plus first-class one-shot AIO handles. Per-service pipe-event telemetry (`ducknng_read_monitor(...)`, `ducknng_list_pipes(...)`).
+2. **Framed RPC.** A versioned envelope carries Arrow IPC table payloads or JSON control text. Servers come up with `ducknng_start_server(...)` (NNG) or `ducknng_start_http_server(...)` (HTTP/HTTPS). Clients call by URL; synchronous helpers route by scheme, AIO helpers expose the same calls as futures.
+3. **Policy.** Manifest-driven method registry with opt-in `exec`. Fast C admission for required mTLS, exact peer-identity allowlists, IP/CIDR allowlists, and service limits. Optional SQL authorizers run at the request boundary and read context through `ducknng_auth_context()`. Sessions are bearer-token owned, additionally bound to verified mTLS identity when present.
+4. **Codecs.** `ducknng_parse_body(...)` and `ducknng_ncurl_table(...)` parse content-type-tagged BLOBs. Built-in providers cover JSON, Arrow IPC, ducknng frames, and a text/raw fallback. Deployments can override or extend the set with `ducknng_register_codec(content_type, function_name)`; the function takes `BLOB` and returns `VARCHAR`.
 
-4. **Payload and body codecs.**
-   RPC row payloads use Arrow IPC. RPC control metadata and the manifest are JSON text inside framed payloads; SQL helper columns such as `manifest` keep that JSON as `VARCHAR`, and examples cast to `JSON` only when extracting fields. Raw HTTP helpers intentionally stay raw (`status`, headers, `body BLOB`, `body_text`). The opt-in body codec layer (`ducknng_list_codecs()`, `ducknng_parse_body(...)`, `ducknng_ncurl_table(...)`) parses selected content types. JSON is parsed in memory through DuckDB JSON functions; Arrow IPC and frame bodies are decoded by their providers; CSV, TSV, and Parquet are currently recognized but returned through the generic `body BLOB` fallback until a memory-backed reader/provider path lands.
+`ducknng` is intentionally low-level. Long-lived runtime handles — servers, sockets, AIO, TLS configs, query sessions — are **manually managed**. Stop, close, or drop them explicitly; runtime teardown is fallback cleanup, not the primary lifecycle.
 
-Implemented now:
+## Quick tour
 
-- service lifecycle: `ducknng_start_server()`, `ducknng_start_http_server()`, `ducknng_stop_server()`, `ducknng_list_servers()`
-- generic NNG sockets and raw send/recv across the NNG transport schemes above
-- first-class raw AIO handles for one pending operation: socket send/recv, HTTP/HTTPS ncurl requests, req-style request/reply futures, and raw unary RPC futures
-- bounded NNG pipe event telemetry, monitor status, and active-pipe membership snapshots: `ducknng_read_monitor(...)`, `ducknng_monitor_status(...)`, and `ducknng_list_pipes(...)`
-- manifest-driven RPC helpers, opt-in `exec`, and query sessions (`query_open`, `fetch`, `close`, `cancel`)
-- registry auth policy controls such as `ducknng_set_method_auth('manifest', true)` for protecting discovery through verified peer identity
-- fast C admission checks for mTLS, exact peer-identity allowlists, compiled IP/CIDR allowlists, and service limits, plus flexible service-level SQL authorization callbacks through `ducknng_set_service_authorizer(...)` and `ducknng_auth_context()`
-- automatic synchronous helper routing over NNG or HTTP/HTTPS based on URL scheme
-- TLS config handles for `tls+tcp://`, `wss://`, and `https://`; `auth_mode = 2` enables required peer verification/mTLS
-- session ownership by `session_token`, additionally bound to verified mTLS peer identity when present; service/manifest metadata exposes server-owned effective session policy including `idle_timeout_ms`, `max_open_sessions`, and `max_sessions_per_peer_identity`; `ducknng_list_servers()` also exposes current `active_pipes`, `inflight_requests`, and configured `max_active_pipes`/`max_inflight_requests` for services
-
-Still intentionally deferred or not sealed:
-
-- a broader nanonext-style HTTP route/server framework is not designed yet; the current HTTP server is the framed RPC mount
-- CSV/TSV/Parquet body parsers are not implemented beyond the safe BLOB fallback
-- full SQL-side decoding of session `fetch` Arrow batch BLOBs is still a future table-function layer
-- session ownership is sealed around `session_token` plus optional verified mTLS owner identity; any future envelope-level application authentication is additive and does not replace those checks
-- routing/forwarding and mesh scheduling are not sealed APIs yet; the new pipe monitor and active-pipe snapshot are the first membership/telemetry foundation
-
-`ducknng` is intentionally low-level. Long-lived runtime handles are **manually managed**: stop servers, close sockets, drop AIO handles, drop TLS config handles, and close query sessions explicitly rather than expecting a nanonext-style GC/finalizer layer.
-
-## Getting started
-
-Build the extension locally:
+Build the extension:
 
 ```sh
 make configure
 make release
 ```
 
-Load it into DuckDB, start a local IPC listener, inspect the built-in manifest string without dumping the full JSON document, and stop it again:
+Load it, start an IPC service, ask the server its name through the built-in `manifest` method, and stop it again:
 
 ```{sql eval=TRUE, autoload=FALSE, collapse=FALSE, comment=""}
 LOAD 'build/release/ducknng.duckdb_extension';
 
+-- args: name, listen URL, REP-context count, recv_max_bytes,
+--       session_idle_ms, tls_config_id (0 = plaintext).
 SELECT ducknng_start_server(
-  'sql0',
-  'ipc:///tmp/ducknng_sql0.ipc',
-  1,
-  134217728,
-  300000,
-  0
+  'hello', 'ipc:///tmp/ducknng_hello.ipc',
+  1, 134217728, 300000, 0::UBIGINT
 );
 
--- The manifest column is JSON text kept as VARCHAR at the SQL API boundary.
-SELECT column_name, column_type
-FROM (DESCRIBE SELECT *
-      FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT));
-
--- Cast the string to JSON when you want fields instead of the full document.
-WITH manifest_row AS (
-  SELECT manifest
-  FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_sql0.ipc', 0::UBIGINT)
-  WHERE ok
-)
+-- The manifest column is JSON text held as VARCHAR; cast to JSON to drill in.
 SELECT json_extract_string(manifest::JSON, '$.server.name') AS server_name,
-       json_extract_string(manifest::JSON, '$.server.version') AS server_version,
-       json_extract(manifest::JSON, '$.server.protocol_version')::UBIGINT AS protocol_version,
-       json_extract(manifest::JSON, '$.server.session_policy.idle_timeout_ms')::UBIGINT AS idle_timeout_ms,
-       json_array_length(json_extract(manifest::JSON, '$.methods')) AS method_count
-FROM manifest_row;
-SELECT ducknng_stop_server('sql0');
+       json_array_length(json_extract(manifest::JSON, '$.methods')) AS methods
+FROM ducknng_get_rpc_manifest('ipc:///tmp/ducknng_hello.ipc', 0::UBIGINT)
+WHERE ok;
+
+SELECT ducknng_stop_server('hello');
 ```
+
+Swap `ducknng_start_server(...)` for `ducknng_start_http_server(...)` and the same RPC methods are mounted at an `http://` or `https://` URL path. The **Examples** section walks through transport patterns, AIO, the client surface, body codecs, and sessions in that order.
 
 ## Lifetime and manual cleanup
 
@@ -127,7 +92,7 @@ Important details:
 - `ducknng_cancel_query(...)` is best-effort session control, not a replacement for the normal explicit close path
 - runtime teardown is fallback cleanup, not the primary lifecycle model for a long-lived DuckDB process
 
-The README should be enough to understand the public lifecycle expectations. The files under `docs/` are mostly deeper protocol/reference material and project design notes. If you want the more detailed lifetime write-up, see `docs/lifetime.md`. For protocol and transport reference details, see `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, `docs/http_server_framework.md`, `docs/codecs.md`, and `docs/types.md`; for the non-sealed routing demo sketch, see `docs/mesh_routing_demo.md`. `NEWS.md` summarizes notable landed changes. TLS already supports both file-backed and in-memory PEM material through helpers such as `ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, and `ducknng_self_signed_tls_config(...)`; TLS authentication mode `2` enables mTLS peer verification for `tls+tcp://`, `wss://`, and `https://` services.
+For the deeper write-ups see `docs/lifetime.md`, `docs/protocol.md`, `docs/manifest.md`, `docs/security.md`, `docs/registry.md`, `docs/transports.md`, `docs/http.md`, `docs/codecs.md`, and `docs/types.md`. The non-sealed routing demo lives in `docs/mesh_routing_demo.md`; `NEWS.md` summarizes landed changes. TLS supports both file-backed and in-memory PEM material (`ducknng_tls_config_from_files(...)`, `ducknng_tls_config_from_pem(...)`, `ducknng_self_signed_tls_config(...)`); `auth_mode = 2` enables required mTLS peer verification for `tls+tcp://`, `wss://`, and `https://` services.
 
 ## Function catalog
 
@@ -699,6 +664,66 @@ DROP TABLE respondent_recv;
 DROP TABLE surveyor_recv;
 SET VARIABLE surveyor_close = ducknng_close_socket(getvariable('surveyor_socket')::UBIGINT);
 SET VARIABLE respondent_close = ducknng_close_socket(getvariable('respondent_socket')::UBIGINT);
+```
+
+### Broadcast one raw message through a three-peer `bus` mesh
+
+```{sql eval=TRUE, collapse=FALSE, comment=""}
+-- Open three bus peers. Every peer in a bus sends to and receives from every
+-- other peer, so a single send from peer A is delivered to both B and C.
+SET VARIABLE bus_a = ducknng_open_socket('bus');
+SET VARIABLE bus_b = ducknng_open_socket('bus');
+SET VARIABLE bus_c = ducknng_open_socket('bus');
+
+-- A listens, B and C dial A. That gives every peer a direct edge to A; bus
+-- forwards the broadcast across the mesh.
+SET VARIABLE bus_a_listen_ok = ducknng_listen_socket(
+  getvariable('bus_a')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_bus_demo.ipc',
+  134217728,
+  0::UBIGINT
+);
+SET VARIABLE bus_b_dial_ok = ducknng_dial_socket(
+  getvariable('bus_b')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_bus_demo.ipc',
+  1000,
+  0::UBIGINT
+);
+SET VARIABLE bus_c_dial_ok = ducknng_dial_socket(
+  getvariable('bus_c')::UBIGINT,
+  'ipc:///tmp/ducknng_sql_bus_demo.ipc',
+  1000,
+  0::UBIGINT
+);
+
+-- Arm one async receive on each non-sending peer before A broadcasts.
+CREATE TEMP TABLE bus_recv_b AS
+SELECT ducknng_recv_socket_raw_aio(getvariable('bus_b')::UBIGINT, 1000) AS recv_aio;
+CREATE TEMP TABLE bus_recv_c AS
+SELECT ducknng_recv_socket_raw_aio(getvariable('bus_c')::UBIGINT, 1000) AS recv_aio;
+
+SET VARIABLE bus_sent = ducknng_send_socket_raw(
+  getvariable('bus_a')::UBIGINT,
+  from_hex('6275732d62726f616463617374'),
+  1000
+);
+
+SELECT getvariable('bus_sent')::BOOLEAN AS sent,
+       ok,
+       hex(frame) = '6275732D62726F616463617374' AS got_payload
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM bus_recv_b), 1000);
+
+SELECT ok,
+       hex(frame) = '6275732D62726F616463617374' AS got_payload
+FROM ducknng_aio_collect((SELECT list_value(recv_aio) FROM bus_recv_c), 1000);
+
+SET VARIABLE bus_drop_b = ducknng_aio_drop((SELECT recv_aio FROM bus_recv_b));
+SET VARIABLE bus_drop_c = ducknng_aio_drop((SELECT recv_aio FROM bus_recv_c));
+DROP TABLE bus_recv_b;
+DROP TABLE bus_recv_c;
+SET VARIABLE bus_close_c = ducknng_close_socket(getvariable('bus_c')::UBIGINT);
+SET VARIABLE bus_close_b = ducknng_close_socket(getvariable('bus_b')::UBIGINT);
+SET VARIABLE bus_close_a = ducknng_close_socket(getvariable('bus_a')::UBIGINT);
 ```
 
 ### Launch raw requests asynchronously and collect the reply frames later
@@ -1363,6 +1388,17 @@ IP allowlisting is a useful lighter-weight gate when client certificates are too
 For NNG transports, admission uses NNG's own pipe notification primitive: `nng_pipe_notify(..., NNG_PIPE_EV_ADD_PRE, ...)` lets `ducknng` inspect verified TLS pipe metadata and remote-address metadata and close a non-admitted pipe before it is added to the socket. For HTTP/HTTPS, NNG's supplemental HTTP API does not expose the same public protocol-socket pipe admission hook, so `ducknng` checks the same policy before RPC dispatch and returns HTTP `403` for non-admitted peers or remote addresses.
 
 The same pipe-event family is useful beyond admission. NNG exposes `ADD_PRE`, `ADD_POST`, and `REM_POST` pipe events; nanonext surfaces related tools as `pipe_notify()`, `monitor()`, and `read_monitor()`. `ducknng` now records a bounded per-service NNG pipe event stream and exposes it with `ducknng_read_monitor(name, after_seq, max_events)`. It exposes ring/counter metadata with `ducknng_monitor_status(name)` and current active NNG pipes with `ducknng_list_pipes(name)`. The event stream includes event sequence, timestamp, service, transport, pipe id, admission result for `ADD_PRE`, denial reason when the fast C path has one, remote address, and verified peer identity when present; the active-pipe table gives the current pipe set for routing and membership decisions. These primitives are a natural foundation for telemetry, connection counts, connection churn, per-service pipe event streams, presence/worker membership, dynamic routing, backpressure-aware scheduling, mesh-style DuckDB service discovery, routing/forwarding demos, and other application-level event streams. HTTP/HTTPS framed RPC currently uses the same admission policy but does not expose NNG protocol-socket pipe events; a broader HTTP server framework can reuse the same request context and monitor concepts without changing the framed RPC wire protocol.
+
+## Status
+
+What is sealed and runnable in v1: NNG transports and socket patterns; first-class one-shot AIO across socket send/recv, ncurl HTTP, and unary RPC; framed RPC (`manifest`, opt-in `exec`, raw unary, query sessions); fast C admission (mTLS, exact peer-identity allowlists, IP/CIDR allowlists, service limits); SQL authorizer callbacks; bounded per-service pipe-event monitor and active-pipe snapshot; body codec layer with built-in providers and user-registered codec hooks. See `function_catalog/functions.md` for the exact surface and `NEWS.md` for landed changes.
+
+Intentionally deferred:
+
+- A broader nanonext-style HTTP route/server framework — the current HTTP server is the framed RPC mount.
+- CSV/TSV/Parquet body parsers beyond the safe BLOB fallback.
+- Full SQL-side decoding of session `fetch` Arrow batch BLOBs into a table-function path.
+- Routing/forwarding and mesh scheduling as sealed APIs — the pipe monitor and active-pipe snapshot are the membership/telemetry foundation that comes first.
 
 ## References
 

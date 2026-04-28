@@ -245,6 +245,16 @@ void ducknng_runtime_destroy(ducknng_runtime *rt) {
         rt->tls_config_count = 0;
         rt->tls_config_cap = 0;
     }
+    if (rt->user_codecs) {
+        for (i = 0; i < rt->user_codec_count; i++) {
+            if (rt->user_codecs[i].content_type) duckdb_free(rt->user_codecs[i].content_type);
+            if (rt->user_codecs[i].function_name) duckdb_free(rt->user_codecs[i].function_name);
+        }
+        duckdb_free(rt->user_codecs);
+        rt->user_codecs = NULL;
+        rt->user_codec_count = 0;
+        rt->user_codec_cap = 0;
+    }
     ducknng_method_registry_destroy(&rt->registry);
     if (rt->aio_cv_initialized) ducknng_cond_destroy(&rt->aio_cv);
     if (rt->init_con) duckdb_disconnect(&rt->init_con);
@@ -553,4 +563,130 @@ ducknng_tls_config *ducknng_runtime_remove_tls_config(ducknng_runtime *rt, uint6
     }
     ducknng_mutex_unlock(&rt->mu);
     return cfg;
+}
+
+static char *ducknng_codec_normalize(const char *content_type) {
+    /* Lower-case ASCII and trim trailing whitespace; codec keys are case-insensitive
+     * and we don't strip parameters here so e.g. "text/plain" and "Text/Plain" share
+     * one slot but "text/plain;charset=utf-8" remains a distinct key. */
+    size_t len;
+    size_t i;
+    char *out;
+    while (content_type && (*content_type == ' ' || *content_type == '\t')) content_type++;
+    if (!content_type || !*content_type) return NULL;
+    len = strlen(content_type);
+    while (len > 0 && (content_type[len - 1] == ' ' || content_type[len - 1] == '\t')) len--;
+    if (len == 0) return NULL;
+    out = (char *)duckdb_malloc(len + 1);
+    if (!out) return NULL;
+    for (i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)content_type[i];
+        out[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : (char)c;
+    }
+    out[len] = '\0';
+    return out;
+}
+
+int ducknng_runtime_register_user_codec(ducknng_runtime *rt, const char *content_type,
+    const char *function_name, char **errmsg) {
+    char *key;
+    char *fn_copy;
+    size_t i;
+    int ok = 0;
+    if (!rt) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: runtime not initialized");
+        return 0;
+    }
+    if (!function_name || !*function_name) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: codec function name must be a non-empty identifier");
+        return 0;
+    }
+    key = ducknng_codec_normalize(content_type);
+    if (!key) {
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: codec content_type must be a non-empty media type");
+        return 0;
+    }
+    fn_copy = ducknng_strdup(function_name);
+    if (!fn_copy) {
+        duckdb_free(key);
+        if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory registering codec");
+        return 0;
+    }
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->user_codec_count; i++) {
+        if (rt->user_codecs[i].content_type && strcmp(rt->user_codecs[i].content_type, key) == 0) {
+            duckdb_free(rt->user_codecs[i].function_name);
+            rt->user_codecs[i].function_name = fn_copy;
+            duckdb_free(key);
+            ok = 1;
+            goto done;
+        }
+    }
+    if (rt->user_codec_count == rt->user_codec_cap) {
+        size_t new_cap = rt->user_codec_cap ? rt->user_codec_cap * 2 : 4;
+        ducknng_user_codec *grown = (ducknng_user_codec *)duckdb_malloc(sizeof(*grown) * new_cap);
+        if (!grown) {
+            duckdb_free(key);
+            duckdb_free(fn_copy);
+            if (errmsg) *errmsg = ducknng_strdup("ducknng: out of memory growing codec registry");
+            goto done;
+        }
+        memset(grown, 0, sizeof(*grown) * new_cap);
+        if (rt->user_codecs && rt->user_codec_count) {
+            memcpy(grown, rt->user_codecs, sizeof(*grown) * rt->user_codec_count);
+        }
+        if (rt->user_codecs) duckdb_free(rt->user_codecs);
+        rt->user_codecs = grown;
+        rt->user_codec_cap = new_cap;
+    }
+    rt->user_codecs[rt->user_codec_count].content_type = key;
+    rt->user_codecs[rt->user_codec_count].function_name = fn_copy;
+    rt->user_codec_count++;
+    ok = 1;
+done:
+    ducknng_mutex_unlock(&rt->mu);
+    return ok;
+}
+
+int ducknng_runtime_unregister_user_codec(ducknng_runtime *rt, const char *content_type) {
+    char *key;
+    size_t i;
+    int removed = 0;
+    if (!rt) return 0;
+    key = ducknng_codec_normalize(content_type);
+    if (!key) return 0;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->user_codec_count; i++) {
+        if (rt->user_codecs[i].content_type && strcmp(rt->user_codecs[i].content_type, key) == 0) {
+            duckdb_free(rt->user_codecs[i].content_type);
+            duckdb_free(rt->user_codecs[i].function_name);
+            for (; i + 1 < rt->user_codec_count; i++) rt->user_codecs[i] = rt->user_codecs[i + 1];
+            memset(&rt->user_codecs[rt->user_codec_count - 1], 0, sizeof(rt->user_codecs[0]));
+            rt->user_codec_count--;
+            removed = 1;
+            break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    duckdb_free(key);
+    return removed;
+}
+
+char *ducknng_runtime_find_user_codec(ducknng_runtime *rt, const char *content_type) {
+    char *key;
+    char *result = NULL;
+    size_t i;
+    if (!rt) return NULL;
+    key = ducknng_codec_normalize(content_type);
+    if (!key) return NULL;
+    ducknng_mutex_lock(&rt->mu);
+    for (i = 0; i < rt->user_codec_count; i++) {
+        if (rt->user_codecs[i].content_type && strcmp(rt->user_codecs[i].content_type, key) == 0) {
+            result = ducknng_strdup(rt->user_codecs[i].function_name);
+            break;
+        }
+    }
+    ducknng_mutex_unlock(&rt->mu);
+    duckdb_free(key);
+    return result;
 }
