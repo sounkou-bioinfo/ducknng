@@ -1148,8 +1148,25 @@ body into a DuckDB table using the built-in body codec providers.</td>
 <td><code>ducknng_list_codecs</code></td>
 <td>table</td>
 <td></td>
-<td><code>TABLE(provider VARCHAR, media_types VARCHAR, output VARCHAR, notes VARCHAR)</code></td>
-<td>List the built-in body serialization/deserialization providers.</td>
+<td><code>TABLE(provider VARCHAR, media_types VARCHAR, kind VARCHAR, function_name VARCHAR, output VARCHAR, notes VARCHAR)</code></td>
+<td>List built-in body serialization/deserialization providers and any
+registered user codec hooks.</td>
+</tr>
+<tr class="even">
+<td><code>ducknng_register_codec</code></td>
+<td>scalar</td>
+<td><code>content_type, function_name</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Register a user body codec that decodes a BLOB body into a single
+VARCHAR value through an existing scalar SQL function.</td>
+</tr>
+<tr class="odd">
+<td><code>ducknng_unregister_codec</code></td>
+<td>scalar</td>
+<td><code>content_type</code></td>
+<td><code>BOOLEAN</code></td>
+<td>Remove a previously registered user body codec for a content
+type.</td>
 </tr>
 <tr class="even">
 <td><code>ducknng_parse_body</code></td>
@@ -1791,11 +1808,11 @@ selects that carrier.</p>
 +------+--------+-------+----------------------------------+
 | true | 200    | NULL  | hello from nanonext https server |
 +------+--------+-------+----------------------------------+
-+-------+--------+-----------+----------+------------+
-|  ok   | status |   error   | body_hex | has_header |
-+-------+--------+-----------+----------+------------+
-| false | NULL   | Timed out | NULL     | NULL       |
-+-------+--------+-----------+----------+------------+
++------+--------+-------+----------+------------+
+|  ok  | status | error | body_hex | has_header |
++------+--------+-------+----------+------------+
+| true | 200    | NULL  | 01020304 | true       |
++------+--------+-------+----------+------------+
 +----------------------------+
 | ducknng_drop_tls_config(1) |
 +----------------------------+

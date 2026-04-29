@@ -89,12 +89,11 @@ This checklist tracks the implementation status of the main architecture, transp
 
 ## Partial / clarified but not fully solved
 
-- [~] Keep structured-vs-raw helper duplication under explicit review.
-  - Current state: signatures were unified and transport reach no longer diverges.
-  - Remaining work: decide whether to delete the raw or structured twins entirely.
+- [x] Keep structured-vs-raw helper duplication under explicit review.
+  - Resolved: signatures and transport reach are unified, and the raw/structured twins are kept intentionally as the v1 surface. The raw helpers feed `ducknng_decode_frame()` / aio collection paths and the structured helpers wrap them as ergonomic table forms; deleting either side would force every caller through the other style without removing real complexity.
 - [~] Prepare HTTP / HTTPS transport adapters without inventing a second RPC surface.
   - Current state: `docs/transports.md` and `docs/http.md` now fix the intended boundary, `ducknng_start_http_server(...)` is implemented, `ducknng_ncurl(...)` and `ducknng_ncurl_aio(...)` provide low-level synchronous/asynchronous HTTP/HTTPS client slices, and the synchronous request/RPC/session helpers now route by URL scheme.
-  - Remaining work: decide whether a broader nanonext-style HTTP route framework belongs beside the framed RPC carrier. This route framework is explicitly separate from the sealed framed RPC endpoint.
+  - Remaining work: a broader nanonext-style HTTP route framework is intentionally deferred past v1. Any later web-toolkit layer must remain explicitly separate from the sealed framed RPC endpoint and must not create path-specific copies of existing RPC methods.
 
 ## Blocked by larger architectural replacement work
 
@@ -116,13 +115,13 @@ This checklist tracks the implementation status of the main architecture, transp
     - decide whether `ducknng_query_rpc()` should later be rebuilt as a convenience wrapper over the session family
 - [~] Add the codec framework for body and Arrow extension serde.
   - Current state:
-    - `ducknng_list_codecs()` lists the built-in content-type driven providers
-    - `ducknng_parse_body(body, content_type)` parses raw bodies through built-in providers
+    - `ducknng_list_codecs()` lists built-in content-type driven providers and registered user hooks side by side, with a `kind` column and a `function_name` column for user codecs
+    - `ducknng_parse_body(body, content_type)` parses raw bodies through built-in providers and user hooks
     - `ducknng_ncurl_table(...)` performs HTTP/HTTPS and parses successful response bodies by `Content-Type`
     - JSON uses DuckDB JSON functions in memory; Arrow IPC still uses nanoarrow plus the stable manual mapping layer
     - CSV, TSV, and Parquet are recognized but use the generic `body BLOB` fallback until a scalarfs-style memory filesystem/provider path is available
+    - `ducknng_register_codec(content_type, function_name)` and `ducknng_unregister_codec(content_type)` install user-defined `BLOB → VARCHAR` codecs that take precedence over built-ins; identifiers are gated by a plain-identifier allowlist and dispatched through a fixed `SELECT <fn>(?::BLOB) AS value` shape, so the sealed contract is single-row, single-column `value VARCHAR`
   - Remaining work:
-    - decide whether user-defined hooks such as `ducknng_register_codec` and `ducknng_unregister_codec` belong in the sealed API
     - research a scalarfs-style in-memory filesystem/provider path for CSV/TSV/Parquet body parsing, including whether community-extension designs such as `duckdb_scalarfs` can be copied or adapted without pulling core `ducknng` onto unstable or C++ DuckDB APIs
     - keep the generic `body BLOB` fallback as the safe default whenever a media type is recognized but no parsing provider is enabled
     - keep user-defined Arrow extension serde blocked until ownership, security, and the future DuckDB Arrow seam are clear enough not to freeze an unsafe callback ABI

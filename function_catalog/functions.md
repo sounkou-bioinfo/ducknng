@@ -77,7 +77,9 @@ This file is generated from `function_catalog/functions.yaml`.
 
 | name | kind | arguments | returns | description |
 |---|---|---|---|---|
-| `ducknng_list_codecs` | table |  | `TABLE(provider VARCHAR, media_types VARCHAR, output VARCHAR, notes VARCHAR)` | List the built-in body serialization/deserialization providers. |
+| `ducknng_list_codecs` | table |  | `TABLE(provider VARCHAR, media_types VARCHAR, kind VARCHAR, function_name VARCHAR, output VARCHAR, notes VARCHAR)` | List built-in body serialization/deserialization providers and any registered user codec hooks. |
+| `ducknng_register_codec` | scalar | `content_type, function_name` | `BOOLEAN` | Register a user body codec that decodes a BLOB body into a single VARCHAR value through an existing scalar SQL function. |
+| `ducknng_unregister_codec` | scalar | `content_type` | `BOOLEAN` | Remove a previously registered user body codec for a content type. |
 | `ducknng_parse_body` | table | `body, content_type` | `TABLE(dynamic by provider)` | Parse one response/request body BLOB according to its content type. |
 
 ## Async I/O

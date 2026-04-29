@@ -18,6 +18,7 @@ This checklist is narrower than `docs/design_review_checklist.md`. It tracks wha
 - NNG WebSocket transport schemes through `ws://` and `wss://`
 - a low-level HTTP/HTTPS client helper
 - built-in content-type driven body codec helpers for raw/text/JSON/Arrow IPC/frame bodies, with CSV/TSV/Parquet recognized and using the generic `body BLOB` fallback pending a memory-backed reader path
+- user-extensible body codec hooks via `ducknng_register_codec(content_type, function_name)` and `ducknng_unregister_codec(content_type)`, gated to a plain-identifier allowlist and dispatched through a fixed `SELECT <fn>(?::BLOB) AS value` shape
 
 That is enough for serious use and interop work, but it is not yet enough to call the full API sealed.
 
@@ -45,7 +46,7 @@ The HTTP transport direction is now in place:
 - the existing synchronous request/RPC/session helpers route over `http://` and `https://`
 - `ducknng_ncurl_aio(...)` and `ducknng_ncurl_aio_collect(...)` provide the raw asynchronous HTTP/HTTPS client counterpart to `ducknng_ncurl(...)`
 
-The remaining HTTP question is the broader server framework: the current server is a non-blocking NNG HTTP server that mounts one framed RPC handler; a later web-toolkit layer may add explicit route handlers, static responses, or SQL-backed handlers, but it must not create path-specific copies of existing RPC methods. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules unless a separate web-framework surface is designed and documented.
+A broader nanonext-style HTTP web-route framework is intentionally deferred past v1: the current server is a non-blocking NNG HTTP server that mounts exactly one framed RPC handler, and that single-handler shape is the sealed HTTP surface. Any later web-toolkit layer that adds explicit route handlers, static responses, or SQL-backed handlers must remain a separate, additively designed surface and must not create path-specific copies of existing RPC methods. The key constraint remains unchanged: HTTP must stay a carrier for the same manifest methods, session lifecycle, and Arrow-versus-JSON payload rules unless a separate web-framework surface is designed and documented.
 
 ### 5. Transport matrix stance
 
@@ -94,11 +95,12 @@ These items were worth resolving before the API hardens further and should stay 
 - `docs/security.md` now states that arbitrary SQL execution is a deployment-owned capability, not an automatic sandbox, and names recommended exposure profiles plus the internal SQL-injection boundary
 - the transport matrix is documented in `docs/transports.md` and summarized in the README, including which schemes accept TLS handles and which surfaces reject the other family
 - the async contract is raw-result-first: NNG/RPC aio returns frames, HTTP aio returns HTTP-shaped rows, and structured async wrappers are optional future conveniences
+- user-defined body codec hooks are sealed: `ducknng_register_codec(content_type, function_name)` and `ducknng_unregister_codec(content_type)` install `BLOB → VARCHAR` SQL functions, the registry is gated to plain SQL identifiers spliced into a fixed `SELECT <fn>(?::BLOB) AS value` shape, user hooks take precedence over built-ins for matching content types, and `ducknng_list_codecs()` reports them with `kind = 'user'` alongside built-ins
 
 ## Not sealing blockers by themselves
 
 These are still important, but they do not need to be finished before the API can be considered sealed if the above items are settled:
 
-- user-defined codec registration hooks beyond the current built-in body codec providers
+- a future nanonext-style HTTP web-route framework alongside the framed RPC carrier, which is intentionally deferred past v1 because the framed RPC endpoint is the sealed HTTP surface
 - scalarfs-style in-memory filesystem/provider research for CSV/TSV/Parquet body parsing, because the generic `body BLOB` fallback is an acceptable stable behavior until a clean provider exists
 - a future DuckDB-native Arrow re-plumb, if one ever becomes viable without unstable or deprecated APIs

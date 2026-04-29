@@ -687,16 +687,56 @@
       "kind": "table",
       "category": "Body Codecs",
       "signature": "ducknng_list_codecs()",
-      "returns": "TABLE(provider VARCHAR, media_types VARCHAR, output VARCHAR, notes VARCHAR)",
+      "returns": "TABLE(provider VARCHAR, media_types VARCHAR, kind VARCHAR, function_name VARCHAR, output VARCHAR, notes VARCHAR)",
       "since": "0.1.0",
       "implemented": true,
-      "description": "List the built-in body serialization/deserialization providers.",
+      "description": "List built-in body serialization/deserialization providers and any registered user codec hooks.",
       "notes": [
-        "The initial provider layer is content-type driven and built in; user-defined codec hooks are deferred until the API is sealed more tightly.",
+        "kind is 'builtin' for the content-type driven providers shipped with ducknng and 'user' for hooks installed via ducknng_register_codec().",
+        "function_name is NULL for built-in providers and reports the registered SQL function name for user codecs.",
+        "User codecs take precedence over built-ins when their content type matches.",
         "ducknng_ncurl() remains raw, while ducknng_parse_body() and ducknng_ncurl_table() opt in to provider-driven table parsing."
       ],
       "examples": [
-        "SELECT provider, media_types FROM ducknng_list_codecs();"
+        "SELECT provider, media_types, kind FROM ducknng_list_codecs();"
+      ]
+    },
+    {
+      "name": "ducknng_register_codec",
+      "kind": "scalar",
+      "category": "Body Codecs",
+      "signature": "ducknng_register_codec(content_type, function_name)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Register a user body codec that decodes a BLOB body into a single VARCHAR value through an existing scalar SQL function.",
+      "notes": [
+        "function_name must be a plain SQL identifier (ASCII letter/underscore start, then alphanumeric/underscore/dot only); identifiers containing whitespace, semicolons, parentheses, or expression syntax are rejected.",
+        "The named function must accept one BLOB argument and return VARCHAR. The codec layer dispatches as SELECT <fn>(?::BLOB) AS value, so the parsed table is always a single-row, single-column value VARCHAR result.",
+        "Content-type matching is case-insensitive and tolerates trailing parameters such as ; charset=utf-8.",
+        "User codecs take precedence over built-in providers when the content type matches.",
+        "Registering an identifier that fails to validate raises ducknng: codec function name must be a plain SQL identifier."
+      ],
+      "examples": [
+        "CREATE OR REPLACE FUNCTION my_upper(b BLOB) AS upper(decode(b));",
+        "SELECT ducknng_register_codec('application/x-test-upper', 'my_upper');"
+      ]
+    },
+    {
+      "name": "ducknng_unregister_codec",
+      "kind": "scalar",
+      "category": "Body Codecs",
+      "signature": "ducknng_unregister_codec(content_type)",
+      "returns": "BOOLEAN",
+      "since": "0.1.0",
+      "implemented": true,
+      "description": "Remove a previously registered user body codec for a content type.",
+      "notes": [
+        "Returns TRUE when a registered user codec was removed and FALSE when no user codec was registered for that content type (no error).",
+        "Unregistering a content type that overrode a built-in restores the built-in provider for subsequent ducknng_parse_body() / ducknng_ncurl_table() calls."
+      ],
+      "examples": [
+        "SELECT ducknng_unregister_codec('application/x-test-upper');"
       ]
     },
     {
